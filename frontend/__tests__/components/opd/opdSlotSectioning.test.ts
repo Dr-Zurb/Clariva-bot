@@ -4,6 +4,7 @@
 
 import { describe, it, expect } from "vitest";
 import {
+  orderSlotRowsByTokenDesc,
   orderSlotRowsFlat,
   partitionSlotRowsForList,
   sectionDefaultOpen,
@@ -102,9 +103,9 @@ describe("chip section mirror", () => {
     );
   });
 
-  it("always renders every chip section on All", () => {
+  it("does not render chip sections on All (flat token list)", () => {
     for (const section of SLOT_CHIP_SECTION_ORDER) {
-      expect(shouldRenderChipSection("all", section, 0)).toBe(true);
+      expect(shouldRenderChipSection("all", section, 0)).toBe(false);
     }
   });
 
@@ -163,8 +164,21 @@ describe("orderSlotRowsFlat", () => {
   });
 });
 
+describe("orderSlotRowsByTokenDesc", () => {
+  it("sorts by position descending (50 → 49 → 48)", () => {
+    const filtered = [
+      { ...axesRow("a", "scheduled", "2026-05-16T09:00:00.000Z", "due"), position: 48 },
+      { ...axesRow("b", "completed", "2026-05-16T08:00:00.000Z", null), position: 50 },
+      { ...axesRow("c", "scheduled", "2026-05-16T10:00:00.000Z", "late"), position: 49 },
+    ];
+    expect(orderSlotRowsByTokenDesc(filtered).map((r) => r.position)).toEqual([
+      50, 49, 48,
+    ]);
+  });
+});
+
 describe("sectionDefaultOpen", () => {
-  it("opens Incomplete / Overdue / Upcoming on All", () => {
+  it("opens Incomplete / Overdue / Upcoming on All (legacy helper)", () => {
     expect(sectionDefaultOpen("all", "incomplete")).toBe(true);
     expect(sectionDefaultOpen("all", "late")).toBe(true);
     expect(sectionDefaultOpen("all", "upcoming")).toBe(true);

@@ -17,6 +17,9 @@ import {
   doseQtyFromSchedule,
   doseScheduleForFrequencyChange,
   doseScheduleOptionsForFrequency,
+  frequencyDisplayWithSchedule,
+  hydrateDoseScheduleFromStored,
+  parseDoseSchedulePattern,
   formatChartMedicationSig,
   formatStoppedAgoSummary,
   formatStrengthComponents,
@@ -47,7 +50,9 @@ import {
 import type { PatientMedication } from "@/types/patient-chart";
 import type { DrugMasterRow } from "@/types/drug-master";
 
-function baseMed(overrides: Partial<PatientMedication> = {}): PatientMedication {
+function baseMed(
+  overrides: Partial<PatientMedication> = {}
+): PatientMedication {
   return {
     id: "m1",
     doctor_id: "d1",
@@ -88,7 +93,9 @@ describe("chartMedPayloadFromParsed", () => {
   it("maps parsed line to structured create payload with SOS frequency", () => {
     const parsed = parseMedicineLine("metformin 500 mg 2 tab bd");
     expect(parsed).not.toBeNull();
-    const payload = chartMedPayloadFromParsed(parsed!, { conditionIds: ["c1"] });
+    const payload = chartMedPayloadFromParsed(parsed!, {
+      conditionIds: ["c1"],
+    });
     expect(payload.drugName).toBe("metformin");
     expect(payload.strength).toBe("500 mg");
     expect(payload.strengthValue).toBe(500);
@@ -136,7 +143,9 @@ describe("chartMedPayloadFromParsed", () => {
   });
 
   it("defaults status to active for a plain line", () => {
-    const payload = chartMedPayloadFromParsed(parseMedicineLine("amlodipine 5 mg od")!);
+    const payload = chartMedPayloadFromParsed(
+      parseMedicineLine("amlodipine 5 mg od")!
+    );
     expect(payload.status).toBe("active");
     expect(payload.stopReason).toBeNull();
   });
@@ -151,20 +160,26 @@ describe("chartMedPayloadFromParsed", () => {
 
   it("inherits past from a resolved condition when the line is silent", () => {
     const parsed = parseMedicineLine("amlodipine 5 mg od");
-    const payload = chartMedPayloadFromParsed(parsed!, { conditionStatus: "resolved" });
+    const payload = chartMedPayloadFromParsed(parsed!, {
+      conditionStatus: "resolved",
+    });
     expect(payload.status).toBe("past");
     expect(payload.stopReason).toBe("resolved");
   });
 
   it("stays active under an active condition", () => {
     const parsed = parseMedicineLine("amlodipine 5 mg od");
-    const payload = chartMedPayloadFromParsed(parsed!, { conditionStatus: "active" });
+    const payload = chartMedPayloadFromParsed(parsed!, {
+      conditionStatus: "active",
+    });
     expect(payload.status).toBe("active");
   });
 
   it("lets an explicit parsed past override an active condition", () => {
     const parsed = parseMedicineLine("amlodipine stopped 2 months ago");
-    const payload = chartMedPayloadFromParsed(parsed!, { conditionStatus: "active" });
+    const payload = chartMedPayloadFromParsed(parsed!, {
+      conditionStatus: "active",
+    });
     expect(payload.status).toBe("past");
     expect(payload.stoppedAgoValue).toBe(2);
   });
@@ -181,7 +196,7 @@ describe("formatChartMedicationSig", () => {
 
   it("shows SOS label for PRN frequency code", () => {
     const sig = formatChartMedicationSig(
-      baseMed({ frequency_code: "PRN", frequency: "SOS" }),
+      baseMed({ frequency_code: "PRN", frequency: "SOS" })
     );
     expect(sig).toContain("SOS");
   });
@@ -193,7 +208,7 @@ describe("formatChartMedicationSig", () => {
         dose_unit: "application",
         dose_qty: 2,
         frequency_code: "BID",
-      }),
+      })
     );
     expect(sig).toContain("Apply");
     expect(sig).not.toContain("application");
@@ -207,21 +222,32 @@ describe("formatChartMedicationSig", () => {
 
   it("uses structured strength fields when set", () => {
     const sig = formatChartMedicationSig(
-      baseMed({ strength: null, dose: null, strength_value: 250, strength_unit: "mg" }),
+      baseMed({
+        strength: null,
+        dose: null,
+        strength_value: 250,
+        strength_unit: "mg",
+      })
     );
     expect(sig).toContain("250 mg");
   });
 
   it("includes the intake pattern (Regular / Irregular)", () => {
-    expect(formatChartMedicationSig(baseMed({ intake_pattern: "regular" }))).toContain("Regular");
-    expect(formatChartMedicationSig(baseMed({ intake_pattern: "irregular" }))).toContain(
-      "Irregular",
-    );
+    expect(
+      formatChartMedicationSig(baseMed({ intake_pattern: "regular" }))
+    ).toContain("Regular");
+    expect(
+      formatChartMedicationSig(baseMed({ intake_pattern: "irregular" }))
+    ).toContain("Irregular");
   });
 
   it("omits the intake pattern for prn (SOS frequency already conveys it)", () => {
     const sig = formatChartMedicationSig(
-      baseMed({ intake_pattern: "prn", frequency_code: "PRN", frequency: "SOS" }),
+      baseMed({
+        intake_pattern: "prn",
+        frequency_code: "PRN",
+        frequency: "SOS",
+      })
     );
     expect(sig).not.toMatch(/Regular|Irregular/);
   });
@@ -252,7 +278,10 @@ describe("chartMedPatch mappers", () => {
   });
 
   it("maps structured strength fields to API payload", () => {
-    const api = chartMedPatchToApiPayload({ strengthValue: 500, strengthUnit: "mg" });
+    const api = chartMedPatchToApiPayload({
+      strengthValue: 500,
+      strengthUnit: "mg",
+    });
     expect(api.strengthValue).toBe(500);
     expect(api.strengthUnit).toBe("mg");
   });
@@ -331,7 +360,9 @@ describe("unit More combobox resolvers", () => {
   });
 
   it("extracts custom strength unit from legacy text", () => {
-    expect(customStrengthUnitFromLegacy("5 deaf asdf", 5, null)).toBe("deaf asdf");
+    expect(customStrengthUnitFromLegacy("5 deaf asdf", 5, null)).toBe(
+      "deaf asdf"
+    );
     expect(customStrengthUnitFromLegacy("5 mg", 5, "mg")).toBeNull();
     expect(customStrengthUnitFromLegacy("5", 5, null)).toBeNull();
   });
@@ -340,10 +371,10 @@ describe("unit More combobox resolvers", () => {
 describe("custom dose and strength helpers", () => {
   it("detects custom dose unit from legacy dose text", () => {
     expect(
-      isCustomDoseUnit({ dose_qty: 1, dose_unit: null, dose: "neb" }),
+      isCustomDoseUnit({ dose_qty: 1, dose_unit: null, dose: "neb" })
     ).toBe(true);
     expect(
-      isCustomDoseUnit({ dose_qty: 1, dose_unit: "tab", dose: "500 mg" }),
+      isCustomDoseUnit({ dose_qty: 1, dose_unit: "tab", dose: "500 mg" })
     ).toBe(false);
   });
 
@@ -356,7 +387,7 @@ describe("custom dose and strength helpers", () => {
         strength: "500 mg",
         strength_value: 500,
         strength_unit: "mg",
-      }),
+      })
     );
     expect(sig).toContain("1 neb");
     expect(sig).toContain("500 mg");
@@ -365,7 +396,11 @@ describe("custom dose and strength helpers", () => {
 
 describe("dose schedule helpers", () => {
   it("returns corrected schedule options for meal frequencies", () => {
-    expect(doseScheduleOptionsForFrequency("OD")).toEqual(["1-0-0", "0-1-0", "0-0-1"]);
+    expect(doseScheduleOptionsForFrequency("OD")).toEqual([
+      "1-0-0",
+      "0-1-0",
+      "0-0-1",
+    ]);
     expect(doseScheduleOptionsForFrequency("BID")).toContain("1-0-1");
     expect(doseScheduleOptionsForFrequency("TID")).toEqual(["1-1-1"]);
     expect(doseScheduleOptionsForFrequency("QID")).toEqual(["1-1-1-1"]);
@@ -389,6 +424,23 @@ describe("dose schedule helpers", () => {
     expect(doseScheduleForFrequencyChange("QHS", null)).toBe("0-0-1");
     expect(doseScheduleForFrequencyChange("BID", null)).toBeNull();
     expect(doseScheduleForFrequencyChange("BID", "1-0-1")).toBe("1-0-1");
+  });
+
+  it("parses stored 1-0-1 frequency text", () => {
+    expect(parseDoseSchedulePattern("1-0-1")).toBe("1-0-1");
+    expect(parseDoseSchedulePattern("Twice daily")).toBeNull();
+    expect(hydrateDoseScheduleFromStored("1-0-1", "BID")).toBe("1-0-1");
+    expect(hydrateDoseScheduleFromStored("Three times daily", "TID")).toBe(
+      "1-1-1"
+    );
+    expect(hydrateDoseScheduleFromStored("Once daily", "OD")).toBeNull();
+  });
+
+  it("prefers the schedule pattern when writing frequency text", () => {
+    expect(frequencyDisplayWithSchedule("BID", "Twice daily", "1-0-1")).toBe(
+      "1-0-1"
+    );
+    expect(frequencyDisplayWithSchedule("OD", "Once daily", null)).toBe("OD");
   });
 });
 
@@ -418,7 +470,7 @@ describe("chartMedPatchFromParsed — form + since", () => {
 
   it("includes food timing in collapsed sig", () => {
     const sig = formatChartMedicationSig(
-      baseMed({ food_timing: "with_food", form: "tablet" }),
+      baseMed({ food_timing: "with_food", form: "tablet" })
     );
     expect(sig).toContain("With food");
   });
@@ -449,16 +501,25 @@ describe("chartMedPayloadFromAiMedicine", () => {
   });
 
   it("auto-selects a single-option schedule and forces prn intake for PRN", () => {
-    const tid = chartMedPayloadFromAiMedicine({ name: "Drug", frequencyCode: "TID" });
+    const tid = chartMedPayloadFromAiMedicine({
+      name: "Drug",
+      frequencyCode: "TID",
+    });
     expect(tid.doseSchedule).toBe("1-1-1");
 
-    const prn = chartMedPayloadFromAiMedicine({ name: "Drug", frequencyCode: "PRN" });
+    const prn = chartMedPayloadFromAiMedicine({
+      name: "Drug",
+      frequencyCode: "PRN",
+    });
     expect(prn.intakePattern).toBe("prn");
     expect(prn.frequency).toBe("SOS");
   });
 
   it("keeps interval frequencies schedule-free", () => {
-    const payload = chartMedPayloadFromAiMedicine({ name: "Drug", frequencyCode: "Q8H" });
+    const payload = chartMedPayloadFromAiMedicine({
+      name: "Drug",
+      frequencyCode: "Q8H",
+    });
     expect(payload.doseSchedule).toBeNull();
     expect(payload.frequencyCode).toBe("Q8H");
   });
@@ -466,7 +527,7 @@ describe("chartMedPayloadFromAiMedicine", () => {
   it("carries the requested status + condition links", () => {
     const payload = chartMedPayloadFromAiMedicine(
       { name: "Drug" },
-      { status: "past", conditionIds: ["c1"] },
+      { status: "past", conditionIds: ["c1"] }
     );
     expect(payload.status).toBe("past");
     expect(payload.conditionIds).toEqual(["c1"]);
@@ -501,7 +562,7 @@ describe("chartMedPayloadFromAiMedicine", () => {
   it("inherits past from a resolved condition when the AI is silent", () => {
     const payload = chartMedPayloadFromAiMedicine(
       { name: "Amlodipine" },
-      { conditionStatus: "resolved" },
+      { conditionStatus: "resolved" }
     );
     expect(payload.status).toBe("past");
     expect(payload.stopReason).toBe("resolved");
@@ -520,33 +581,46 @@ describe("stop timing labels", () => {
 });
 
 describe("medicationListHasDuplicate", () => {
-  const rows = [{ drug_name: "Amlodipine", drug_master_id: "dm-1" as string | null, id: "m0" }];
+  const rows = [
+    {
+      drug_name: "Amlodipine",
+      drug_master_id: "dm-1" as string | null,
+      id: "m0",
+    },
+  ];
 
   it("matches case-insensitively on drug name", () => {
-    expect(medicationListHasDuplicate(rows, { drugName: "amlodipine" })).toBe(true);
-    expect(medicationListHasDuplicate(rows, { drugName: "Metformin" })).toBe(false);
+    expect(medicationListHasDuplicate(rows, { drugName: "amlodipine" })).toBe(
+      true
+    );
+    expect(medicationListHasDuplicate(rows, { drugName: "Metformin" })).toBe(
+      false
+    );
   });
 
   it("matches on drug_master_id even when names differ in casing", () => {
     expect(
-      medicationListHasDuplicate([{ drug_name: "amlo", drug_master_id: "dm-1", id: "m1" }], {
-        drugName: "Amlodipine",
-        drugMasterId: "dm-1",
-      }),
+      medicationListHasDuplicate(
+        [{ drug_name: "amlo", drug_master_id: "dm-1", id: "m1" }],
+        {
+          drugName: "Amlodipine",
+          drugMasterId: "dm-1",
+        }
+      )
     ).toBe(true);
   });
 
   it("findDuplicateMedication returns the existing row", () => {
     const hit = findDuplicateMedication(
       [{ drug_name: "Amlodipine", drug_master_id: "dm-1", id: "med-42" }],
-      { drugName: "amlodipine" },
+      { drugName: "amlodipine" }
     );
     expect(hit).toEqual({ id: "med-42", drug_name: "Amlodipine" });
   });
 
   it("formats duplicate notice copy", () => {
     expect(duplicateMedicationNoticeText("Amlodipine")).toBe(
-      "Amlodipine is already on this list.",
+      "Amlodipine is already on this list."
     );
   });
 
@@ -570,19 +644,36 @@ describe("form-first helpers", () => {
   });
 
   it("locks dose unit when form maps to a default unit", () => {
-    expect(chartMedFormLocksDoseUnit(baseMed({ form: "tablet", dose_unit: "tab" }))).toBe(true);
-    expect(chartMedFormLocksDoseUnit(baseMed({ form: "tablet", dose_unit: null }))).toBe(true);
-    expect(chartMedFormLocksDoseUnit(baseMed({ form: "tablet", dose_unit: "cap" }))).toBe(false);
-    expect(chartMedFormLocksDoseUnit(baseMed({ form: "lozenge", dose_unit: "tab" }))).toBe(false);
+    expect(
+      chartMedFormLocksDoseUnit(baseMed({ form: "tablet", dose_unit: "tab" }))
+    ).toBe(true);
+    expect(
+      chartMedFormLocksDoseUnit(baseMed({ form: "tablet", dose_unit: null }))
+    ).toBe(true);
+    expect(
+      chartMedFormLocksDoseUnit(baseMed({ form: "tablet", dose_unit: "cap" }))
+    ).toBe(false);
+    expect(
+      chartMedFormLocksDoseUnit(baseMed({ form: "lozenge", dose_unit: "tab" }))
+    ).toBe(false);
   });
 
   it("shows locked dose unit label from form when dose_unit unset", () => {
-    expect(chartMedLockedDoseUnitLabel(baseMed({ form: "tablet", dose_unit: null }))).toBe("tab");
-    expect(chartMedLockedDoseUnitLabel(baseMed({ form: "capsule", dose_unit: "cap" }))).toBe("cap");
+    expect(
+      chartMedLockedDoseUnitLabel(baseMed({ form: "tablet", dose_unit: null }))
+    ).toBe("tab");
+    expect(
+      chartMedLockedDoseUnitLabel(
+        baseMed({ form: "capsule", dose_unit: "cap" })
+      )
+    ).toBe("cap");
   });
 
   it("patches form input with auto dose unit for known forms", () => {
-    expect(chartMedPatchFromFormInput("tab")).toEqual({ form: "tablet", doseUnit: "tab" });
+    expect(chartMedPatchFromFormInput("tab")).toEqual({
+      form: "tablet",
+      doseUnit: "tab",
+    });
     expect(chartMedPatchFromFormInput("gel")).toEqual({
       form: "gel",
       doseUnit: "application",
@@ -593,16 +684,26 @@ describe("form-first helpers", () => {
   });
 
   it("detects topical apply-style dosing", () => {
-    expect(chartMedUsesApplyDose(baseMed({ form: "gel", dose_unit: "application" }))).toBe(true);
-    expect(chartMedUsesApplyDose(baseMed({ form: "ointment", dose_unit: null }))).toBe(true);
-    expect(chartMedUsesApplyDose(baseMed({ form: "gel", dose_unit: "ml" }))).toBe(false);
-    expect(chartMedUsesApplyDose(baseMed({ form: "tablet", dose_unit: "tab" }))).toBe(false);
+    expect(
+      chartMedUsesApplyDose(baseMed({ form: "gel", dose_unit: "application" }))
+    ).toBe(true);
+    expect(
+      chartMedUsesApplyDose(baseMed({ form: "ointment", dose_unit: null }))
+    ).toBe(true);
+    expect(
+      chartMedUsesApplyDose(baseMed({ form: "gel", dose_unit: "ml" }))
+    ).toBe(false);
+    expect(
+      chartMedUsesApplyDose(baseMed({ form: "tablet", dose_unit: "tab" }))
+    ).toBe(false);
   });
 
   it("shows Apply label for locked topical dose unit", () => {
-    expect(chartMedLockedDoseUnitLabel(baseMed({ form: "gel", dose_unit: "application" }))).toBe(
-      "Apply",
-    );
+    expect(
+      chartMedLockedDoseUnitLabel(
+        baseMed({ form: "gel", dose_unit: "application" })
+      )
+    ).toBe("Apply");
   });
 
   it("sets dose unit from drug master form on payload", () => {
@@ -683,19 +784,19 @@ describe("combo (fixed-dose-combination) strength", () => {
       formatStrengthComponents([
         { value: 600, unit: "mg" },
         { value: 300, unit: "mg" },
-      ]),
+      ])
     ).toBe("600/300 mg");
     expect(
       formatStrengthComponents([
         { value: 600, unit: null },
         { value: 300, unit: null },
-      ]),
+      ])
     ).toBe("600/300");
     expect(
       formatStrengthComponents([
         { value: 1, unit: "g" },
         { value: 500, unit: "mg" },
-      ]),
+      ])
     ).toBe("1 g / 500 mg");
   });
 
@@ -759,7 +860,7 @@ describe("combo (fixed-dose-combination) strength", () => {
         dose_unit: null,
         frequency_code: "OD",
         dose: null,
-      }),
+      })
     );
     expect(sig.startsWith("600/300 mg")).toBe(true);
   });
@@ -773,39 +874,49 @@ describe("combo (fixed-dose-combination) strength", () => {
             { value: 600, unit: "mg" },
             { value: 300, unit: "mg" },
           ],
-        }),
-      ),
+        })
+      )
     ).toBe(true);
   });
 });
 
 describe("chart-med started-ago from parsed (Rx-course → on-drug fold)", () => {
   it("folds a parsed course duration into started-ago (for 30 days)", () => {
-    const patch = chartMedPatchFromParsed(parseMedicineLine("amlodipine for 30 days")!);
+    const patch = chartMedPatchFromParsed(
+      parseMedicineLine("amlodipine for 30 days")!
+    );
     expect(patch.startedAgoValue).toBe(30);
     expect(patch.startedAgoUnit).toBe("days");
   });
 
   it("folds 'for 2 months' into started-ago months", () => {
-    const ago = chartMedStartedAgoFromParsed(parseMedicineLine("amlodipine for 2 months")!);
+    const ago = chartMedStartedAgoFromParsed(
+      parseMedicineLine("amlodipine for 2 months")!
+    );
     expect(ago.value).toBe(2);
     expect(ago.unit).toBe("months");
   });
 
   it("keeps explicit started-ago over any course duration", () => {
-    const ago = chartMedStartedAgoFromParsed(parseMedicineLine("amlodipine for 2 years")!);
+    const ago = chartMedStartedAgoFromParsed(
+      parseMedicineLine("amlodipine for 2 years")!
+    );
     expect(ago.value).toBe(2);
     expect(ago.unit).toBe("years");
   });
 
   it("leaves started-ago empty when no duration is present", () => {
-    const ago = chartMedStartedAgoFromParsed(parseMedicineLine("amlodipine 5 mg od")!);
+    const ago = chartMedStartedAgoFromParsed(
+      parseMedicineLine("amlodipine 5 mg od")!
+    );
     expect(ago.value).toBeNull();
     expect(ago.unit).toBeNull();
   });
 
   it("does not fold open-ended 'continue'", () => {
-    const ago = chartMedStartedAgoFromParsed(parseMedicineLine("amlodipine 5 mg od continue")!);
+    const ago = chartMedStartedAgoFromParsed(
+      parseMedicineLine("amlodipine 5 mg od continue")!
+    );
     expect(ago.value).toBeNull();
     expect(ago.unit).toBeNull();
   });
@@ -883,8 +994,13 @@ describe("catalog short-form resolution", () => {
     });
 
     it("never clobbers a strength the doctor already typed", () => {
-      const base = chartMedPayloadFromParsed(parseMedicineLine("t amlo 10 mg bd")!);
-      const merged = mergeCatalogDrugIntoPayload(base, drug({ strength: "5 mg" }));
+      const base = chartMedPayloadFromParsed(
+        parseMedicineLine("t amlo 10 mg bd")!
+      );
+      const merged = mergeCatalogDrugIntoPayload(
+        base,
+        drug({ strength: "5 mg" })
+      );
       expect(merged.strength).toBe("10 mg");
       expect(merged.drugName).toBe("Amlodipine");
     });

@@ -188,10 +188,10 @@ export function CollapsibleDepthProvider({
  * Canonical depth-tone ladder — the only surface values downstream tasks should use
  * when opting into {@link useCollapsibleDepth} / {@link useDepthToneSurface}.
  *
- * Even depths → recessed well; odd depths → raised card; nested cards (depth ≥ 1)
- * carry a family-keyed left rail (accent for subjective, primary for objective).
+ * Even depths → L1 card on the pane well; odd depths → raised inset card;
+ * nested cards (depth ≥ 1) carry a family-keyed left rail.
  */
-export const DEPTH_TONE_RECESSED_SURFACE = "bg-muted/30";
+export const DEPTH_TONE_RECESSED_SURFACE = "bg-card";
 export const DEPTH_TONE_RAISED_SURFACE = "bg-card";
 /** Default depth rail (objective / no family context). Prefer {@link resolveDepthToneRail}. */
 export const DEPTH_TONE_RAIL = resolveDepthToneRail(null);

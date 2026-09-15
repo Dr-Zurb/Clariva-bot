@@ -88,7 +88,7 @@ function renderWithShell(
     setSubjectiveSectionOrder: vi.fn(),
     subjectiveSectionCollapsed: {},
     setSubjectiveSectionCollapsed: vi.fn(),
-    subjectiveSectionHidden: [],
+    subjectiveSectionHidden: ["__show_all__"],
     setSubjectiveSectionHidden: vi.fn(),
     objectiveDefaults: null,
     setObjectiveDefaults: vi.fn(),
@@ -156,7 +156,7 @@ describe("SubjectiveSection collapse persistence (subj-31)", () => {
         settings: {
           subjective_section_order: [],
           subjective_section_collapsed: {},
-          subjective_section_hidden: [],
+          subjective_section_hidden: ["__show_all__"],
         },
       },
     });
@@ -220,7 +220,7 @@ describe("SubjectiveSection collapse persistence (subj-31)", () => {
         settings: {
           subjective_section_order: [],
           subjective_section_collapsed: savedMap,
-          subjective_section_hidden: [],
+          subjective_section_hidden: ["__show_all__"],
         },
       },
     });
@@ -270,7 +270,7 @@ describe("SubjectiveSection collapse persistence (subj-31)", () => {
         settings: {
           subjective_section_order: [],
           subjective_section_collapsed: { chief_complaints: true },
-          subjective_section_hidden: [],
+          subjective_section_hidden: ["__show_all__"],
         },
       },
     });
@@ -286,6 +286,7 @@ describe("SubjectiveSection collapse persistence (subj-31)", () => {
         settings: {
           subjective_section_order: ["chief_complaints", "social_history", "free_text_notes"],
           subjective_section_collapsed: {},
+          subjective_section_hidden: ["__show_all__"],
         },
       },
     });
@@ -330,7 +331,7 @@ describe("SubjectiveSection collapse persistence (subj-31)", () => {
         setSubjectiveSectionOrder: vi.fn(),
         subjectiveSectionCollapsed: shellCollapsed,
         setSubjectiveSectionCollapsed: vi.fn(),
-        subjectiveSectionHidden: [],
+        subjectiveSectionHidden: ["__show_all__"],
         setSubjectiveSectionHidden: vi.fn(),
         objectiveDefaults: null,
         setObjectiveDefaults: vi.fn(),

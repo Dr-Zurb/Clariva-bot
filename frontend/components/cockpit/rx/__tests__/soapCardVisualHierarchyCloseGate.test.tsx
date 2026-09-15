@@ -110,7 +110,7 @@ function renderWithRxForm(
 
 describe("vh-05 · canonical depth-tone ladder", () => {
   it("uses only the canonical recessed/raised/rail tokens", () => {
-    expect(DEPTH_TONE_RECESSED_SURFACE).toBe("bg-muted/30");
+    expect(DEPTH_TONE_RECESSED_SURFACE).toBe("bg-card");
     expect(DEPTH_TONE_RAISED_SURFACE).toBe("bg-card");
     expect(DEPTH_TONE_RAIL).toBe("border-l-2 border-l-primary/30");
 
@@ -345,8 +345,8 @@ describe("vh-05 · a11y — not colour-only", () => {
     );
 
     const sections = container.querySelectorAll("section");
-    // Recessed well (luminance) + raised card (luminance) — survives grayscale.
-    expect(sections[0]?.className).toContain("bg-muted/30");
+    // L1 card + raised inset card (luminance) — survives grayscale.
+    expect(sections[0]?.className).toContain("bg-card");
     expect(sections[1]?.className).toContain("bg-card");
     // Elevation (structure) — survives grayscale; accent rail reserved for L1 only.
     expect(sections[1]?.className).toContain("shadow-sm");

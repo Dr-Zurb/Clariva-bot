@@ -3,25 +3,23 @@
 /**
  * <DrugAutocomplete> — EHR Sub-batch B1 / T2.8.
  *
- * Combobox-style input over `drug_master`. Doctor types ≥2 chars →
- * 200ms-debounced fetch → dropdown of up to 10 results. Selecting a
- * result calls onSelect(drug) so the parent can prefill the row's
- * generic name + dosage + route in a single state update.
+ * Combobox-style input over `drug_master`. The catalogue loads once per
+ * session and filters in memory as the doctor types (≥2 chars, up to 10
+ * rows). Selecting a result calls onSelect(drug) so the parent can prefill
+ * the row's generic name + dosage + route in a single state update.
  *
- * Free-text fallback is intentional: doctors can type "compounded X"
- * and submit without ever picking from the dropdown. The parent stores
- * `drugMasterId = null` in that case (T2.7 / T2.9 acceptance).
+ * The first dropdown row is preselected so Enter commits it without
+ * ArrowDown. Escape closes the list first if the doctor wants the typed
+ * text instead. The parent stores `drugMasterId = null` for free text
+ * (T2.7 / T2.9 acceptance).
  *
  * NOT using Headless UI — the codebase has no UI-primitive dependency
  * today and we don't want to introduce one for a single combobox. The
  * implementation here is a vanilla React focus-trap + arrow-key dropdown
  * that's keyboard-navigable AND mobile touch-friendly (44px+ rows).
  *
- * Caching: results are cached in a module-level Map keyed on the query
- * string (case-insensitive, trimmed). Cache size capped at 64 entries
- * (LRU-ish via insertion-order eviction). Cache TTL is implicit — page
- * reload clears it. Good enough for a per-session lookup; the table is
- * tiny and the network round-trip is sub-100ms.
+ * Caching: the full catalogue is fetched once per auth-token session
+ * (`loadDrugMasterCatalog`) and filtered locally. Reload clears it.
  *
  * Dropdown is portaled to `document.body` with fixed positioning so sticky
  * SOAP section headers (z ≈ 40) and sibling Plan cards cannot cover it.
@@ -39,11 +37,22 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import type { DrugMasterRow } from "@/types/drug-master";
-import { searchDrugs } from "@/lib/api";
 import { useDoctorDrugUsage } from "@/hooks/useDoctorDrugUsage";
 import { sortDrugResultsByPersonalUsage } from "@/lib/drug-autocomplete-ranking";
+import {
+  filterDrugMasterCatalog,
+  formatDrugMasterCaptureLine,
+  loadDrugMasterCatalog,
+  peekDrugMasterCatalog,
+} from "@/lib/drug-master-catalog";
 import { trackCockpitV2RRxPolishRankingLanded } from "@/lib/patient-profile/telemetry";
 import { cn } from "@/lib/utils";
+
+export interface DrugAutocompleteExtraOption {
+  id: string;
+  label: string;
+  badge?: string;
+}
 
 interface DrugAutocompleteProps {
   /** Current text in the input (controlled). */
@@ -56,6 +65,12 @@ interface DrugAutocompleteProps {
    * if empty; route = route_default if empty; drug_master_id = drug.id).
    */
   onSelect?: (drug: DrugMasterRow) => void;
+  /**
+   * Habit / combo rows rendered above catalog names. Selecting one
+   * does not change the input — the parent commits the full card.
+   */
+  extraOptions?: readonly DrugAutocompleteExtraOption[];
+  onSelectExtra?: (id: string) => void;
   /** Auth token for the search request. */
   token: string;
   /** Required: input id for label association. */
@@ -68,7 +83,7 @@ interface DrugAutocompleteProps {
   inputClassName?: string;
   /** Hard cap on result count (server caps at 25). */
   limit?: number;
-  /** Debounce window in ms. Defaults to 200. */
+  /** @deprecated Catalogue is local; kept so existing callers compile. */
   debounceMs?: number;
   /**
    * When true, the combobox stops acting as a drug picker: no dropdown, no
@@ -78,12 +93,17 @@ interface DrugAutocompleteProps {
    * commit the bare catalog drug instead of parsing the typed line.
    */
   selectionDisabled?: boolean;
+  /**
+   * When false, never fetch or show the drug_master dropdown. Extra options
+   * are also hidden. Capture bar keeps this true and uses selectionDisabled
+   * once the line carries sig details.
+   */
+  catalogEnabled?: boolean;
 }
 
 const MIN_QUERY_LEN = 2;
 const DEFAULT_LIMIT = 10;
-const DEFAULT_DEBOUNCE_MS = 200;
-const CACHE_MAX = 64;
+const EMPTY_EXTRA_OPTIONS: readonly DrugAutocompleteExtraOption[] = [];
 /** Above sticky SOAP section headers (sticky-stack caps at ~40). */
 const LISTBOX_Z_INDEX = 50;
 
@@ -105,31 +125,12 @@ function measureDropdownAnchor(input: HTMLInputElement): DropdownAnchor {
   };
 }
 
-// Module-level cache (per page session). Cleared on page reload.
-const searchCache = new Map<string, DrugMasterRow[]>();
-
-function cacheKey(q: string): string {
-  return q.trim().toLowerCase();
-}
-
-function cacheGet(q: string): DrugMasterRow[] | undefined {
-  return searchCache.get(cacheKey(q));
-}
-
-function cacheSet(q: string, rows: DrugMasterRow[]): void {
-  const key = cacheKey(q);
-  // Insertion-order eviction: drop oldest if at cap.
-  if (searchCache.size >= CACHE_MAX) {
-    const first = searchCache.keys().next().value;
-    if (first !== undefined) searchCache.delete(first);
-  }
-  searchCache.set(key, rows);
-}
-
 export default function DrugAutocomplete({
   value,
   onChange,
   onSelect,
+  extraOptions = EMPTY_EXTRA_OPTIONS,
+  onSelectExtra,
   token,
   inputId,
   placeholder = "Medicine name",
@@ -137,31 +138,63 @@ export default function DrugAutocomplete({
   className,
   inputClassName,
   limit = DEFAULT_LIMIT,
-  debounceMs = DEFAULT_DEBOUNCE_MS,
   selectionDisabled = false,
+  catalogEnabled = true,
 }: DrugAutocompleteProps) {
+  const pickerDisabled = selectionDisabled || !catalogEnabled;
   const [open, setOpen] = useState(false);
-  const [activeIdx, setActiveIdx] = useState(-1);
-  const [loading, setLoading] = useState(false);
-  // Track the latest fetch's "fetch id" so a stale completion doesn't
-  // overwrite a newer query's results.
-  const fetchIdRef = useRef(0);
+  const [activeIdx, setActiveIdx] = useState(0);
+  const [catalog, setCatalog] = useState<DrugMasterRow[]>([]);
+  const [catalogLoading, setCatalogLoading] = useState(false);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const listboxRef = useRef<HTMLUListElement>(null);
+  // After ArrowUp/Down the pointer is often still sitting on a row.
+  // Ignore mouseenter until the mouse actually moves, or the highlight
+  // snaps back and Up looks dead.
+  const hoverLockedRef = useRef(false);
+  const lastPointerRef = useRef<{ x: number; y: number } | null>(null);
   const listboxId = `${useId()}-listbox`;
-  const [dropdownAnchor, setDropdownAnchor] = useState<DropdownAnchor | null>(null);
+  const [dropdownAnchor, setDropdownAnchor] = useState<DropdownAnchor | null>(
+    null
+  );
   const { scores: usageScores } = useDoctorDrugUsage(token);
 
   // Effective query — trimmed; below MIN_QUERY_LEN we hide the dropdown
   // and don't fetch.
   const query = value.trim();
-  const shouldFetch = useMemo(
-    () => query.length >= MIN_QUERY_LEN,
-    [query]
-  );
+  const shouldFetch = useMemo(() => query.length >= MIN_QUERY_LEN, [query]);
 
-  const [rawResults, setRawResults] = useState<DrugMasterRow[]>([]);
+  useEffect(() => {
+    if (pickerDisabled || !token) return;
+    const peeked = peekDrugMasterCatalog(token);
+    if (peeked) {
+      setCatalog(peeked);
+      setCatalogLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setCatalogLoading(true);
+    void loadDrugMasterCatalog(token)
+      .then((rows) => {
+        if (cancelled) return;
+        setCatalog(rows);
+      })
+      .catch(() => {
+        // Silent — doctor can still free-text the medicine name.
+      })
+      .finally(() => {
+        if (!cancelled) setCatalogLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [token, pickerDisabled]);
+
+  const rawResults = useMemo(
+    () => (shouldFetch ? filterDrugMasterCatalog(catalog, query, limit) : []),
+    [catalog, query, shouldFetch, limit]
+  );
   const rankedResults = useMemo(
     () => sortDrugResultsByPersonalUsage(rawResults, usageScores),
     [rawResults, usageScores]
@@ -171,55 +204,62 @@ export default function DrugAutocomplete({
     if (rankedResults.length === 0) return;
     const topScore = usageScores[rankedResults[0].id] ?? 0;
     if (topScore > 0) {
-      trackCockpitV2RRxPolishRankingLanded({ topResultPersonalScore: topScore });
+      trackCockpitV2RRxPolishRankingLanded({
+        topResultPersonalScore: topScore,
+      });
     }
   }, [rankedResults, usageScores]);
 
-  // Debounced fetch. Re-runs whenever the trimmed query changes.
   useEffect(() => {
-    if (!shouldFetch || selectionDisabled) {
-      setRawResults([]);
+    if (!shouldFetch || pickerDisabled) {
       setOpen(false);
       setActiveIdx(-1);
-      return;
     }
-    // Cache fast-path: hydrate immediately + still revalidate (cache
-    // only seeds the dropdown; backend is the source of truth).
-    const cached = cacheGet(query);
-    if (cached) {
-      setRawResults(cached);
-      setActiveIdx(cached.length > 0 ? 0 : -1);
+  }, [shouldFetch, pickerDisabled]);
+
+  useEffect(() => {
+    setActiveIdx(0);
+    hoverLockedRef.current = false;
+    lastPointerRef.current = null;
+  }, [query]);
+
+  useLayoutEffect(() => {
+    const list = listboxRef.current;
+    if (activeIdx < 0 || !list) return;
+    const active = list.querySelector<HTMLElement>(
+      '[role="option"][aria-selected="true"]'
+    );
+    if (!active) return;
+    const listRect = list.getBoundingClientRect();
+    const rowRect = active.getBoundingClientRect();
+    if (rowRect.top < listRect.top) {
+      list.scrollTop -= listRect.top - rowRect.top;
+    } else if (rowRect.bottom > listRect.bottom) {
+      list.scrollTop += rowRect.bottom - listRect.bottom;
     }
+  }, [activeIdx]);
 
-    const myId = ++fetchIdRef.current;
-    const timer = setTimeout(async () => {
-      setLoading(true);
-      try {
-        const res = await searchDrugs(token, query, { limit });
-        if (myId !== fetchIdRef.current) return; // stale
-        const rows = res.data.results;
-        cacheSet(query, rows);
-        setRawResults(rows);
-        setActiveIdx(rows.length > 0 ? 0 : -1);
-      } catch {
-        if (myId !== fetchIdRef.current) return;
-        // Silent on transient errors — show whatever cache hydrated;
-        // doctors can still free-text enter the medicine name.
-      } finally {
-        if (myId === fetchIdRef.current) setLoading(false);
-      }
-    }, debounceMs);
-
-    return () => clearTimeout(timer);
-  }, [query, shouldFetch, token, limit, debounceMs, selectionDisabled]);
-
+  const extraItems = useMemo(
+    () => (pickerDisabled ? EMPTY_EXTRA_OPTIONS : extraOptions),
+    [pickerDisabled, extraOptions]
+  );
+  const itemCount = extraItems.length + rankedResults.length;
+  const loading = catalogLoading && shouldFetch && itemCount === 0;
   const showDropdown =
-    !selectionDisabled && open && shouldFetch && (rankedResults.length > 0 || loading);
+    !pickerDisabled && open && shouldFetch && (itemCount > 0 || loading);
 
   const syncDropdownAnchor = useCallback(() => {
     const input = inputRef.current;
     if (!input) return;
-    setDropdownAnchor(measureDropdownAnchor(input));
+    const next = measureDropdownAnchor(input);
+    setDropdownAnchor((prev) =>
+      prev &&
+      prev.top === next.top &&
+      prev.left === next.left &&
+      prev.width === next.width
+        ? prev
+        : next
+    );
   }, []);
 
   useLayoutEffect(() => {
@@ -228,11 +268,21 @@ export default function DrugAutocomplete({
       return;
     }
     syncDropdownAnchor();
-  }, [showDropdown, syncDropdownAnchor, value, rankedResults.length, loading]);
+  }, [
+    showDropdown,
+    syncDropdownAnchor,
+    value,
+    rankedResults.length,
+    extraItems.length,
+    loading,
+  ]);
 
   useEffect(() => {
     if (!showDropdown) return;
-    const handleReposition = () => syncDropdownAnchor();
+    const handleReposition = (e?: Event) => {
+      if (e && listboxRef.current?.contains(e.target as Node)) return;
+      syncDropdownAnchor();
+    };
     window.addEventListener("resize", handleReposition);
     // Capture scroll from nested panes (Plan tab scroll container).
     window.addEventListener("scroll", handleReposition, true);
@@ -257,7 +307,7 @@ export default function DrugAutocomplete({
 
   const commitSelection = useCallback(
     (drug: DrugMasterRow) => {
-      onChange(drug.generic_name);
+      onChange(formatDrugMasterCaptureLine(drug));
       onSelect?.(drug);
       setOpen(false);
       setActiveIdx(-1);
@@ -268,30 +318,105 @@ export default function DrugAutocomplete({
     [onChange, onSelect]
   );
 
+  const commitExtra = useCallback(
+    (id: string) => {
+      onSelectExtra?.(id);
+      setOpen(false);
+      setActiveIdx(-1);
+      inputRef.current?.focus();
+    },
+    [onSelectExtra]
+  );
+
+  const commitActiveItem = useCallback(
+    (idx: number) => {
+      if (idx < 0 || idx >= itemCount) return false;
+      if (idx < extraItems.length) {
+        commitExtra(extraItems[idx]!.id);
+        return true;
+      }
+      const drug = rankedResults[idx - extraItems.length];
+      if (!drug) return false;
+      commitSelection(drug);
+      return true;
+    },
+    [itemCount, extraItems, rankedResults, commitExtra, commitSelection]
+  );
+
+  const lockHoverFromKeyboard = () => {
+    hoverLockedRef.current = true;
+    // Next pointer event only records position — scroll/synthetic
+    // mousemove after a key must not unlock hover.
+    lastPointerRef.current = null;
+  };
+
+  const highlightFromPointer = (idx: number) => {
+    if (hoverLockedRef.current) return;
+    setActiveIdx(idx);
+  };
+
+  const onListPointerMove = (e: {
+    clientX: number;
+    clientY: number;
+    movementX?: number;
+    movementY?: number;
+  }) => {
+    const prev = lastPointerRef.current;
+    const moved =
+      (e.movementX ?? 0) !== 0 ||
+      (e.movementY ?? 0) !== 0 ||
+      (prev != null && (prev.x !== e.clientX || prev.y !== e.clientY));
+    lastPointerRef.current = { x: e.clientX, y: e.clientY };
+    if (!moved) return;
+    hoverLockedRef.current = false;
+  };
+
   const handleKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
     // Parse-mode (full sig line): never capture keys — let Enter bubble to the
     // capture bar so the typed line is parsed instead of a stale dropdown match.
-    if (selectionDisabled) return;
-    if (!open && e.key === "ArrowDown" && rankedResults.length > 0) {
+    if (pickerDisabled) return;
+    if (!open && e.key === "ArrowDown" && itemCount > 0) {
+      lockHoverFromKeyboard();
       setOpen(true);
       setActiveIdx(0);
       e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+    if (!open && e.key === "ArrowUp" && itemCount > 0) {
+      lockHoverFromKeyboard();
+      setOpen(true);
+      setActiveIdx(itemCount - 1);
+      e.preventDefault();
+      e.stopPropagation();
       return;
     }
     if (!open) return;
     switch (e.key) {
       case "ArrowDown":
-        setActiveIdx((i) => Math.min(i + 1, rankedResults.length - 1));
+        lockHoverFromKeyboard();
+        setActiveIdx((i) => {
+          if (itemCount === 0) return -1;
+          if (i < 0) return 0;
+          return Math.min(i + 1, itemCount - 1);
+        });
         e.preventDefault();
+        e.stopPropagation();
         break;
       case "ArrowUp":
-        setActiveIdx((i) => Math.max(i - 1, 0));
+        lockHoverFromKeyboard();
+        setActiveIdx((i) => {
+          if (itemCount === 0) return -1;
+          if (i < 0) return itemCount - 1;
+          return Math.max(i - 1, 0);
+        });
         e.preventDefault();
+        e.stopPropagation();
         break;
       case "Enter":
-        if (activeIdx >= 0 && activeIdx < rankedResults.length) {
-          commitSelection(rankedResults[activeIdx]);
+        if (commitActiveItem(activeIdx)) {
           e.preventDefault();
+          e.stopPropagation();
         }
         break;
       case "Escape":
@@ -320,11 +445,50 @@ export default function DrugAutocomplete({
           zIndex: LISTBOX_Z_INDEX,
         }}
         className="max-h-72 overflow-auto rounded-md border border-border bg-popover py-0.5 shadow-lg"
+        data-testid={extraItems.length > 0 ? "medicine-combo-list" : undefined}
+        onMouseMove={onListPointerMove}
       >
-        {loading && rankedResults.length === 0 && (
-          <li className="px-3 py-2 text-xs text-muted-foreground">Searching…</li>
+        {loading && itemCount === 0 && (
+          <li className="px-3 py-2 text-xs text-muted-foreground">
+            Searching…
+          </li>
         )}
-        {rankedResults.map((drug, idx) => {
+        {extraItems.map((extra, idx) => {
+          const active = idx === activeIdx;
+          return (
+            <li
+              key={extra.id}
+              id={`${listboxId}-option-${idx}`}
+              role="option"
+              aria-selected={active}
+              data-testid="medicine-combo-option"
+              onMouseEnter={() => highlightFromPointer(idx)}
+              onMouseDown={(e) => {
+                e.preventDefault();
+                commitExtra(extra.id);
+              }}
+              className={cn(
+                "flex items-center gap-2 cursor-pointer px-3 py-1.5 text-[11px] leading-tight",
+                active ? "bg-primary/10" : "hover:bg-muted/50"
+              )}
+            >
+              <span className="min-w-0 flex-1 truncate">{extra.label}</span>
+              {extra.badge ? (
+                <span
+                  data-testid="medicine-combo-most-frequent"
+                  className="shrink-0 rounded-full border border-border px-1.5 py-0 text-[10px] text-muted-foreground"
+                >
+                  {extra.badge}
+                </span>
+              ) : null}
+            </li>
+          );
+        })}
+        {extraItems.length > 0 && rankedResults.length > 0 ? (
+          <li role="presentation" className="my-0.5 border-t border-border" />
+        ) : null}
+        {rankedResults.map((drug, catalogIdx) => {
+          const idx = extraItems.length + catalogIdx;
           const active = idx === activeIdx;
           return (
             <li
@@ -332,7 +496,8 @@ export default function DrugAutocomplete({
               id={`${listboxId}-option-${idx}`}
               role="option"
               aria-selected={active}
-              onMouseEnter={() => setActiveIdx(idx)}
+              data-testid="medicine-catalog-option"
+              onMouseEnter={() => highlightFromPointer(idx)}
               // onMouseDown (not onClick) so the input doesn't blur
               // before the click registers — onClick after blur would
               // close the dropdown via the outside-click handler.
@@ -341,24 +506,17 @@ export default function DrugAutocomplete({
                 commitSelection(drug);
               }}
               className={cn(
-                "cursor-pointer px-3 py-2.5 text-sm leading-tight",
-                active ? "bg-primary/10" : "hover:bg-muted/50",
+                "flex items-center gap-2 cursor-pointer px-3 py-1.5 text-[11px] leading-tight",
+                active ? "bg-primary/10" : "hover:bg-muted/50"
               )}
             >
-              <div className="font-medium text-foreground">{drug.generic_name}</div>
-              <div className="mt-0.5 text-xs text-muted-foreground">
-                {[
-                  drug.brand_names.slice(0, 3).join(" · "),
-                  drug.strength,
-                  drug.form,
-                ]
-                  .filter(Boolean)
-                  .join(" · ")}
-              </div>
+              <span className="min-w-0 flex-1 truncate">
+                {formatDrugMasterCaptureLine(drug)}
+              </span>
             </li>
           );
         })}
-        {rankedResults.length === 0 && !loading && (
+        {itemCount === 0 && !loading && (
           <li className="px-3 py-2 text-xs text-muted-foreground">
             No matches — type the medicine name to add it as free text.
           </li>
@@ -377,7 +535,7 @@ export default function DrugAutocomplete({
         aria-expanded={showDropdown}
         aria-controls={listboxId}
         aria-activedescendant={
-          showDropdown && activeIdx >= 0
+          showDropdown && activeIdx >= 0 && activeIdx < itemCount
             ? `${listboxId}-option-${activeIdx}`
             : undefined
         }
@@ -385,13 +543,13 @@ export default function DrugAutocomplete({
         value={value}
         onChange={(e) => {
           onChange(e.target.value);
-          if (!selectionDisabled) setOpen(true);
+          if (!pickerDisabled) setOpen(true);
         }}
         onFocus={() => {
-          if (shouldFetch && !selectionDisabled) setOpen(true);
+          if (shouldFetch && !pickerDisabled) setOpen(true);
         }}
         onClick={() => {
-          if (shouldFetch && !selectionDisabled && !disabled) setOpen(true);
+          if (shouldFetch && !pickerDisabled && !disabled) setOpen(true);
         }}
         onKeyDown={handleKeyDown}
         placeholder={placeholder}

@@ -108,6 +108,10 @@ describe("LetterheadPagePreview", () => {
     );
 
     const images = screen.getAllByRole("presentation");
+    const page = screen.getByRole("article", {
+      name: /a4 prescription preview/i,
+    });
+    expect(Number.parseFloat(page.style.paddingTop)).toBeGreaterThan(0);
     expect(images.some((img) => img.getAttribute("src")?.includes("header"))).toBe(
       true,
     );
@@ -275,6 +279,32 @@ describe("LetterheadPagePreview", () => {
     expect(invStart?.textContent).toContain("CBC");
   });
 
+  it("prints package members as nested ticks under the package name", () => {
+    render(
+      <LetterheadPagePreview
+        model={{
+          ...model,
+          rx: {
+            patientName: "Neha Kulkarni",
+            investigations:
+              "Thyroid profile; ECG; CBC: Haemoglobin, Albumin, ANA",
+            medicines: [],
+          },
+        }}
+      />,
+    );
+
+    expect(screen.getByText("Thyroid profile")).toBeInTheDocument();
+    expect(screen.getByText("ECG")).toBeInTheDocument();
+    expect(screen.getByText("CBC")).toBeInTheDocument();
+    expect(screen.getByText("Haemoglobin")).toBeInTheDocument();
+    expect(screen.getByText("Albumin")).toBeInTheDocument();
+    expect(screen.getByText("ANA")).toBeInTheDocument();
+    expect(
+      screen.queryByText(/CBC: Haemoglobin/),
+    ).not.toBeInTheDocument();
+  });
+
   it("shows food and notes as a line under the medicine row", () => {
     render(
       <LetterheadPagePreview
@@ -340,7 +370,7 @@ describe("LetterheadPagePreview", () => {
     }
   });
 
-  it("keeps the Rx heading and header with the first medicine row", () => {
+  it("keeps the Rx heading with the column header, then lists every medicine", () => {
     render(
       <LetterheadPagePreview
         model={{
@@ -349,11 +379,33 @@ describe("LetterheadPagePreview", () => {
             patientName: "Sneha Kulkarni",
             medicines: [
               {
+                name: "Gel antacid",
+                dose: "2 spoons",
+                route: "Oral",
+                frequency: "",
+                duration: "",
+                instructions: "After food",
+              },
+              {
                 name: "Naproxen 250 mg",
                 dose: "1 tab (250 mg)",
                 route: "Oral",
                 frequency: "Twice daily",
                 duration: "3 days",
+              },
+              {
+                name: "Dicyclomine",
+                dose: "",
+                route: "",
+                frequency: "As needed",
+                duration: "",
+              },
+              {
+                name: "Diclofenac",
+                dose: "",
+                route: "",
+                frequency: "As needed",
+                duration: "",
               },
             ],
           },
@@ -361,11 +413,15 @@ describe("LetterheadPagePreview", () => {
       />,
     );
 
-    const start = screen.getByText("Naproxen 250 mg").closest("[data-rx-start]");
+    const start = screen.getByText("Rx").closest("[data-rx-start]");
     expect(start).toBeTruthy();
-    expect(start?.textContent).toMatch(/Rx/);
     expect(start?.textContent).toMatch(/Medicine/);
     expect(start?.querySelector("thead")).toBeTruthy();
+    expect(start?.textContent).not.toMatch(/Gel antacid/);
+    expect(screen.getByText("Gel antacid")).toBeInTheDocument();
+    expect(screen.getByText("Naproxen 250 mg")).toBeInTheDocument();
+    expect(screen.getByText("Dicyclomine")).toBeInTheDocument();
+    expect(screen.getByText("Diclofenac")).toBeInTheDocument();
   });
 
   it("renders the live visit instead of the settings sample", () => {
@@ -423,8 +479,11 @@ describe("LetterheadPagePreview", () => {
           ...model,
           rx: {
             patientName: "Sneha Kulkarni",
+            allergies: "Penicillin (severe — rash)",
             cc: "Headache",
             hopi: "Throbbing for 2 days",
+            vitals: "BP 124/80 · HR 72",
+            examinationFindings: "No focal deficit",
             socialHistory: "Non-smoker",
             diagnosis: "Migraine without aura",
             investigations: "CBC",
@@ -455,8 +514,11 @@ describe("LetterheadPagePreview", () => {
       .getAllByRole("heading")
       .map((el) => el.textContent?.trim());
     expect(headings).toEqual([
+      "Allergies",
       "Chief complaint",
       "History of present illness",
+      "Vitals",
+      "Examination",
       "Social history",
       "Travel history",
       "Prophylaxis",

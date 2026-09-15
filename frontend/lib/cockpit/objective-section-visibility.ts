@@ -1,10 +1,21 @@
 import {
+  CORE_OBJECTIVE_SECTION_IDS,
   OBJECTIVE_SECTION_LABELS,
   type ObjectiveSectionId,
 } from "@/lib/cockpit/objective-section-order";
 
-/** Per-doctor hidden section ids (delta set — absent ⇒ visible). */
+/** Per-doctor hidden section ids. Empty stored set ⇒ factory lean default. */
 export type ObjectiveSectionHiddenSet = ObjectiveSectionId[];
+
+/** Visible at factory default (in-clinic / video / registry fallback). */
+export const CORE_OBJECTIVE_DEFAULT_VISIBLE_IDS = [
+  "vitals",
+  "exam",
+  "notes",
+  "test_results",
+] as const;
+
+const CORE_VISIBLE_SET = new Set<string>(CORE_OBJECTIVE_DEFAULT_VISIBLE_IDS);
 
 const STATIC_SECTION_ID_SET = new Set<string>(Object.keys(OBJECTIVE_SECTION_LABELS));
 
@@ -20,6 +31,41 @@ function toMountableSet(
 
 function toHiddenSet(hiddenIds: readonly string[]): ReadonlySet<string> {
   return new Set(hiddenIds);
+}
+
+export interface DefaultObjectiveLayout {
+  defaultHidden: ObjectiveSectionId[];
+}
+
+/** Factory default: every static objective section visible. */
+export function resolveDefaultObjectiveLayout(): DefaultObjectiveLayout {
+  return {
+    defaultHidden: CORE_OBJECTIVE_SECTION_IDS.filter((id) => !CORE_VISIBLE_SET.has(id)),
+  };
+}
+
+/**
+ * Layer the doctor override over the factory default. Stored set wins wholesale
+ * when present; otherwise the lean default applies (vitals / V3-D3 analogue).
+ */
+export function resolveEffectiveObjectiveHidden({
+  storedHidden,
+}: {
+  storedHidden: readonly string[];
+}): { hidden: ObjectiveSectionId[] } {
+  const seed = resolveDefaultObjectiveLayout();
+  const source = storedHidden.length > 0 ? storedHidden : seed.defaultHidden;
+  const seen = new Set<ObjectiveSectionId>();
+  const hidden: ObjectiveSectionId[] = [];
+
+  for (const id of source) {
+    if (!isKnownStaticSectionId(id)) continue;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    hidden.push(id);
+  }
+
+  return { hidden };
 }
 
 /**
@@ -89,7 +135,7 @@ export function serializeHiddenIds(ids: readonly string[]): string {
   return JSON.stringify([...ids].sort());
 }
 
-/** Load the doctor's stored hidden section set (empty = nothing hidden). */
+/** Load the doctor's stored hidden section set (empty = factory lean default). */
 export async function fetchObjectiveSectionHidden(
   token: string,
 ): Promise<ObjectiveSectionHiddenSet> {

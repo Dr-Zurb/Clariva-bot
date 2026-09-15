@@ -17,6 +17,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
+import { prefetchAppointmentDeskVitals } from "@/lib/cockpit/desk-vitals-query";
 import { cn } from "@/lib/utils";
 import {
   buildCockpitAppointmentPath,
@@ -113,6 +115,7 @@ interface OpdTodayClientProps {
 
 export default function OpdTodayClient({ token }: OpdTodayClientProps) {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const [sessionDate, setSessionDate] = useState(() =>
@@ -508,13 +511,14 @@ export default function OpdTodayClient({ token }: OpdTodayClientProps) {
           () => undefined
         );
       }
+      prefetchAppointmentDeskVitals(queryClient, token, entry.appointmentId);
       router.push(
         buildCockpitAppointmentPath(entry.appointmentId, "opd-today", {
           opdDate: sessionDate,
         })
       );
     },
-    [router, token, q, sessionDate]
+    [router, queryClient, token, q, sessionDate]
   );
 
   const handleSlotRowNavigate = useCallback(
@@ -526,13 +530,14 @@ export default function OpdTodayClient({ token }: OpdTodayClientProps) {
         entryId: row.appointmentId,
         slotStatus: row.slotStatus,
       });
+      prefetchAppointmentDeskVitals(queryClient, token, row.appointmentId);
       router.push(
         buildCockpitAppointmentPath(row.appointmentId, "opd-today", {
           opdDate: sessionDate,
         })
       );
     },
-    [router, sessionDate]
+    [router, queryClient, token, sessionDate]
   );
 
   const handleRetry = useCallback(() => {

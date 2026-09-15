@@ -85,7 +85,7 @@ describe("subj-27 · Subjective reorder a11y + integration sweep", () => {
         settings: {
           subjective_section_order: [],
           subjective_section_collapsed: {},
-          subjective_section_hidden: [],
+          subjective_section_hidden: ["__show_all__"],
         },
       },
     });
@@ -183,7 +183,11 @@ describe("subj-27 · Subjective reorder a11y + integration sweep", () => {
     const { container } = renderWithRxForm(
       <SubjectiveSection heading={null} patientId="pat-1" token="test-token" />,
     );
-    await waitFor(() => expect(mockGetDoctorSettings).toHaveBeenCalled());
+    await waitFor(() => {
+      expect(mockGetDoctorSettings).toHaveBeenCalled();
+      expect(container.querySelector("#rx-symptoms")).toBeTruthy();
+      expect(container.querySelector("[data-subjective-section-id]")).toBeTruthy();
+    });
 
     const order = readRenderedSectionOrder(container);
     expect(order).toContain("patient_background");
@@ -239,7 +243,7 @@ describe("subj-31 · Subjective collapse a11y (controlled mode)", () => {
         settings: {
           subjective_section_order: [],
           subjective_section_collapsed: {},
-          subjective_section_hidden: [],
+          subjective_section_hidden: ["__show_all__"],
         },
       },
     });
@@ -295,7 +299,7 @@ describe("subj-35 · Manage sections menu a11y", () => {
         settings: {
           subjective_section_order: [],
           subjective_section_collapsed: {},
-          subjective_section_hidden: [],
+          subjective_section_hidden: ["__show_all__"],
         },
       },
     });
@@ -304,7 +308,7 @@ describe("subj-35 · Manage sections menu a11y", () => {
         settings: {
           subjective_section_order: [],
           subjective_section_collapsed: {},
-          subjective_section_hidden: [],
+          subjective_section_hidden: ["__show_all__"],
         },
       },
     });

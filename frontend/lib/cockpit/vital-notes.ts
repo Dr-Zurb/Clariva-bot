@@ -10,6 +10,8 @@ import { VITAL_ORDER, type VitalKey } from "@/lib/cockpit/vitals-schema";
 import type { VitalsJson } from "@/types/prescription";
 
 export const VITAL_NOTE_MAX_LEN = 200;
+/** Same cap as desk `patient_vitals.note` / DESK_VITALS_NOTE_MAX. */
+export const VITALS_SECTION_NOTE_MAX = 1000;
 
 const VALID_VITAL_KEYS = new Set<string>(VITAL_ORDER);
 
@@ -61,4 +63,17 @@ export function serializeVitalNotesForVitalsJson(
 export function formatVitalLineWithNote(baseLine: string, note: string | null | undefined): string {
   const trimmed = normalizeVitalNoteText(note);
   return trimmed ? `${baseLine} — ${trimmed}` : baseLine;
+}
+
+export function normalizeVitalsSectionNote(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  return trimmed.slice(0, VITALS_SECTION_NOTE_MAX);
+}
+
+export function hydrateVitalsSectionNoteFromPrescription(
+  json: VitalsJson | null | undefined,
+): string {
+  return normalizeVitalsSectionNote(json?.sectionNote) ?? "";
 }

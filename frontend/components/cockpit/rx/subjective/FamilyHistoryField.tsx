@@ -9,6 +9,7 @@ import {
 import { SUBJECTIVE_SCROLL_TOP_SELECTOR } from "@/lib/cockpit/exam-card-scroll";
 import { useDepthToneSurface } from "@/components/ui/sticky-stack";
 import { SectionReorderLeadingAction } from "@/components/cockpit/rx/subjective/SortableSectionShell";
+import { LastVisitFamilyHistoryStrip } from "@/components/cockpit/rx/last-visit/LastVisitParchiStrips";
 import { RemoveIconButton } from "@/components/cockpit/rx/subjective/RemoveIconButton";
 import {
   addFamilyHistoryCatalogCondition,
@@ -856,6 +857,7 @@ export function FamilyHistoryField({
       leadingActions={<SectionReorderLeadingAction sectionId="family_history" />}
       actions={!disabled ? <SubjectiveSectionTemplateButton scope="family_history" /> : undefined}
     >
+      <LastVisitFamilyHistoryStrip disabled={disabled} />
       <div className="space-y-1.5" data-testid="family-history-none">
         <div className="flex flex-wrap gap-1.5" role="group" aria-label="Family history screening">
           <button

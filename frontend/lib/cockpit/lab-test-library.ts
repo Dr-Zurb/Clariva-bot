@@ -2314,6 +2314,7 @@ export function scaffoldLabPanel(
       refLow: prefill.refLow,
       refHigh: prefill.refHigh,
       refText: prefill.refText,
+      method: null,
     });
   }
 
@@ -2338,6 +2339,7 @@ export function createCustomTestResultRow(
     refLow: null,
     refHigh: null,
     refText: null,
+    method: null,
   };
 }
 
@@ -2364,5 +2366,6 @@ export function scaffoldLabAnalyteRow(
     refLow: prefill.refLow,
     refHigh: prefill.refHigh,
     refText: prefill.refText,
+    method: null,
   };
 }

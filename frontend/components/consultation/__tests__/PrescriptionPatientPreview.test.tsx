@@ -1,10 +1,11 @@
 import type { ComponentProps } from "react";
-import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import PrescriptionPatientPreview, {
   letterheadPreviewModelFromRx,
 } from "@/components/consultation/PrescriptionPatientPreview";
 import type { PatientRxViewModel } from "@/components/ehr/PatientRxView";
+import { RX_ALSO_PRINT_STORAGE_KEY } from "@/lib/cockpit/rx-also-print";
 
 class ResizeObserverMock {
   observe() {}
@@ -53,7 +54,7 @@ function renderCommitPreview(
   const onPrint = vi.fn();
   const onDownload = vi.fn();
 
-  render(
+  const view = render(
     <PrescriptionPatientPreview
       open
       onClose={vi.fn()}
@@ -78,10 +79,15 @@ function renderCommitPreview(
     onFinish,
     onPrint,
     onDownload,
+    unmount: view.unmount,
   };
 }
 
 describe("PrescriptionPatientPreview", () => {
+  beforeEach(() => {
+    window.localStorage.removeItem(RX_ALSO_PRINT_STORAGE_KEY);
+  });
+
   it("joins food timing and notes into medicine instructions", () => {
     const model = letterheadPreviewModelFromRx({
       ...viewModel,
@@ -109,9 +115,35 @@ describe("PrescriptionPatientPreview", () => {
     );
   });
 
+  it("prints a stored 1-0-1 schedule instead of the BID prose label", () => {
+    const model = letterheadPreviewModelFromRx({
+      ...viewModel,
+      medicines: [
+        {
+          medicineName: "Pantoprazole",
+          dosage: "40 mg",
+          route: "Oral",
+          routeCode: "oral",
+          frequency: "1-0-1",
+          frequencyCode: "BID",
+          duration: "30 days",
+          durationValue: 30,
+          durationUnit: "days",
+          instructions: null,
+          doseQty: 1,
+          doseUnit: "tab",
+          foodTiming: null,
+        },
+      ],
+    });
+
+    expect(model.rx?.medicines?.[0]?.frequency).toBe("1-0-1");
+  });
+
   it("forwards social history and custom sections onto the letterhead model", () => {
     const model = letterheadPreviewModelFromRx({
       ...viewModel,
+      allergies: "Penicillin",
       hopi: "Throbbing for 2 days",
       socialHistory: "Non-smoker",
       customSubsections: [
@@ -125,11 +157,21 @@ describe("PrescriptionPatientPreview", () => {
       ],
     });
 
+    expect(model.rx?.allergies).toBe("Penicillin");
     expect(model.rx?.hopi).toBe("Throbbing for 2 days");
     expect(model.rx?.socialHistory).toBe("Non-smoker");
     expect(model.rx?.customSubsections?.[0]?.title).toBe("Travel history");
     expect(model.rx?.assessmentCustomSections?.[0]?.title).toBe("Risk notes");
     expect(model.rx?.planCustomSections?.[0]?.title).toBe("Physio");
+  });
+
+  it("uses the live visit date for the generation credit", () => {
+    const model = letterheadPreviewModelFromRx({
+      ...viewModel,
+      visitDateLabel: "10 Sept 2026",
+    });
+
+    expect(model.generatedAtLabel).toBe("10 Sept 2026");
   });
 
   it("renders peek-only without a commit bar", () => {
@@ -208,6 +250,33 @@ describe("PrescriptionPatientPreview", () => {
     expect(onSendAndFinish).not.toHaveBeenCalled();
   });
 
+  it("keeps Also print checked on the next patient after it was selected", async () => {
+    const first = renderCommitPreview();
+    fireEvent.click(screen.getByRole("checkbox", { name: /also print/i }));
+    first.unmount();
+
+    const second = renderCommitPreview();
+    const checkbox = screen.getByRole("checkbox", { name: /also print/i });
+    await waitFor(() => {
+      expect(checkbox).toHaveAttribute("data-state", "checked");
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^send & finish$/i }));
+    expect(second.onSendFinishAndPrint).toHaveBeenCalledTimes(1);
+    expect(second.onSendAndFinish).not.toHaveBeenCalled();
+  });
+
+  it("keeps Also print unchecked after it was turned off", async () => {
+    window.localStorage.setItem(RX_ALSO_PRINT_STORAGE_KEY, "1");
+    renderCommitPreview();
+    const checkbox = screen.getByRole("checkbox", { name: /also print/i });
+    await waitFor(() => {
+      expect(checkbox).toHaveAttribute("data-state", "checked");
+    });
+    fireEvent.click(checkbox);
+    expect(checkbox).toHaveAttribute("data-state", "unchecked");
+    expect(window.localStorage.getItem(RX_ALSO_PRINT_STORAGE_KEY)).toBe("0");
+  });
+
   it("keeps send-only and finish-only in More", () => {
     const { onSendRx, onFinish } = renderCommitPreview();
 
@@ -222,7 +291,7 @@ describe("PrescriptionPatientPreview", () => {
     expect(onFinish).toHaveBeenCalledTimes(1);
   });
 
-  it("omits Stay / resume later on the intentional Done path", () => {
+  it("never offers Stay / resume later — Done is the only commit path", () => {
     renderCommitPreview();
     expect(screen.queryByTestId("rx-leave-exit")).not.toBeInTheDocument();
     expect(
@@ -231,20 +300,6 @@ describe("PrescriptionPatientPreview", () => {
     expect(
       screen.queryByRole("button", { name: /leave — resume later/i })
     ).not.toBeInTheDocument();
-  });
-
-  it("shows Stay / resume later when the leave path provides them", () => {
-    const onStay = vi.fn();
-    const onResumeLater = vi.fn();
-    renderCommitPreview({ onStay, onResumeLater });
-
-    expect(screen.getByTestId("rx-leave-exit")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /^stay$/i }));
-    expect(onStay).toHaveBeenCalledTimes(1);
-    fireEvent.click(
-      screen.getByRole("button", { name: /leave — resume later/i })
-    );
-    expect(onResumeLater).toHaveBeenCalledTimes(1);
     expect(
       screen.getByRole("button", { name: /^send & finish$/i })
     ).toBeInTheDocument();

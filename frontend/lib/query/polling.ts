@@ -2,6 +2,8 @@
 export const POLL_INTERVAL = {
   COUNTS: 30_000,
   COCKPIT: 60_000,
+  /** Front-desk vitals: saved on the desk's own device mid-visit. */
+  DESK_VITALS: 15_000,
 } as const;
 
 /** Pause polling while the tab is hidden (matches legacy visibility behaviour). */

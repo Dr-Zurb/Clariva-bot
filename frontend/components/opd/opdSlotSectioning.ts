@@ -63,6 +63,24 @@ export function sortSlotRowsByScheduledAsc(
   );
 }
 
+/** Newest / highest token (`position`) first. Tie-break: later slot time. */
+export function sortSlotRowsByTokenDesc(
+  a: SlotSessionRow,
+  b: SlotSessionRow
+): number {
+  const pos = (b.position ?? 0) - (a.position ?? 0);
+  if (pos !== 0) return pos;
+  return (
+    new Date(b.scheduledAt).getTime() - new Date(a.scheduledAt).getTime()
+  );
+}
+
+export function orderSlotRowsByTokenDesc(
+  rows: SlotSessionRow[]
+): SlotSessionRow[] {
+  return [...rows].sort(sortSlotRowsByTokenDesc);
+}
+
 function isLateScheduled(r: SlotSessionRow): boolean {
   if (r.timing?.band === "late") return true;
   if (r.slotStatus === "running_late") return true;
@@ -156,9 +174,8 @@ export function rowsForChipSection(
 }
 
 /**
- * Section default-open:
- * - All: Incomplete / Overdue / Upcoming open; rest collapsed
- * - Chip filter: matching section open
+ * Section default-open (chip filters only — All is a flat list).
+ * Matching chip's section is treated as open for shouldRenderChipSection.
  */
 export function sectionDefaultOpen(
   statusFilter: OpdStatusFilterValue,
@@ -193,15 +210,14 @@ export function sectionDefaultOpen(
 }
 
 /**
- * On All: always render every chip section (even count 0) with collapse bars.
- * On a chip filter: only that chip's rows — UI skips the collapse bar
- * (the chip already names the bucket).
+ * All is a flat token-desc list — no section bars.
+ * On a chip filter: only that chip's rows (the chip already names the bucket).
  */
 export function shouldRenderChipSection(
   statusFilter: OpdStatusFilterValue,
   section: SlotChipSectionKey,
   _count: number
 ): boolean {
-  if (statusFilter === "all") return true;
+  if (statusFilter === "all") return false;
   return sectionDefaultOpen(statusFilter, section);
 }

@@ -52,6 +52,7 @@ function entry(
       hasPrescription: false,
       hasSnapshots: false,
     },
+    transcriptStatus: null,
     ...overrides,
   };
 }
@@ -142,5 +143,56 @@ describe("ConsultTimelinePane", () => {
       expect(screen.getByText("No consults yet for this patient.")).toBeInTheDocument();
     });
     expect(mockedTimeline).toHaveBeenCalledTimes(2);
+  });
+
+  it("offers transcript review only when consultation_transcripts is completed", async () => {
+    mockedTimeline.mockResolvedValue({
+      items: [entry({ transcriptStatus: "completed" })],
+      hasMore: false,
+    });
+    render(<ConsultTimelinePane patientId={PATIENT_ID} token="t1" />);
+    const review = await screen.findByRole("link", {
+      name: "Review transcript for uncharted items",
+    });
+    expect(review).toHaveAttribute(
+      "href",
+      `/dashboard/appointments/${APPT_ID}?from=patients-v2&pid=${PATIENT_ID}&amendTranscript=aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa`,
+    );
+  });
+
+  it("offers nothing when there is no usable transcript", async () => {
+    mockedTimeline.mockResolvedValue({
+      items: [entry({ transcriptStatus: null })],
+      hasMore: false,
+    });
+    render(<ConsultTimelinePane patientId={PATIENT_ID} token="t1" />);
+    await screen.findByText(/Recording/);
+    expect(
+      screen.queryByRole("link", { name: "Review transcript for uncharted items" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByTestId("consult-timeline-transcript-status")).not.toBeInTheDocument();
+  });
+
+  it("labels processing and failed transcripts distinctly", async () => {
+    mockedTimeline.mockResolvedValue({
+      items: [
+        entry({
+          sessionId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+          transcriptStatus: "processing",
+        }),
+        entry({
+          sessionId: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+          appointmentId: "b1111111-1111-1111-1111-111111111111",
+          transcriptStatus: "failed",
+        }),
+      ],
+      hasMore: false,
+    });
+    render(<ConsultTimelinePane patientId={PATIENT_ID} token="t1" />);
+    expect(await screen.findByText("Transcript still processing")).toBeInTheDocument();
+    expect(screen.getByText("Transcript failed")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: "Review transcript for uncharted items" }),
+    ).not.toBeInTheDocument();
   });
 });

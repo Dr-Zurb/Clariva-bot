@@ -102,6 +102,38 @@ describe("CockpitV3Shell", () => {
     expect(document.querySelector("[data-testid='p2-cockpit-v3-dnd-context']")).toBeNull();
   });
 
+  it("desktop puts describeSlot on the palette; mobile keeps it in the safety dock", () => {
+    const slot = <div data-testid="describe-slot">Describe</div>;
+    const { rerender } = render(
+      <CockpitV3Shell
+        panes={makePanes(["a"])}
+        storageKey="shell-describe-desktop"
+        describeSlot={slot}
+        safetyDock={<div data-testid="dock-safety" />}
+      />,
+    );
+    expect(screen.getByTestId("cockpit-v3-palette")).toContainElement(
+      screen.getByTestId("describe-slot"),
+    );
+    expect(screen.getByTestId("cockpit-v3-safety-dock")).not.toContainElement(
+      screen.getByTestId("describe-slot"),
+    );
+
+    vi.mocked(useMediaQuery).mockReturnValue(false);
+    rerender(
+      <CockpitV3Shell
+        panes={makePanes(["a"])}
+        storageKey="shell-describe-mobile"
+        describeSlot={slot}
+        safetyDock={<div data-testid="dock-safety" />}
+      />,
+    );
+    expect(screen.queryByTestId("cockpit-v3-palette")).not.toBeInTheDocument();
+    expect(screen.getByTestId("cockpit-v3-mobile-safety-dock")).toContainElement(
+      screen.getByTestId("describe-slot"),
+    );
+  });
+
   it("renders consultSurfaceHost as a child (portal host for Consult)", () => {
     render(
       <CockpitV3Shell

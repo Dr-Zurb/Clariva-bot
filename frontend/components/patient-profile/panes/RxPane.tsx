@@ -2,7 +2,6 @@
 
 import { useEffect } from "react";
 import PaneHeader from "@/components/patient-profile/PaneHeader";
-import PreviousRxPopover from "@/components/consultation/cockpit/PreviousRxPopover";
 import RxWorkspace from "@/components/consultation/cockpit/RxWorkspace";
 import { type CockpitState } from "@/lib/patient-profile/state";
 import { trackCockpitPolishPlanPaneDedupLanded } from "@/lib/patient-profile/telemetry";
@@ -57,8 +56,9 @@ export interface RxPaneProps {
 }
 
 /**
- * The Prescription column body. Hosts the Rx workspace, the previous-Rx
- * popover, and the prescription-related actions.
+ * The Prescription column body. Hosts the Rx workspace and the
+ * prescription-related actions. Last-visit chrome lives on the form
+ * strips; browse-all prior Rx is `PreviousRxPlanTrigger` (lvc-12).
  *
  * Extracted from `ConsultationCockpit.tsx`'s inline `RxColumnContent`
  * function in ppr-05. v1 shell (`ConsultationCockpit`) removed by ppr-14;
@@ -133,23 +133,9 @@ export default function RxPane({
     );
   }
 
-  const showPreviousRx = state !== "terminal";
-
   return (
     <div className="flex h-full flex-col">
-      <PaneHeader
-        title="Prescription"
-        titleId="cockpit-rx-title"
-        actions={
-          showPreviousRx ? (
-            <PreviousRxPopover
-              appointmentId={appointment.id}
-              patientId={appointment.patient_id ?? null}
-              token={token}
-            />
-          ) : null
-        }
-      />
+      <PaneHeader title="Prescription" titleId="cockpit-rx-title" />
       {rxWorkspaceBody}
     </div>
   );

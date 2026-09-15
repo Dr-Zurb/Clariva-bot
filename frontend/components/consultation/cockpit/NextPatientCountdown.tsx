@@ -21,10 +21,12 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
 
 import { getDoctorSettings } from "@/lib/api";
 import type { PatientFlowAdvance } from "@/types/doctor-settings";
 import { useNextAppointmentRoute } from "@/hooks/useNextAppointmentRoute";
+import { prefetchNextConsult } from "@/lib/query/prefetch/next-consult";
 import { cn } from "@/lib/utils";
 import { EndOfDayCard } from "./EndOfDayCard";
 
@@ -34,7 +36,8 @@ import { EndOfDayCard } from "./EndOfDayCard";
 
 const COUNTDOWN_SECONDS = 5;
 
-function cancelStorageKey(appointmentId: string): string {
+/** Exported so every "finish visit" path clears the same key. */
+export function cancelStorageKey(appointmentId: string): string {
   return `pf11_cancelled_${appointmentId}`;
 }
 
@@ -62,13 +65,7 @@ export interface NextPatientCountdownProps {
 // CountdownRing — inline SVG progress ring (~30 LOC)
 // ---------------------------------------------------------------------------
 
-function CountdownRing({
-  seconds,
-  total,
-}: {
-  seconds: number;
-  total: number;
-}) {
+function CountdownRing({ seconds, total }: { seconds: number; total: number }) {
   const radius = 26;
   const circumference = 2 * Math.PI * radius;
   const progress = Math.max(0, Math.min(1, seconds / total));
@@ -123,10 +120,11 @@ export function NextPatientCountdown({
   onDone,
 }: NextPatientCountdownProps): JSX.Element | null {
   const router = useRouter();
+  const queryClient = useQueryClient();
 
   // ── Doctor settings: load patient_flow_advance ───────────────────────────
   const [flowAdvance, setFlowAdvance] = useState<PatientFlowAdvance | null>(
-    null,
+    null
   );
 
   useEffect(() => {
@@ -148,13 +146,28 @@ export function NextPatientCountdown({
     token,
   });
 
+  // Warm the destination as soon as it is known — the countdown gives us the
+  // whole 5 s, and instant mode still gets its requests in flight before the
+  // push. Without this the next cockpit starts every read cold.
+  useEffect(() => {
+    if (!next) return;
+    router.prefetch(next.url);
+    prefetchNextConsult(queryClient, token, {
+      appointmentId: next.appointmentId,
+      patientId: next.patientId,
+    });
+  }, [next, router, queryClient, token]);
+
   // ── Cancel state (sessionStorage prevents re-trigger on same appt reload) ─
-  const [cancelled, setCancelled] = useState<boolean>(() => {
-    if (typeof window === "undefined") return false;
-    return (
+  const [cancelled, setCancelled] = useState(false);
+
+  useEffect(() => {
+    if (
       sessionStorage.getItem(cancelStorageKey(currentAppointmentId)) === "1"
-    );
-  });
+    ) {
+      setCancelled(true);
+    }
+  }, [currentAppointmentId]);
 
   // ── Countdown seconds ─────────────────────────────────────────────────────
   const [seconds, setSeconds] = useState(COUNTDOWN_SECONDS);
@@ -163,13 +176,25 @@ export function NextPatientCountdown({
   const instantFiredRef = useRef(false);
 
   // Instant: fire once on mount when settings + next are available.
+  // Honor the print cancel flag — navigating unloads the print iframe and
+  // Chrome hides the system dialog. Countdown mode already checks `cancelled`.
   useEffect(() => {
     if (flowAdvance !== "instant") return;
     if (!next) return;
     if (instantFiredRef.current) return;
+    if (cancelled) return;
+    try {
+      if (
+        sessionStorage.getItem(cancelStorageKey(currentAppointmentId)) === "1"
+      ) {
+        return;
+      }
+    } catch {
+      // private mode / SSR
+    }
     instantFiredRef.current = true;
     router.push(next.url);
-  }, [flowAdvance, next, router]);
+  }, [flowAdvance, next, router, cancelled, currentAppointmentId]);
 
   // Countdown: tick interval — reset if cancelled or mode changes.
   useEffect(() => {
@@ -215,7 +240,7 @@ export function NextPatientCountdown({
         className={cn(
           "absolute inset-0 z-10 flex items-start justify-center overflow-y-auto rounded-lg",
           "bg-background/95 backdrop-blur-sm",
-          "p-6",
+          "p-6"
         )}
       >
         <EndOfDayCard token={token} />
@@ -250,7 +275,7 @@ export function NextPatientCountdown({
       className={cn(
         "absolute inset-0 z-10 flex items-center justify-center rounded-lg",
         "bg-background/95 backdrop-blur-sm",
-        "p-6",
+        "p-6"
       )}
     >
       <div className="w-full max-w-sm space-y-5">
@@ -285,7 +310,7 @@ export function NextPatientCountdown({
               "px-4 py-2 text-sm font-medium text-foreground",
               "hover:bg-muted",
               "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-              "transition-colors",
+              "transition-colors"
             )}
           >
             Cancel
@@ -299,7 +324,7 @@ export function NextPatientCountdown({
               "px-4 py-2 text-sm font-medium text-primary-foreground",
               "hover:bg-primary/90",
               "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-              "transition-colors",
+              "transition-colors"
             )}
           >
             Go now ▸

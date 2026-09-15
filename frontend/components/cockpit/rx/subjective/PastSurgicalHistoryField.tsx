@@ -8,6 +8,7 @@ import {
 } from "@/components/cockpit/rx/sections/section-chrome";
 import { SUBJECTIVE_SCROLL_TOP_SELECTOR } from "@/lib/cockpit/exam-card-scroll";
 import { SectionReorderLeadingAction } from "@/components/cockpit/rx/subjective/SortableSectionShell";
+import { LastVisitPastSurgicalStrip } from "@/components/cockpit/rx/last-visit/LastVisitParchiStrips";
 import { RemoveIconButton } from "@/components/cockpit/rx/subjective/RemoveIconButton";
 import {
   addPastSurgicalCatalogProcedure,
@@ -472,6 +473,7 @@ export function PastSurgicalHistoryField({
       }
       actions={!disabled ? <SubjectiveSectionTemplateButton scope="past_surgical" /> : undefined}
     >
+      <LastVisitPastSurgicalStrip disabled={disabled} />
       <div data-testid="past-surgical-none">
         <div className="flex flex-wrap gap-1.5" role="group" aria-label="Past surgical screening">
           <button

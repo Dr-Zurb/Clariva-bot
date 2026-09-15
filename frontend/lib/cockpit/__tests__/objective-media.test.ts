@@ -5,6 +5,8 @@
 import { describe, expect, it } from "vitest";
 import {
   OBJECTIVE_ATTACHMENT_CATEGORY,
+  OBJECTIVE_MEDIA_MAX_FILES,
+  REPORT_SCAN_MAX_FILES,
   attachmentFilename,
   filterObjectiveAttachments,
   isImageAttachment,
@@ -23,6 +25,13 @@ function att(overrides: Partial<PrescriptionAttachment>): PrescriptionAttachment
     ...overrides,
   };
 }
+
+describe("report scan limits", () => {
+  it("caps report pages higher than other objective media", () => {
+    expect(OBJECTIVE_MEDIA_MAX_FILES).toBe(8);
+    expect(REPORT_SCAN_MAX_FILES).toBe(24);
+  });
+});
 
 describe("isObjectiveAttachment", () => {
   it("is true for an objective-tagged path segment", () => {

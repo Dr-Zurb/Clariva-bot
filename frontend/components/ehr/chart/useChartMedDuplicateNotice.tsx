@@ -23,7 +23,7 @@ function ChartMedDuplicateNoticeToast({
     <p
       role="status"
       aria-live="polite"
-      className="pointer-events-none fixed bottom-4 left-1/2 z-[100] max-w-[min(100vw-2rem,22rem)] -translate-x-1/2 rounded-md border border-amber-500/35 bg-amber-50 px-3 py-2 text-center text-xs font-medium text-amber-950 shadow-md dark:border-amber-400/30 dark:bg-amber-950/95 dark:text-amber-50"
+      className="pointer-events-none fixed top-4 right-4 z-[100] max-w-[min(100vw-2rem,22rem)] rounded-md border border-amber-500/35 bg-amber-50 px-3 py-2 text-center text-xs font-medium text-amber-950 shadow-md dark:border-amber-400/30 dark:bg-amber-950/95 dark:text-amber-50"
     >
       {message}
     </p>,

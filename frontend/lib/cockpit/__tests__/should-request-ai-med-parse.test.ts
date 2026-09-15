@@ -88,4 +88,42 @@ describe("shouldRequestAiMedParse", () => {
     expect(gate("b12 injection gluteal")).toBe(false);
     expect(gate("b12 im gluteal")).toBe(false);
   });
+
+  it("does not fire once glued clinic shorthand is fully structured", () => {
+    expect(gate("tb multivitamin 1od")).toBe(false);
+    expect(gate("multivitamin 1 od")).toBe(false);
+    expect(gate("amlodipine 5od")).toBe(false);
+    expect(gate("pcm 500mg b.d.")).toBe(false);
+    expect(gate("b12 i.m. gluteal")).toBe(false);
+    expect(gate("amoxicillin 500 mg tds x5d")).toBe(false);
+    expect(gate("amoxiclav 500+125 bd")).toBe(false);
+  });
+
+  it("fires when a digit-leading token leaks into the drug name", () => {
+    expect(shouldRequestAiMedParse("drug 2xyz", {
+      medicineName: "drug 2xyz",
+      dosage: "",
+      form: null,
+      doseQty: null,
+      doseUnit: null,
+      frequencyCode: null,
+      frequency: "",
+      durationValue: null,
+      durationUnit: null,
+      duration: "",
+      foodTiming: null,
+      routeCode: null,
+      route: "",
+      instructions: "",
+      doseSchedule: null,
+      intakePattern: null,
+      source: null,
+      startedAgoValue: null,
+      startedAgoUnit: null,
+      status: null,
+      stoppedAgoValue: null,
+      stoppedAgoUnit: null,
+      stopReason: null,
+    })).toBe(true);
+  });
 });

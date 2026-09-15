@@ -9,10 +9,6 @@ import { ComplaintCard } from "@/components/cockpit/rx/subjective/ComplaintCard"
 import { PrescriptionFormShellProvider } from "@/components/cockpit/rx/PrescriptionFormShellContext";
 import type { Complaint } from "@/types/prescription";
 
-vi.mock("@/lib/api/last-subjective", () => ({
-  getLastSubjectiveForPatient: vi.fn().mockResolvedValue({ data: { subjective: null } }),
-}));
-
 vi.mock("@/hooks/useNoteFavorites", () => ({
   useNoteFavorites: () => ({
     favorites: [],
@@ -40,7 +36,10 @@ const priorComplaint: Complaint = {
 
 function renderCard(
   value: Complaint,
-  options: { onPatch?: (index: number, patch: Partial<Complaint>) => void; prior?: Complaint[] } = {},
+  options: {
+    onPatch?: (index: number, patch: Partial<Complaint>) => void;
+    prior?: Complaint[];
+  } = {}
 ) {
   const fields = createEmptyRxFormFields();
   fields.complaints = [options.prior ?? priorComplaint, value];
@@ -64,7 +63,7 @@ function renderCard(
         isEditing
         token="test-token"
       />
-    </RxFormProvider>,
+    </RxFormProvider>
   );
 }
 
@@ -77,7 +76,7 @@ describe("ComplaintCard schema wiring", () => {
         onPatch={vi.fn()}
         onRemove={vi.fn()}
         isEditing
-      />,
+      />
     );
 
     expect(screen.getByText("Side")).toBeInTheDocument();
@@ -95,7 +94,7 @@ describe("ComplaintCard schema wiring", () => {
         onPatch={onPatch}
         onRemove={vi.fn()}
         isEditing
-      />,
+      />
     );
 
     expect(screen.getByLabelText("Where on head")).toBeInTheDocument();
@@ -107,7 +106,7 @@ describe("ComplaintCard schema wiring", () => {
         onPatch={onPatch}
         onRemove={vi.fn()}
         isEditing
-      />,
+      />
     );
 
     expect(screen.getByText("Temperature")).toBeInTheDocument();
@@ -121,7 +120,7 @@ describe("ComplaintCard schema wiring", () => {
         onPatch={onPatch}
         onRemove={vi.fn()}
         isEditing={false}
-      />,
+      />
     );
     expect(screen.getByLabelText("Duration")).toHaveValue("2 Days");
   });
@@ -130,16 +129,26 @@ describe("ComplaintCard schema wiring", () => {
     render(
       <ComplaintCard
         index={0}
-        value={{ ...createEmptyComplaint(), name: "Chest pain", duration: "4 days", severity: "mild" }}
+        value={{
+          ...createEmptyComplaint(),
+          name: "Chest pain",
+          duration: "4 days",
+          severity: "mild",
+        }}
         onPatch={vi.fn()}
         onRemove={vi.fn()}
         isEditing
-      />,
+      />
     );
 
     expect(screen.getByLabelText("Duration")).toHaveValue("4 Days");
-    expect(screen.queryByRole("button", { name: "Severity" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Mild" })).toHaveAttribute("aria-pressed", "true");
+    expect(
+      screen.queryByRole("button", { name: "Severity" })
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Mild" })).toHaveAttribute(
+      "aria-pressed",
+      "true"
+    );
     expect(screen.getByText("Where in chest")).toBeInTheDocument();
   });
 
@@ -163,17 +172,21 @@ describe("ComplaintCard schema wiring", () => {
         onPatch={vi.fn()}
         onRemove={vi.fn()}
         isEditing={false}
-      />,
+      />
     );
 
-    expect(screen.getByTestId("complaint-card-detail-summary")).toHaveTextContent(
-      "Mild · Behind breastbone · Sudden · Sharp / stabbing · → Left arm · Constant · ↑ Movement · ↓ Rest",
+    expect(
+      screen.getByTestId("complaint-card-detail-summary")
+    ).toHaveTextContent(
+      "Mild · Behind breastbone · Sudden · Sharp / stabbing · → Left arm · Constant · ↑ Movement · ↓ Rest"
     );
     expect(screen.getByLabelText("Duration")).toHaveValue("4 Days");
-    expect(screen.queryByRole("button", { name: "Severity" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Severity" })
+    ).not.toBeInTheDocument();
   });
 
-  it("shows a note icon when notes are filled but not in the summary line", () => {
+  it("shows a short note as text, not in the summary line", () => {
     render(
       <ComplaintCard
         index={0}
@@ -186,19 +199,24 @@ describe("ComplaintCard schema wiring", () => {
         onPatch={vi.fn()}
         onRemove={vi.fn()}
         isEditing={false}
-      />,
+      />
     );
 
-    expect(screen.getByLabelText("Note: its chronically present")).toBeInTheDocument();
-    expect(screen.getByTestId("complaint-card-detail-summary")).toHaveTextContent(
-      "Sharp / stabbing",
+    expect(screen.getByTestId("complaint-card-note-text")).toHaveTextContent(
+      "its chronically present"
     );
-
-    fireEvent.click(screen.getByTestId("complaint-card-note-trigger"));
-    expect(screen.getByText("its chronically present")).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("complaint-card-note-trigger")
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByTestId("complaint-card-detail-summary")
+    ).toHaveTextContent("Sharp / stabbing");
+    expect(
+      screen.getByTestId("complaint-card-detail-summary")
+    ).not.toHaveTextContent("its chronically present");
   });
 
-  it("shows the note icon on row 2 when only notes are filled", () => {
+  it("shows a short note on row 2 when only notes are filled", () => {
     render(
       <ComplaintCard
         index={0}
@@ -210,11 +228,42 @@ describe("ComplaintCard schema wiring", () => {
         onPatch={vi.fn()}
         onRemove={vi.fn()}
         isEditing={false}
-      />,
+      />
     );
 
-    expect(screen.queryByTestId("complaint-card-detail-summary")).not.toBeInTheDocument();
-    expect(screen.getByTestId("complaint-card-note-trigger")).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("complaint-card-detail-summary")
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("complaint-card-note-text")).toHaveTextContent(
+      "worse at night"
+    );
+  });
+
+  it("falls back to the page icon when the note is too long", () => {
+    const longNote =
+      "Patient reports this has been going on for several weeks with night worsening and poor sleep.";
+    render(
+      <ComplaintCard
+        index={0}
+        value={{
+          ...createEmptyComplaint(),
+          name: "Chest pain",
+          notes: longNote,
+        }}
+        onPatch={vi.fn()}
+        onRemove={vi.fn()}
+        isEditing={false}
+      />
+    );
+
+    expect(
+      screen.queryByTestId("complaint-card-note-text")
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByTestId("complaint-card-note-trigger")
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("complaint-card-note-trigger"));
+    expect(screen.getByText(longNote)).toBeInTheDocument();
   });
 
   it("omits the detail summary line when no SOCRATES fields are filled", () => {
@@ -225,10 +274,12 @@ describe("ComplaintCard schema wiring", () => {
         onPatch={vi.fn()}
         onRemove={vi.fn()}
         isEditing={false}
-      />,
+      />
     );
 
-    expect(screen.queryByTestId("complaint-card-detail-summary")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("complaint-card-detail-summary")
+    ).not.toBeInTheDocument();
   });
 
   it("patches duration from collapsed inline control", () => {
@@ -240,7 +291,7 @@ describe("ComplaintCard schema wiring", () => {
         onPatch={onPatch}
         onRemove={vi.fn()}
         isEditing={false}
-      />,
+      />
     );
 
     const duration = screen.getByLabelText("Duration");
@@ -255,18 +306,24 @@ describe("ComplaintCard schema wiring", () => {
     render(
       <ComplaintCard
         index={0}
-        value={{ ...createEmptyComplaint(), name: "Breathlessness", duration: "2 days" }}
+        value={{
+          ...createEmptyComplaint(),
+          name: "Breathlessness",
+          duration: "2 days",
+        }}
         depth={1}
         parentName="Chest pain"
         onPatch={vi.fn()}
         onRemove={vi.fn()}
         onPromote={onPromote}
         isEditing={false}
-      />,
+      />
     );
 
     fireEvent.click(
-      screen.getByRole("button", { name: "Move Breathlessness to main complaints" }),
+      screen.getByRole("button", {
+        name: "Move Breathlessness to main complaints",
+      })
     );
     expect(onPromote).toHaveBeenCalledWith(0);
   });
@@ -280,7 +337,7 @@ describe("ComplaintCard schema wiring", () => {
         onPatch={onPatch}
         onRemove={vi.fn()}
         isEditing
-      />,
+      />
     );
 
     // On a pain card the severity chips + 0–10 scale are one linked control:
@@ -300,7 +357,7 @@ describe("ComplaintCard schema wiring", () => {
         onPatch={vi.fn()}
         onRemove={vi.fn()}
         isEditing
-      />,
+      />
     );
 
     expect(screen.getByText("Type")).toBeInTheDocument();
@@ -310,40 +367,22 @@ describe("ComplaintCard schema wiring", () => {
 });
 
 describe("ComplaintCard smart-confirm defaults", () => {
-  it("shows suggested defaults on pick without patching until confirm", () => {
-    const onPatch = vi.fn();
+  it("does not show the prior-charting apply banner", () => {
     const emptyCard = createEmptyComplaint();
     emptyCard.name = "Headache";
 
-    renderCard(emptyCard, { onPatch });
+    renderCard(emptyCard);
 
-    expect(screen.getByTestId("complaint-suggestion-banner")).toBeInTheDocument();
-    expect(onPatch).not.toHaveBeenCalledWith(
-      1,
-      expect.objectContaining({ duration: "2d" }),
-    );
+    expect(
+      screen.queryByTestId("complaint-suggestion-banner")
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Apply from history" })
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/Prior charting:/)).not.toBeInTheDocument();
   });
 
-  it("apply from history confirms prior charting into form state", () => {
-    const onPatch = vi.fn();
-    const emptyCard = createEmptyComplaint();
-    emptyCard.name = "Headache";
-
-    renderCard(emptyCard, { onPatch });
-
-    fireEvent.click(screen.getByRole("button", { name: "Apply from history" }));
-
-    expect(onPatch).toHaveBeenCalledWith(
-      1,
-      expect.objectContaining({
-        duration: "2d",
-        severity: "moderate",
-        character: "throbbing",
-      }),
-    );
-  });
-
-  it("explicit character edit wins over suggestion for that field", () => {
+  it("explicit character edit still patches the field", () => {
     const onPatch = vi.fn();
     const emptyCard = createEmptyComplaint();
     emptyCard.name = "Headache";
@@ -353,17 +392,6 @@ describe("ComplaintCard smart-confirm defaults", () => {
     fireEvent.click(screen.getByRole("button", { name: "Dull" }));
 
     expect(onPatch).toHaveBeenCalledWith(1, { character: "Dull" });
-    expect(screen.queryByText(/Prior charting: throbbing/)).not.toBeInTheDocument();
-  });
-
-  it("shows no suggestions for unknown complaint with no priors", () => {
-    const onPatch = vi.fn();
-    const emptyCard = createEmptyComplaint();
-    emptyCard.name = "Rare syndrome";
-
-    renderCard(emptyCard, { onPatch, prior: { ...priorComplaint, name: "Fever", category: "fever" } });
-
-    expect(screen.queryByTestId("complaint-suggestion-banner")).not.toBeInTheDocument();
   });
 
   it("renders measured before temperature on fever cards", () => {
@@ -372,8 +400,8 @@ describe("ComplaintCard smart-confirm defaults", () => {
 
     const { container } = renderCard(feverCard);
 
-    const labels = Array.from(container.querySelectorAll("label, span")).map((el) =>
-      el.textContent?.trim(),
+    const labels = Array.from(container.querySelectorAll("label, span")).map(
+      (el) => el.textContent?.trim()
     );
     const measuredIdx = labels.indexOf("Measured");
     const temperatureIdx = labels.indexOf("Temperature");
@@ -412,7 +440,7 @@ describe("ComplaintCard smart-confirm defaults", () => {
           isEditing
           token="test-token"
         />
-      </RxFormProvider>,
+      </RxFormProvider>
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Felt only" }));
@@ -449,7 +477,7 @@ describe("ComplaintCard smart-confirm defaults", () => {
           isEditing
           token="test-token"
         />
-      </RxFormProvider>,
+      </RxFormProvider>
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Very high" }));
@@ -457,7 +485,9 @@ describe("ComplaintCard smart-confirm defaults", () => {
       feverGrade: "very_high",
       temperature: null,
     });
-    expect(screen.queryByLabelText("Temperature in degrees Fahrenheit")).not.toBeInTheDocument();
+    expect(
+      screen.queryByLabelText("Temperature in degrees Fahrenheit")
+    ).not.toBeInTheDocument();
   });
 
   it("shows reported by only when felt only is selected", () => {
@@ -493,13 +523,17 @@ describe("ComplaintCard smart-confirm defaults", () => {
           isEditing
           token="test-token"
         />
-      </RxFormProvider>,
+      </RxFormProvider>
     );
 
     expect(screen.getByText("Reported by")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Patient" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Attendant" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Clinician" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Attendant" })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Clinician" })
+    ).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Attendant" }));
     expect(onPatch).toHaveBeenLastCalledWith(1, {
@@ -540,7 +574,7 @@ describe("ComplaintCard smart-confirm defaults", () => {
           isEditing
           token="test-token"
         />
-      </RxFormProvider>,
+      </RxFormProvider>
     );
 
     vi.useFakeTimers();
@@ -598,7 +632,7 @@ describe("ComplaintCard smart-confirm defaults", () => {
           isEditing
           token="test-token"
         />
-      </RxFormProvider>,
+      </RxFormProvider>
     );
 
     vi.useFakeTimers();
@@ -642,7 +676,7 @@ describe("ComplaintCard smart-confirm defaults", () => {
           isEditing
           token="test-token"
         />
-      </RxFormProvider>,
+      </RxFormProvider>
     );
 
     vi.useFakeTimers();
@@ -690,7 +724,7 @@ describe("ComplaintCard smart-confirm defaults", () => {
           isEditing
           token="test-token"
         />
-      </RxFormProvider>,
+      </RxFormProvider>
     );
 
     const outside = document.createElement("button");
@@ -721,7 +755,9 @@ describe("ComplaintCard smart-confirm defaults", () => {
 
     const { rerender } = renderCard(feverCard, { onPatch });
 
-    fireEvent.click(screen.getByRole("button", { name: "Increase temperature" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Increase temperature" })
+    );
     expect(onPatch).toHaveBeenCalledWith(1, {
       temperature: 38.6,
       temperatureUnit: "C",
@@ -751,10 +787,12 @@ describe("ComplaintCard smart-confirm defaults", () => {
           isEditing
           token="test-token"
         />
-      </RxFormProvider>,
+      </RxFormProvider>
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Decrease temperature" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Decrease temperature" })
+    );
     expect(onPatch).toHaveBeenLastCalledWith(1, {
       temperature: 38.5,
       temperatureUnit: "C",
@@ -784,7 +822,7 @@ describe("ComplaintCard smart-confirm defaults", () => {
         temperature: 101,
         temperatureUnit: "F",
         feverGrade: "moderate",
-      }),
+      })
     );
   });
 });
@@ -827,7 +865,8 @@ describe("ComplaintCard per-complaint photos (sdp-03)", () => {
       attachments: shellAttachments,
       setAttachments: vi.fn(),
       setInitialFields: vi.fn(),
-      generateInstanceIds: (n: number) => Array.from({ length: n }, (_, i) => `m-${i}`),
+      generateInstanceIds: (n: number) =>
+        Array.from({ length: n }, (_, i) => `m-${i}`),
       instanceIdSeqRef: { current: 0 },
       medicineInstanceIds: ["m-0"],
       setMedicineInstanceIds: vi.fn(),
@@ -841,8 +880,8 @@ describe("ComplaintCard per-complaint photos (sdp-03)", () => {
       setObjectiveDefaults: vi.fn(),
       planDefaults: null,
       setPlanDefaults: vi.fn(),
-    assessmentDefaults: null,
-    setAssessmentDefaults: vi.fn(),
+      assessmentDefaults: null,
+      setAssessmentDefaults: vi.fn(),
       providerProps: {
         key: "test",
         appointmentId: "appt-1",
@@ -877,12 +916,38 @@ describe("ComplaintCard per-complaint photos (sdp-03)", () => {
             token="test-token"
           />
         </PrescriptionFormShellProvider>
-      </RxFormProvider>,
+      </RxFormProvider>
     );
 
     const strip = screen.getByTestId(`complaint-photos-${complaint.id}`);
     expect(strip).toBeInTheDocument();
     expect(screen.getByText("Photos")).toBeInTheDocument();
-    expect(screen.getAllByTestId(`complaint-photos-${complaint.id}-item`)).toHaveLength(1);
+    expect(
+      screen.getAllByTestId(`complaint-photos-${complaint.id}-item`)
+    ).toHaveLength(1);
+  });
+});
+
+describe("ComplaintCard Refine with AI", () => {
+  it("calls onRefine from the header button and does not toggle the card", () => {
+    const onRefine = vi.fn();
+    const onRequestEdit = vi.fn();
+    render(
+      <ComplaintCard
+        index={0}
+        value={baseComplaint}
+        onPatch={vi.fn()}
+        onRemove={vi.fn()}
+        isEditing={false}
+        onRequestEdit={onRequestEdit}
+        onRefine={onRefine}
+      />
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /Refine complaint 1 with AI/i })
+    );
+    expect(onRefine).toHaveBeenCalledWith(0);
+    expect(onRequestEdit).not.toHaveBeenCalled();
   });
 });

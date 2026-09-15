@@ -48,6 +48,16 @@ function formatDuration(seconds: number | null): string {
   return `${m}m ${s.toString().padStart(2, "0")}s`;
 }
 
+function transcriptStatusCopy(entry: ConsultTimelineEntry): string | null {
+  if (entry.transcriptStatus === "processing" || entry.transcriptStatus === "queued") {
+    return "Transcript still processing";
+  }
+  if (entry.transcriptStatus === "failed") {
+    return "Transcript failed";
+  }
+  return null;
+}
+
 function artifactChips(entry: ConsultTimelineEntry): string[] {
   const chips: string[] = [];
   if (entry.artifacts.hasRecording) chips.push("Recording");
@@ -132,11 +142,19 @@ export function ConsultTimelinePane({
               const href = buildCockpitAppointmentPath(entry.appointmentId, "patients-v2", {
                 patientId,
               });
+              const reviewHref =
+                entry.transcriptStatus === "completed"
+                  ? buildCockpitAppointmentPath(entry.appointmentId, "patients-v2", {
+                      patientId,
+                      amendTranscriptSessionId: entry.sessionId,
+                    })
+                  : null;
+              const statusNote = transcriptStatusCopy(entry);
               return (
-                <li key={entry.sessionId}>
+                <li key={entry.sessionId} className="py-3">
                   <Link
                     href={href}
-                    className="flex items-start gap-3 py-3 text-sm hover:bg-muted/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    className="flex items-start gap-3 text-sm hover:bg-muted/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   >
                     <Icon className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
                     <span className="min-w-0 flex-1">
@@ -154,6 +172,24 @@ export function ConsultTimelinePane({
                       </span>
                     </span>
                   </Link>
+                  {reviewHref ? (
+                    <p className="pl-7 pt-1">
+                      <Link
+                        href={reviewHref}
+                        className="text-xs font-medium text-primary hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      >
+                        Review transcript for uncharted items
+                      </Link>
+                    </p>
+                  ) : null}
+                  {statusNote ? (
+                    <p
+                      data-testid="consult-timeline-transcript-status"
+                      className="pl-7 pt-1 text-xs text-muted-foreground"
+                    >
+                      {statusNote}
+                    </p>
+                  ) : null}
                 </li>
               );
             })}

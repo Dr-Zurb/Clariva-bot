@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ChevronDown, History } from "lucide-react";
 import { useRxForm } from "@/components/cockpit/rx/RxFormContext";
 import { complaintsFromPrescription } from "@/components/cockpit/rx/RxFormContext";
@@ -13,10 +13,7 @@ import {
   subjectiveCarryForwardHasPastSurgicalHistory,
   type SubjectiveCarryForwardSelection,
 } from "@/lib/cockpit/carry-forward-subjective";
-import {
-  getLastSubjectiveForPatient,
-  type LastSubjectiveForPatient,
-} from "@/lib/api/last-subjective";
+import { useLastVisitSummary } from "@/hooks/useLastVisitSummary";
 import { formatDate } from "@/lib/format-date";
 import { Button } from "@/components/ui/button";
 
@@ -32,33 +29,12 @@ const DEFAULT_SELECTION: SubjectiveCarryForwardSelection = {
 };
 
 export function CarryForwardButton({ disabled = false }: CarryForwardButtonProps) {
-  const { appointmentId, patientId, token, dispatch } = useRxForm();
-  const [source, setSource] = useState<LastSubjectiveForPatient | null>(null);
-  const [loading, setLoading] = useState(false);
+  const { patientId, dispatch } = useRxForm();
+  const summary = useLastVisitSummary();
   const [open, setOpen] = useState(false);
   const [pickMode, setPickMode] = useState(false);
   const [selection, setSelection] = useState<SubjectiveCarryForwardSelection>(DEFAULT_SELECTION);
   const containerRef = useRef<HTMLDivElement>(null);
-
-  const load = useCallback(async () => {
-    if (!patientId || !appointmentId || !token) {
-      setSource(null);
-      return;
-    }
-    setLoading(true);
-    try {
-      const res = await getLastSubjectiveForPatient(token, patientId, appointmentId);
-      setSource(res.data.subjective);
-    } catch {
-      setSource(null);
-    } finally {
-      setLoading(false);
-    }
-  }, [appointmentId, patientId, token]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
 
   useEffect(() => {
     if (!open) return;
@@ -73,28 +49,38 @@ export function CarryForwardButton({ disabled = false }: CarryForwardButtonProps
     return () => document.removeEventListener("mousedown", handleClick);
   }, [open]);
 
-  if (!patientId || loading || !source) {
+  const source = summary
+    ? mapLastSubjectiveApiToSource({
+        complaints: complaintsFromPrescription({ complaints: summary.complaints }),
+        familyHistory: summary.familyHistory ?? null,
+        familyHistoryStructured: summary.familyHistoryStructured ?? null,
+        socialHistory: summary.socialHistory ?? null,
+        socialHistoryStructured: summary.socialHistoryStructured ?? null,
+        pastSurgicalHistory: summary.pastSurgicalHistory ?? null,
+        pastSurgicalHistoryStructured: summary.pastSurgicalHistoryStructured ?? null,
+      })
+    : null;
+
+  const hasComplaints = source?.complaints.some((c) => c.name.trim()) ?? false;
+  const hasFamily = source ? subjectiveCarryForwardHasFamilyHistory(source) : false;
+  const hasSocial = source ? resolveSocialHistoryForCarryForward(source) != null : false;
+  const hasSurgical = source
+    ? subjectiveCarryForwardHasPastSurgicalHistory(source)
+    : false;
+
+  if (
+    !patientId ||
+    !summary ||
+    !source ||
+    (!hasComplaints && !hasFamily && !hasSocial && !hasSurgical)
+  ) {
     return null;
   }
 
-  const visitDate = formatDate(source.sourceCreatedAt);
-  const mappedSource = mapLastSubjectiveApiToSource({
-    complaints: complaintsFromPrescription({ complaints: source.complaints }),
-    familyHistory: source.familyHistory,
-    familyHistoryStructured: source.familyHistoryStructured,
-    socialHistory: source.socialHistory,
-    socialHistoryStructured: source.socialHistoryStructured,
-    pastSurgicalHistory: source.pastSurgicalHistory,
-    pastSurgicalHistoryStructured: source.pastSurgicalHistoryStructured,
-  });
-
-  const hasComplaints = mappedSource.complaints.some((c) => c.name.trim());
-  const hasFamily = subjectiveCarryForwardHasFamilyHistory(source);
-  const hasSocial = resolveSocialHistoryForCarryForward(source) != null;
-  const hasSurgical = subjectiveCarryForwardHasPastSurgicalHistory(source);
+  const visitDate = formatDate(summary.sourceCreatedAt);
 
   const apply = (sel: SubjectiveCarryForwardSelection) => {
-    const actions = buildSubjectiveCarryForwardActions(mappedSource, sel);
+    const actions = buildSubjectiveCarryForwardActions(source, sel);
     if (actions.length === 0) return;
     for (const action of actions) {
       dispatch(action);

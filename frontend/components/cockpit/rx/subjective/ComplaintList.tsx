@@ -55,7 +55,6 @@ import {
   buildParsedCueItems,
   recordParsedFields,
 } from "@/lib/cockpit/parsed-fields-signal";
-import { shouldRequestAiParse } from "@/lib/cockpit/should-request-ai-parse";
 import { resolveComplaintAttributeFields } from "@/lib/cockpit/complaint-schema";
 import {
   parseComplaintWithAI,
@@ -67,6 +66,11 @@ import {
 } from "@/components/cockpit/rx/subjective/AiRefineProposal";
 import { SubjectiveSectionTemplateButton } from "@/components/cockpit/rx/subjective/SubjectiveSectionTemplateButton";
 import { SubjectiveOtherPhotosStrip } from "@/components/cockpit/rx/subjective/SubjectiveOtherPhotosStrip";
+import {
+  complaintFromAiParsed,
+  mergeAiParsedIntoComplaint,
+} from "@/lib/cockpit/visit-parse-apply";
+import { LastVisitComplaintsStrip } from "@/components/cockpit/rx/last-visit/LastVisitComplaintsStrip";
 
 export interface ComplaintListProps {
   disabled?: boolean;
@@ -74,21 +78,15 @@ export interface ComplaintListProps {
   onSectionOpenChange?: (open: boolean) => void;
 }
 
-/**
- * subj-14 auto-gate: when Enter lands on a free-typed line the deterministic
- * parser likely can't structure (vernacular, negation, long multi-complaint),
- * fire the AI proposal instead of committing a literal/merged card. The doctor
- * always has a per-line "Keep as typed" escape, and empty/error degrades to the
- * literal commit — so Enter never dead-ends. (Could become a per-doctor setting.)
- */
-const AUTO_GATE_ON_ENTER = true;
-
 function nextInstanceIds(count: number, start: number): string[] {
   return Array.from({ length: count }, (_, i) => `complaint-${start + i}`);
 }
 
 /** Turn parsed associated-symptom names into mini-card children (deduped, ≠ parent). */
-function buildAssociatedChildren(names: string[], parentName: string): Complaint[] {
+function buildAssociatedChildren(
+  names: string[],
+  parentName: string
+): Complaint[] {
   const children: Complaint[] = [];
   for (const raw of names) {
     const name = formatComplaintDisplayName(raw.trim());
@@ -116,11 +114,11 @@ export function ComplaintList({
   const { complaints } = state.fields;
 
   const [instanceIds, setInstanceIds] = useState<string[]>(() =>
-    complaints.map((c) => c.id),
+    complaints.map((c) => c.id)
   );
   const [activeInstanceId, setActiveInstanceId] = usePersistedOpenId(
     appointmentId,
-    "complaints",
+    "complaints"
   );
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [dropTarget, setDropTarget] = useState<DropTargetState | null>(null);
@@ -177,14 +175,13 @@ export function ComplaintList({
     setDropTarget(null);
   }, []);
 
-  // ── subj-14: deterministic commit + gated AI (auto-gate-on-Enter + refine) ──
+  // ── subj-14: opt-in AI refine on an already-added card ──
   const [aiStatus, setAiStatus] = useState<AiRefineStatus | "idle">("idle");
   const [aiComplaints, setAiComplaints] = useState<AiParsedComplaint[]>([]);
-  // Shown only on the auto-gate (Enter) path, where the typed text has already
-  // left the bar and must never be lost — "Keep as typed" commits it literally.
-  const [showKeepAsTyped, setShowKeepAsTyped] = useState(false);
-  // Original typed capture to fall back to (auto-gate degrade / keep-as-typed).
-  const pendingCaptureRef = useRef<ComplaintCapturePayload | null>(null);
+  const [refiningInstanceId, setRefiningInstanceId] = useState<string | null>(
+    null
+  );
+  const [cardApplied, setCardApplied] = useState(false);
   const aiAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => () => aiAbortRef.current?.abort(), []);
@@ -200,10 +197,11 @@ export function ComplaintList({
       const finalName = (rawText ? name.trim() : parsed.name) || name.trim();
 
       const duplicateIndex = complaints.findIndex((c) =>
-        complaintNamesEquivalent(c.name, finalName),
+        complaintNamesEquivalent(c.name, finalName)
       );
       if (duplicateIndex >= 0) {
-        const existingId = instanceIds[duplicateIndex] ?? complaints[duplicateIndex]!.id;
+        const existingId =
+          instanceIds[duplicateIndex] ?? complaints[duplicateIndex]!.id;
         setActiveInstanceId(existingId);
         return;
       }
@@ -219,14 +217,17 @@ export function ComplaintList({
         !isLateralityValidForComplaint(
           complaint.name,
           complaint.category ?? undefined,
-          complaint.laterality,
+          complaint.laterality
         )
       ) {
         delete complaint.laterality;
       }
 
       // "...associated with nausea, vomiting" → associated-symptom mini-cards.
-      const children = buildAssociatedChildren(parsed.associated, complaint.name);
+      const children = buildAssociatedChildren(
+        parsed.associated,
+        complaint.name
+      );
       if (children.length > 0) complaint.associatedComplaints = children;
 
       // Transparency cue (subj-13 §3): record what was auto-filled so the new
@@ -236,120 +237,89 @@ export function ComplaintList({
         buildParsedCueItems(
           complaint,
           parsed.patch,
-          children.map((child) => child.name),
-        ),
+          children.map((child) => child.name)
+        )
       );
 
       dispatch({ type: "ADD_COMPLAINT", complaint });
     },
-    [complaints, instanceIds, dispatch],
+    [complaints, instanceIds, dispatch]
   );
 
   const resetAiPanel = useCallback(() => {
     aiAbortRef.current?.abort();
     aiAbortRef.current = null;
-    pendingCaptureRef.current = null;
-    setShowKeepAsTyped(false);
+    setRefiningInstanceId(null);
+    setCardApplied(false);
     setAiStatus("idle");
     setAiComplaints([]);
   }, []);
 
-  /**
-   * Run the AI parser. `refine` = explicit ✨ button (Tier 2 flagship; the typed
-   * text stays in the bar). `autogate` = Enter on a gated line (Tier 1 mini;
-   * `fallback` is the literal capture, committed on empty/error so Enter never
-   * dead-ends).
-   */
+  const refiningIndex = refiningInstanceId
+    ? instanceIds.indexOf(refiningInstanceId)
+    : -1;
+  const refiningComplaint =
+    refiningIndex >= 0 ? complaints[refiningIndex] : undefined;
+  const refineMerge =
+    refiningComplaint && aiComplaints[0]
+      ? mergeAiParsedIntoComplaint(refiningComplaint, aiComplaints[0])
+      : null;
+
   const runAiParse = useCallback(
-    (text: string, trigger: "refine" | "autogate", fallback: ComplaintCapturePayload | null) => {
+    (text: string, instanceId: string, category?: Complaint["category"]) => {
       const trimmed = text.trim();
       if (!trimmed || !token || disabled) return;
 
       aiAbortRef.current?.abort();
       const controller = new AbortController();
       aiAbortRef.current = controller;
-      pendingCaptureRef.current = fallback;
-      setShowKeepAsTyped(trigger === "autogate");
+      setRefiningInstanceId(instanceId);
+      setCardApplied(false);
       setAiStatus("loading");
       setAiComplaints([]);
 
-      // Best-guess schema for the typed line so the server can bound chip output.
-      // The 0–10 pain slider is a manual control (not AI-filled), so it's omitted.
-      const fieldSpec = resolveComplaintAttributeFields({ complaintName: trimmed }).filter(
-        (f) => f.type !== "painscale" && f.type !== "temperature",
-      );
-      // Explicit refine escalates to the flagship tier; auto-gate uses cheaper mini.
-      const tier = trigger === "refine" ? "escalation" : "default";
+      const fieldSpec = resolveComplaintAttributeFields({
+        complaintName: trimmed,
+        category,
+      }).filter((f) => f.type !== "painscale" && f.type !== "temperature");
 
-      const degradeToTyped = () => {
-        aiAbortRef.current = null;
-        pendingCaptureRef.current = null;
-        setShowKeepAsTyped(false);
-        setAiStatus("idle");
-        if (fallback) commitCapture(fallback);
-      };
-
-      parseComplaintWithAI(token, { text: trimmed, fieldSpec, tier, signal: controller.signal })
+      parseComplaintWithAI(token, {
+        text: trimmed,
+        fieldSpec,
+        tier: "escalation",
+        signal: controller.signal,
+      })
         .then((res) => {
           if (controller.signal.aborted) return;
-          const found = res.data.complaints;
-          // Auto-gate found nothing useful → keep the literal line (today's path).
-          if (found.length === 0 && trigger === "autogate") {
-            degradeToTyped();
-            return;
-          }
-          setAiComplaints(found);
+          setAiComplaints(res.data.complaints);
           setAiStatus("ready");
         })
         .catch((err: unknown) => {
           if (controller.signal.aborted) return;
           if (err instanceof DOMException && err.name === "AbortError") return;
-          // Auto-gate degrade: never lose the doctor's typed Enter.
-          if (trigger === "autogate") {
-            degradeToTyped();
-            return;
-          }
           setAiStatus("error");
         });
     },
-    [token, disabled, commitCapture],
+    [token, disabled]
   );
 
   const handleCapture = useCallback(
     (payload: ComplaintCapturePayload) => {
       if (disabled) return;
-
-      // Auto-gate (subj-14): on a free-typed line (no catalog match) the rules
-      // likely can't structure — vernacular, negation, or a long multi-complaint
-      // line — offer the AI proposal instead of committing a literal/merged card.
-      // Catalog picks and clean lines commit straight through.
-      const isFreeText = !payload.rawText && !payload.category;
-      if (AUTO_GATE_ON_ENTER && token && isFreeText) {
-        const parsed = parseComplaintText(payload.name);
-        if (shouldRequestAiParse(payload.name, parsed)) {
-          runAiParse(payload.name, "autogate", payload);
-          return;
-        }
-      }
-
       commitCapture(payload);
     },
-    [disabled, token, commitCapture, runAiParse],
+    [disabled, commitCapture]
   );
 
-  const handleRefine = useCallback(
-    (text: string) => {
-      runAiParse(text, "refine", null);
+  const handleCardRefine = useCallback(
+    (index: number) => {
+      const complaint = complaints[index];
+      if (!complaint?.name.trim()) return;
+      const instanceId = instanceIds[index] ?? complaint.id;
+      runAiParse(complaint.name, instanceId, complaint.category);
     },
-    [runAiParse],
+    [complaints, instanceIds, runAiParse]
   );
-
-  /** Commit the doctor's original typed line as-is (auto-gate "Keep as typed"). */
-  const handleKeepAsTyped = useCallback(() => {
-    const fallback = pendingCaptureRef.current;
-    resetAiPanel();
-    if (fallback) commitCapture(fallback);
-  }, [resetAiPanel, commitCapture]);
 
   const dismissAi = useCallback(() => {
     resetAiPanel();
@@ -363,51 +333,26 @@ export function ComplaintList({
       if (!finalName) return false;
 
       const duplicateIndex = complaints.findIndex((c) =>
-        complaintNamesEquivalent(c.name, finalName),
+        complaintNamesEquivalent(c.name, finalName)
       );
       if (duplicateIndex >= 0) {
-        const existingId = instanceIds[duplicateIndex] ?? complaints[duplicateIndex]!.id;
+        const existingId =
+          instanceIds[duplicateIndex] ?? complaints[duplicateIndex]!.id;
         setActiveInstanceId(existingId);
         return false;
       }
 
-      const complaint = createEmptyComplaint();
-      complaint.name = finalName;
-      Object.assign(complaint, parsed.patch);
-
-      if (
-        !isLateralityValidForComplaint(
-          complaint.name,
-          complaint.category ?? undefined,
-          complaint.laterality,
-        )
-      ) {
-        delete complaint.laterality;
-      }
-
-      const children = buildAssociatedChildren(parsed.associated, complaint.name);
-      if (children.length > 0) complaint.associatedComplaints = children;
-
-      recordParsedFields(
-        complaint.id,
-        buildParsedCueItems(
-          complaint,
-          parsed.patch,
-          children.map((child) => child.name),
-        ),
-      );
+      const complaint = complaintFromAiParsed(parsed);
+      if (!complaint) return false;
 
       dispatch({ type: "ADD_COMPLAINT", complaint });
       return true;
     },
-    [disabled, complaints, instanceIds, dispatch],
+    [disabled, complaints, instanceIds, dispatch]
   );
 
-  const handleAddAiIndex = useCallback(
+  const dropAiIndex = useCallback(
     (index: number) => {
-      const target = aiComplaints[index];
-      if (!target) return;
-      addAiComplaint(target);
       const remaining = aiComplaints.filter((_, i) => i !== index);
       if (remaining.length === 0) {
         resetAiPanel();
@@ -415,29 +360,96 @@ export function ComplaintList({
         setAiComplaints(remaining);
       }
     },
-    [aiComplaints, addAiComplaint, resetAiPanel],
+    [aiComplaints, resetAiPanel]
   );
 
+  const handleAddAiIndex = useCallback(
+    (index: number) => {
+      const target = aiComplaints[index];
+      if (!target) return;
+      addAiComplaint(target);
+      dropAiIndex(index);
+    },
+    [aiComplaints, addAiComplaint, dropAiIndex]
+  );
+
+  const applyAiToRefiningCard = useCallback(
+    (proposalIndex: number) => {
+      const parsed = aiComplaints[proposalIndex];
+      const complaint = complaints[refiningIndex];
+      if (!parsed || !complaint || refiningIndex < 0) return;
+
+      const { fieldPatch, associatedNames, suggestedName } =
+        mergeAiParsedIntoComplaint(complaint, parsed);
+      const nextName = suggestedName ?? complaint.name;
+      const children = buildAssociatedChildren(associatedNames, nextName);
+      const patch: Partial<Complaint> = { ...fieldPatch };
+      if (suggestedName) patch.name = suggestedName;
+      if (children.length > 0) {
+        patch.associatedComplaints = [
+          ...children,
+          ...(complaint.associatedComplaints ?? []),
+        ];
+      }
+      if (Object.keys(patch).length > 0) {
+        dispatch({ type: "UPDATE_COMPLAINT", index: refiningIndex, patch });
+      }
+    },
+    [aiComplaints, complaints, refiningIndex, dispatch]
+  );
+
+  const handleApplyAiIndex = useCallback(
+    (index: number) => {
+      applyAiToRefiningCard(index);
+      setCardApplied(true);
+      dropAiIndex(index);
+    },
+    [applyAiToRefiningCard, dropAiIndex]
+  );
+
+  const handleRenameFromAi = useCallback(() => {
+    const suggestedName = refineMerge?.suggestedName;
+    if (!suggestedName || refiningIndex < 0) return;
+    dispatch({
+      type: "UPDATE_COMPLAINT",
+      index: refiningIndex,
+      patch: { name: suggestedName },
+    });
+  }, [refineMerge?.suggestedName, refiningIndex, dispatch]);
+
   const handleAddAllAi = useCallback(() => {
-    aiComplaints.forEach((c) => addAiComplaint(c));
+    if (!cardApplied && refiningIndex >= 0 && aiComplaints[0]) {
+      applyAiToRefiningCard(0);
+      aiComplaints.slice(1).forEach((row) => addAiComplaint(row));
+    } else {
+      aiComplaints.forEach((row) => addAiComplaint(row));
+    }
     resetAiPanel();
-  }, [aiComplaints, addAiComplaint, resetAiPanel]);
+  }, [
+    cardApplied,
+    refiningIndex,
+    aiComplaints,
+    applyAiToRefiningCard,
+    addAiComplaint,
+    resetAiPanel,
+  ]);
 
   const handlePatch = useCallback(
     (index: number, patch: Partial<Complaint>) => {
       dispatch({ type: "UPDATE_COMPLAINT", index, patch });
     },
-    [dispatch],
+    [dispatch]
   );
 
   const handleRemove = useCallback(
     (index: number) => {
       const removedId = instanceIds[index];
+      if (removedId === refiningInstanceId) resetAiPanel();
       dispatch({ type: "REMOVE_COMPLAINT", index });
       setInstanceIds((prev) => prev.filter((_, i) => i !== index));
       setActiveInstanceId((active) => (active === removedId ? null : active));
     },
-    [dispatch, instanceIds],
+    [dispatch, instanceIds, refiningInstanceId, resetAiPanel]
   );
 
   const handleReorder = useCallback(
@@ -451,15 +463,19 @@ export function ComplaintList({
         return next;
       });
     },
-    [dispatch],
+    [dispatch]
   );
 
   const handleDemote = useCallback(
     (sourceIndex: number, targetParentId: string) => {
-      const err = getDemoteComplaintError(complaints, sourceIndex, targetParentId);
+      const err = getDemoteComplaintError(
+        complaints,
+        sourceIndex,
+        targetParentId
+      );
       if (err) {
         setDemoteError(
-          formatDemoteComplaintError(err, complaints[sourceIndex]?.name ?? ""),
+          formatDemoteComplaintError(err, complaints[sourceIndex]?.name ?? "")
         );
         return;
       }
@@ -470,7 +486,7 @@ export function ComplaintList({
       setInstanceIds((prev) => prev.filter((_, i) => i !== sourceIndex));
       setActiveInstanceId((active) => (active === removedId ? null : active));
     },
-    [complaints, dispatch, instanceIds],
+    [complaints, dispatch, instanceIds]
   );
 
   const handleDropOnTarget = useCallback(
@@ -494,7 +510,7 @@ export function ComplaintList({
       handleReorder(sourceIndex, toIndex);
       clearDragState();
     },
-    [disabled, clearDragState, handleDemote, complaints, handleReorder],
+    [disabled, clearDragState, handleDemote, complaints, handleReorder]
   );
 
   const dragHandleProps = useCallback(
@@ -522,27 +538,30 @@ export function ComplaintList({
         clearDragState();
       },
     }),
-    [disabled, clearDragState],
+    [disabled, clearDragState]
   );
 
-  const handleCardDragOver = useCallback((targetIndex: number, e: DragEvent<HTMLDivElement>) => {
-    const sourceIndex = dragIndexRef.current;
-    if (sourceIndex === null || sourceIndex === targetIndex) return;
+  const handleCardDragOver = useCallback(
+    (targetIndex: number, e: DragEvent<HTMLDivElement>) => {
+      const sourceIndex = dragIndexRef.current;
+      if (sourceIndex === null || sourceIndex === targetIndex) return;
 
-    e.preventDefault();
-    if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
 
-    const rect = e.currentTarget.getBoundingClientRect();
-    const intent = resolveMainComplaintDropIntent(e.clientY, rect);
-    setDropTarget({ index: targetIndex, intent });
-  }, []);
+      const rect = e.currentTarget.getBoundingClientRect();
+      const intent = resolveMainComplaintDropIntent(e.clientY, rect);
+      setDropTarget({ index: targetIndex, intent });
+    },
+    []
+  );
 
   const handleListKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     const focusable = e.currentTarget.querySelectorAll<HTMLElement>(
-      "[role='button'][aria-label*='Complaint']",
+      "[role='button'][aria-label*='Complaint']"
     );
     const currentIndex = Array.from(focusable).indexOf(
-      document.activeElement as HTMLElement,
+      document.activeElement as HTMLElement
     );
     if (currentIndex === -1) return;
 
@@ -560,7 +579,9 @@ export function ComplaintList({
       id={CHIEF_COMPLAINTS_SECTION_ID}
       ariaLabel="Chief complaints"
       title="Chief complaints"
-      sectionIcon={sectionHeaderIcon(resolveSubjectiveSectionIcon("chief_complaints")!)}
+      sectionIcon={sectionHeaderIcon(
+        resolveSubjectiveSectionIcon("chief_complaints")!
+      )}
       toggleLabel="Toggle chief complaints"
       scrollOnExpand
       closeScrollToSelector={SUBJECTIVE_SCROLL_TOP_SELECTOR}
@@ -571,29 +592,24 @@ export function ComplaintList({
       onOpenChange={onSectionOpenChange}
       className="scroll-mt-2"
       bodyClassName="space-y-2"
-      leadingActions={<SectionReorderLeadingAction sectionId="chief_complaints" />}
-      actions={!disabled ? <SubjectiveSectionTemplateButton scope="chief_complaints" /> : undefined}
+      leadingActions={
+        <SectionReorderLeadingAction sectionId="chief_complaints" />
+      }
+      actions={
+        !disabled ? (
+          <SubjectiveSectionTemplateButton scope="chief_complaints" />
+        ) : undefined
+      }
     >
       <div className="space-y-2">
+        <LastVisitComplaintsStrip disabled={disabled} />
         {!disabled ? (
           <ComplaintCaptureBar
             disabled={disabled}
             token={token}
             onCapture={handleCapture}
-            onRefine={token ? handleRefine : undefined}
             inputId="complaint-capture"
             inputAriaLabel="Add chief complaint"
-          />
-        ) : null}
-
-        {aiStatus !== "idle" ? (
-          <AiRefineProposal
-            status={aiStatus}
-            complaints={aiComplaints}
-            onAdd={handleAddAiIndex}
-            onAddAll={handleAddAllAi}
-            onDismiss={dismissAi}
-            onKeepAsTyped={showKeepAsTyped ? handleKeepAsTyped : undefined}
           />
         ) : null}
 
@@ -605,8 +621,8 @@ export function ComplaintList({
 
         {complaints.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            Type a complaint above and press Enter to add. Tap a card later to fill
-            onset, severity, and other details.
+            Type a complaint above and press Enter to add. Tap a card later to
+            fill onset, severity, and other details.
           </p>
         ) : (
           <div className="space-y-2" onKeyDown={handleListKeyDown}>
@@ -627,9 +643,13 @@ export function ComplaintList({
                   <div
                     onDragOver={(e) => handleCardDragOver(index, e)}
                     onDragLeave={(e) => {
-                      if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+                      if (
+                        !e.currentTarget.contains(
+                          e.relatedTarget as Node | null
+                        )
+                      ) {
                         setDropTarget((prev) =>
-                          prev?.index === index ? null : prev,
+                          prev?.index === index ? null : prev
                         );
                       }
                     }}
@@ -638,7 +658,7 @@ export function ComplaintList({
                       if (dragIndexRef.current === null) return;
                       const intent = resolveMainComplaintDropIntent(
                         e.clientY,
-                        e.currentTarget.getBoundingClientRect(),
+                        e.currentTarget.getBoundingClientRect()
                       );
                       handleDropOnTarget(index, intent);
                     }}
@@ -649,6 +669,9 @@ export function ComplaintList({
                       scrollInstanceId={instanceId}
                       onPatch={handlePatch}
                       onRemove={handleRemove}
+                      onRefine={
+                        token && !disabled ? handleCardRefine : undefined
+                      }
                       disabled={disabled}
                       isReadOnly={disabled}
                       isEditing={!disabled && activeInstanceId === instanceId}
@@ -660,7 +683,7 @@ export function ComplaintList({
                         const rowInstanceId = instanceIds[rowIndex];
                         collapseSourceRef.current = source;
                         setActiveInstanceId((active) =>
-                          active === rowInstanceId ? null : active,
+                          active === rowInstanceId ? null : active
                         );
                       }}
                       dragHandleProps={dragHandleProps(index)}
@@ -682,6 +705,25 @@ export function ComplaintList({
                         }
                       }}
                     />
+                    {refiningInstanceId === instanceId &&
+                    aiStatus !== "idle" ? (
+                      <div className="mt-1">
+                        <AiRefineProposal
+                          status={aiStatus}
+                          complaints={aiComplaints}
+                          onAdd={handleAddAiIndex}
+                          onAddAll={handleAddAllAi}
+                          onDismiss={dismissAi}
+                          onApply={cardApplied ? undefined : handleApplyAiIndex}
+                          renameTo={refineMerge?.suggestedName}
+                          onRename={
+                            refineMerge?.suggestedName
+                              ? handleRenameFromAi
+                              : undefined
+                          }
+                        />
+                      </div>
+                    ) : null}
                   </div>
 
                   {isDropTarget && dropIntent === "after" ? (

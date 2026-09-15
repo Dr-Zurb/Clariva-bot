@@ -13,8 +13,8 @@
  * the resolved complaint's own laterality chips (Upper/Mid/Lower for axial sites,
  * Left/Right/Both for paired ones), so a value is only set when the card can show
  * it. Leading side words ("Right leg pain") stay in the name and merely pre-select
- * the chip; only connector/region-introduced position phrases ("in upper region")
- * are stripped from the name.
+ * the chip. Connector-introduced side words before a body part ("pain in left
+ * leg") and connector/region phrases ("in upper region") are stripped.
  */
 
 import type { Complaint, ComplaintSeverity } from "@/types/prescription";
@@ -363,8 +363,8 @@ function findChipMatch(
 
 /**
  * Length of a clause connector immediately before `start` (so it can be stripped
- * with the chip), or -1 when the chip is a bare descriptor that should stay in
- * the name (e.g. "night cough" keeps "night"; "cough at night" strips "at night").
+ * with the chip), or -1 when there is no connector. Callers strip a leading
+ * descriptor themselves ("night cough" → "Cough") and leave mid-name chips.
  */
 function chipConnectorPrefixLength(lower: string, start: number): number {
   const m = CHIP_CLAUSE_CONNECTOR_RE.exec(lower.slice(0, start));
@@ -642,8 +642,9 @@ export function parseComplaintText(raw: string): ParsedComplaint {
   }
 
   // 8) Laterality / position — schema-aware. (a) strip connector/region phrases
-  //    like "in upper region", and (b) pre-select from a bare side word
-  //    ("Right leg pain") without stripping it from the name.
+  //    like "in upper region", (b) strip a connector-introduced side word
+  //    before a body part ("pain in left leg" → "Pain in leg"), (c) pre-select
+  //    from a bare side word ("Right leg pain") without stripping it.
   const lateralityChipsAll = schemaFields.find((f) => f.key === "laterality")?.chips ?? [];
   const isAbdomenGrid = lateralityChipsAll.some((c) => c.toLowerCase() === ABDOMEN_GRID_MARKER);
   if (isAbdomenGrid) {
@@ -667,6 +668,27 @@ export function parseComplaintText(raw: string): ParsedComplaint {
         if (chip) {
           patch.laterality = chip;
           mark(stripMatch.index, stripMatch.index + stripMatch[0].length);
+        }
+      }
+
+      // Connector + side word + body part — strip only the side word so
+      // "pain in left leg" becomes "Pain in leg". Must run after the region
+      // phrase so "in upper region" is not reduced to "in region".
+      if (!patch.laterality) {
+        const connectorSideRe = new RegExp(
+          `\\b(?:in|on|over|at|to)\\s+(?:the\\s+)?(${LATERALITY_WORDS.join("|")})(?=\\s+[a-z])`,
+        );
+        const sideMatch = connectorSideRe.exec(lower);
+        if (sideMatch && sideMatch.index !== undefined) {
+          const word = sideMatch[1]!;
+          const wordStart = sideMatch.index + sideMatch[0].length - word.length;
+          if (!removed[wordStart]) {
+            const chip = mapWordToLateralityChip(word, lateralityChips);
+            if (chip) {
+              patch.laterality = chip;
+              mark(wordStart, wordStart + word.length);
+            }
+          }
         }
       }
 
@@ -773,9 +795,9 @@ export function parseComplaintText(raw: string): ParsedComplaint {
   }
 
   // 9) Schema-driven chip fields — timing / colour / frequency / chip-location.
-  //    Matched against each field's own chip vocabulary. The value is stripped
-  //    from the name only when connector-introduced ("at night", "with blood");
-  //    a bare leading descriptor ("night cough") stays in the name + pre-selects.
+  //    Matched against each field's own chip vocabulary. Stripped when
+  //    connector-introduced ("at night") or a leading descriptor ("night cough");
+  //    a mid-name chip stays in the name and only pre-selects.
   for (const field of schemaFields) {
     if (!CHIP_AUTOFILL_KEYS.has(field.key)) continue;
     if (field.type !== "chips") continue;
@@ -785,6 +807,7 @@ export function parseComplaintText(raw: string): ParsedComplaint {
     (patch as Record<string, string>)[field.key] = match.chip;
     const connLen = chipConnectorPrefixLength(lower, match.start);
     if (connLen >= 0) mark(match.start - connLen, match.end);
+    else if (match.start === 0) mark(match.start, match.end);
   }
 
   // 10) Aggravating / relieving — cue-gated, only for schemas whose aggravating /

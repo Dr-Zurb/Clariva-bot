@@ -69,7 +69,7 @@ const prescriptionIdRef = { current: null as string | null };
 const EMPTY_PLAN_DEFAULTS = {
   sectionOrder: [] as const,
   sectionCollapsed: {},
-  sectionHidden: [] as const,
+  sectionHidden: ["__show_all__"] as const,
 };
 
 function completeMedicine(name: string): RxMedicine {
@@ -503,7 +503,7 @@ describe("PlanSection peer zones (plan-p0)", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("trims a committed panel via expand-to-edit (INV-D11 basket)", () => {
+  it("commits a panel as the package name with no catalog member list", () => {
     renderPlanSection([completeMedicine("Ibuprofen")], ["instance-a"]);
 
     fireEvent.click(screen.getByRole("button", { name: "+ LFT" }));
@@ -512,29 +512,17 @@ describe("PlanSection peer zones (plan-p0)", () => {
 
     fireEvent.click(screen.getByTestId("investigation-panel-expand-lft"));
     const checklist = screen.getByTestId("investigation-panel-checklist");
-    fireEvent.click(within(checklist).getByRole("button", { name: "Clear" }));
-    fireEvent.click(within(checklist).getByRole("button", { name: "SGOT (AST)" }));
-    fireEvent.click(within(checklist).getByRole("button", { name: "SGPT (ALT)" }));
-
-    expect(screen.getByTestId("investigation-panel-rename-nudge")).toBeInTheDocument();
-    fireEvent.click(screen.getByTestId("investigation-panel-close"));
-
-    // Basket stays one top-level row; membership is trimmed inside.
-    expect(within(zone).getByRole("button", { name: "Remove LFT" })).toBeInTheDocument();
     expect(
-      within(zone).queryByRole("button", { name: "Remove SGOT (AST)" }),
+      within(checklist).queryByRole("button", { name: "SGOT (AST)" }),
     ).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByTestId("investigation-panel-expand-lft"));
-    const reopened = screen.getByTestId("investigation-panel-checklist");
     expect(
-      within(reopened).getByRole("button", { name: "SGOT (AST)", pressed: true }),
-    ).toBeInTheDocument();
+      within(checklist).queryByRole("button", { name: "Total bilirubin" }),
+    ).not.toBeInTheDocument();
     expect(
-      within(reopened).getByRole("button", { name: "SGPT (ALT)", pressed: true }),
-    ).toBeInTheDocument();
+      within(checklist).queryByRole("button", { name: "Select all" }),
+    ).not.toBeInTheDocument();
     expect(
-      within(reopened).getByRole("button", { name: "Total bilirubin", pressed: false }),
+      within(checklist).getByTestId("investigation-panel-member-combobox"),
     ).toBeInTheDocument();
   });
 
@@ -550,7 +538,9 @@ describe("PlanSection peer zones (plan-p0)", () => {
 
     const checklist = screen.getByTestId("investigation-panel-checklist");
     expect(within(checklist).getByText("Chest X-ray")).toBeInTheDocument();
-    expect(screen.getByTestId("investigation-panel-rename-nudge")).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("investigation-panel-rename-nudge"),
+    ).not.toBeInTheDocument();
 
     // Still one top-level LFT row (member is inside the basket, not a sibling).
     const zone = screen.getByTestId("plan-investigations-zone");
@@ -653,6 +643,10 @@ describe("PlanSection peer zones (plan-p0)", () => {
 });
 
 describe("PlanSection active-row tracking", () => {
+  beforeEach(() => {
+    sessionStorage.clear();
+  });
+
   it("keeps one editor at a time when tapping another row summary", () => {
     renderPlanSection(
       [completeMedicine("Paracetamol"), completeMedicine("Ibuprofen")],

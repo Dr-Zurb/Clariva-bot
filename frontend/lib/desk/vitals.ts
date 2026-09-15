@@ -1,3 +1,5 @@
+export const DESK_VITALS_NOTE_MAX = 1000;
+
 export type DeskVitalsFields = {
   bpSystolic: string;
   bpDiastolic: string;
@@ -6,6 +8,7 @@ export type DeskVitalsFields = {
   spo2: string;
   weightKg: string;
   heightCm: string;
+  note: string;
 };
 
 export const EMPTY_DESK_VITALS: DeskVitalsFields = {
@@ -16,6 +19,7 @@ export const EMPTY_DESK_VITALS: DeskVitalsFields = {
   spo2: "",
   weightKg: "",
   heightCm: "",
+  note: "",
 };
 
 export type DeskVitalsPayload = {
@@ -26,6 +30,7 @@ export type DeskVitalsPayload = {
   spo2?: number;
   weightKg?: number;
   heightCm?: number;
+  note?: string | null;
 };
 
 function parseOptionalNumber(raw: string): number | undefined {
@@ -43,6 +48,7 @@ export function deskVitalsFromReading(row: {
   spo2: number | null;
   weight_kg: number | null;
   height_cm: number | null;
+  note?: string | null;
 }): DeskVitalsFields {
   return {
     bpSystolic: row.bp_systolic != null ? String(row.bp_systolic) : "",
@@ -52,6 +58,7 @@ export function deskVitalsFromReading(row: {
     spo2: row.spo2 != null ? String(row.spo2) : "",
     weightKg: row.weight_kg != null ? String(row.weight_kg) : "",
     heightCm: row.height_cm != null ? String(row.height_cm) : "",
+    note: row.note?.trim() ?? "",
   };
 }
 
@@ -79,6 +86,7 @@ export function parseDeskVitalsFields(
     return { ok: false, error: "Enter numbers only" };
   }
 
+  const note = fields.note.trim().slice(0, DESK_VITALS_NOTE_MAX);
   const payload: DeskVitalsPayload = {};
   if (bpSystolic !== undefined) payload.bpSystolic = bpSystolic;
   if (bpDiastolic !== undefined) payload.bpDiastolic = bpDiastolic;
@@ -88,9 +96,10 @@ export function parseDeskVitalsFields(
   if (weightKg !== undefined) payload.weightKg = weightKg;
   if (heightCm !== undefined) payload.heightCm = heightCm;
 
-  if (Object.keys(payload).length === 0) {
+  if (Object.keys(payload).length === 0 && !note) {
     return { ok: false, error: "Enter at least one vital" };
   }
+  payload.note = note || null;
   if ((payload.bpSystolic == null) !== (payload.bpDiastolic == null)) {
     return { ok: false, error: "Blood pressure needs both numbers" };
   }

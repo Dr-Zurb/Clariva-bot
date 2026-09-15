@@ -14,6 +14,7 @@
  *   - multiple drugs joined by a conjunction,
  *   - a drug "name" longer than a real name (rules absorbed words they couldn't
  *     classify — e.g. "telmisartan daily kha raha hai"),
+ *   - a digit-leading token left in the name (a glued token the rules missed),
  *   - any unclassified residue left in `instructions` (free-text / vernacular
  *     tail — e.g. "amlodipine 5 mg od subah le raha hai").
  *
@@ -34,7 +35,7 @@ const MULTI_DRUG_SPLIT_RE = /\s+and\s+|\s*&\s*|\s*\+\s*|\s+plus\s+/i;
  * short. Beyond this, the parser absorbed words it couldn't classify, which
  * means loose / vernacular phrasing rather than a clean line.
  */
-const MAX_CLEAN_NAME_WORDS = 2;
+export const MAX_CLEAN_NAME_WORDS = 2;
 
 function wordCount(text: string): number {
   return text.split(/\s+/).filter(Boolean).length;
@@ -68,6 +69,10 @@ export function shouldRequestAiMedParse(
 
   // The parser absorbed too many unclassified words into the drug "name".
   if (wordCount(parsed.medicineName) > MAX_CLEAN_NAME_WORDS) return true;
+
+  // A real drug name never starts a token with a digit. Residue like "1od"
+  // leaking into the name means a glued token the rules missed.
+  if (parsed.medicineName.split(/\s+/).some((w) => /^\d/.test(w))) return true;
 
   // Trailing tokens the rules couldn't classify (free-text / vernacular tail).
   if (parsed.instructions.trim()) return true;

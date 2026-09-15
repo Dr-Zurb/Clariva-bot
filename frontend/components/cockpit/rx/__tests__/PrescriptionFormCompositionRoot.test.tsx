@@ -181,6 +181,21 @@ describe("PrescriptionFormCompositionRoot", () => {
     expect(screen.getByTestId("rx-section-plan")).toBeInTheDocument();
   });
 
+  it("flat host mounts one describe box; cockpit lift hides it", () => {
+    const { unmount } = renderCompositionRoot();
+    expect(screen.getAllByLabelText("Describe this visit")).toHaveLength(1);
+    expect(
+      screen.queryByRole("region", { name: "Subjective" }),
+    ).toBeInTheDocument();
+    unmount();
+
+    renderCompositionRoot({
+      subjectiveLifted: true,
+      objectiveLifted: true,
+    });
+    expect(screen.queryByLabelText("Describe this visit")).not.toBeInTheDocument();
+  });
+
   it("defaults preserved — omitting lift props matches explicit false", () => {
     const { unmount: unmountDefault } = renderCompositionRoot();
     expectAllFourSections();

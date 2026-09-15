@@ -79,7 +79,7 @@ function ActionToastPortal({
 
   return createPortal(
     <div
-      className="pointer-events-none fixed bottom-4 right-4 z-50 flex w-[min(100vw-2rem,24rem)] flex-col gap-2"
+      className="pointer-events-none fixed top-4 right-4 z-50 flex w-[min(100vw-2rem,24rem)] flex-col gap-2"
       aria-label="Action notifications"
     >
       {queue.map((item) => (

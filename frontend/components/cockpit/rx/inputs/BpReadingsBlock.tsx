@@ -1,7 +1,11 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import { useRxForm, type BpContext, type BpReading } from "@/components/cockpit/rx/RxFormContext";
+import {
+  useRxForm,
+  type BpContext,
+  type BpReading,
+} from "@/components/cockpit/rx/RxFormContext";
 import {
   DerivedBadge,
   RangeFlagIcon,
@@ -22,7 +26,11 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import { ChevronDown } from "lucide-react";
 import {
@@ -47,12 +55,21 @@ import {
   readingHasContextOverride,
 } from "@/lib/cockpit/bp-readings";
 import { mergeBpBlockContext } from "@/lib/cockpit/measurement-context";
-import { BP_QUICK_FILL_PAIRS, bpPrimaryReadingEmpty } from "@/lib/cockpit/vitals-quick-fill";
+import {
+  BP_QUICK_FILL_PAIRS,
+  bpPrimaryReadingEmpty,
+} from "@/lib/cockpit/vitals-quick-fill";
 import { VitalQuickFillChips } from "@/components/cockpit/rx/inputs/VitalQuickFillChips";
 import { VitalRangeHelp } from "@/components/cockpit/rx/inputs/VitalRangeHelp";
 import { ReadingNoteField } from "@/components/cockpit/rx/inputs/VitalNoteField";
+import {
+  useVitalExtrasOpen,
+  VitalExtrasPanel,
+  VitalExtrasToggle,
+} from "@/components/cockpit/rx/inputs/VitalExtrasCollapse";
 import { RemoveIconButton } from "@/components/cockpit/rx/subjective/RemoveIconButton";
 import { LastVisitVitalGhost } from "@/components/cockpit/rx/inputs/LastVisitVitalGhost";
+import { bpReadingExtrasHaveData } from "@/lib/cockpit/vital-extras";
 import { vitalSelectMinWidthCh } from "@/lib/cockpit/categorical-vitals-schema";
 import {
   bpReadingsGridSpanClass,
@@ -64,11 +81,7 @@ import {
 import { computeMap, categorizeBpPair } from "@/lib/cockpit/vitals-derive";
 import { resolveVital, type RangeContext } from "@/lib/cockpit/vitals-schema";
 import type { VitalTrendMetricKey } from "@/lib/cockpit/vitals-trends";
-import type {
-  BpMeasuredBy,
-  BpMethod,
-  BpSetting,
-} from "@/types/prescription";
+import type { BpMeasuredBy, BpMethod, BpSetting } from "@/types/prescription";
 
 export interface BpReadingsBlockProps {
   ghost: GhostVitals | null;
@@ -179,7 +192,9 @@ function BpReadingOverrideSelect<T extends string>({
   className?: string;
 }) {
   const inheritLabel = defaultLabel;
-  const overrideOptions = options.filter((option) => option.value !== defaultValue);
+  const overrideOptions = options.filter(
+    (option) => option.value !== defaultValue
+  );
   const displayValue = value == null || value === defaultValue ? "" : value;
 
   return (
@@ -215,15 +230,26 @@ function BpMethodInlineSelect({
 }) {
   const methodMinCh = vitalSelectMinWidthCh(BP_METHOD_OPTIONS, "Method");
   return (
-    <div className="flex min-w-0 max-w-full items-center gap-1" data-testid="bp-method-select">
-      <label htmlFor="bp-block-method" className="shrink-0 text-[11px] text-muted-foreground">
+    <div
+      className="flex min-w-0 max-w-full items-center gap-1"
+      data-testid="bp-method-select"
+    >
+      <label
+        htmlFor="bp-block-method"
+        className="shrink-0 text-[11px] text-muted-foreground"
+      >
         Method
       </label>
       <select
         id="bp-block-method"
         value={method ?? ""}
-        onChange={(e) => onMethodChange((e.target.value || "auto_upper_arm") as BpMethod)}
-        className={cn(RX_FIELD_INPUT_CLASS, "mt-0 h-7 min-w-0 max-w-full flex-1 py-1 text-xs")}
+        onChange={(e) =>
+          onMethodChange((e.target.value || "auto_upper_arm") as BpMethod)
+        }
+        className={cn(
+          RX_FIELD_INPUT_CLASS,
+          "mt-0 h-7 min-w-0 max-w-full flex-1 py-1 text-xs"
+        )}
         style={{ maxWidth: "100%", width: `min(100%, ${methodMinCh}ch)` }}
         aria-label="BP measurement method"
       >
@@ -258,14 +284,20 @@ function BpReadingInlineSelect<T extends string>({
 }) {
   return (
     <div className="flex min-w-0 max-w-full items-center gap-1">
-      <label htmlFor={id} className="shrink-0 text-[11px] text-muted-foreground">
+      <label
+        htmlFor={id}
+        className="shrink-0 text-[11px] text-muted-foreground"
+      >
         {label}
       </label>
       <select
         id={id}
         value={value ?? ""}
         onChange={(e) => onChange((e.target.value || null) as T | null)}
-        className={cn(RX_FIELD_INPUT_CLASS, "mt-0 h-7 min-w-0 max-w-full flex-1 py-1 text-xs")}
+        className={cn(
+          RX_FIELD_INPUT_CLASS,
+          "mt-0 h-7 min-w-0 max-w-full flex-1 py-1 text-xs"
+        )}
         style={{ maxWidth: "100%", width: `min(100%, ${minWidthCh}ch)` }}
         aria-label={ariaLabel}
       >
@@ -300,16 +332,20 @@ function BpReadingRowOverride({
     <div
       className={cn(
         "flex flex-wrap items-end gap-2",
-        variant === "inline" && "border-t border-border/40 pt-2",
+        variant === "inline" && "border-t border-border/40 pt-2"
       )}
       data-testid="bp-reading-context-override"
     >
       <div className="flex min-w-0 flex-col gap-1">
-        <span className="text-[11px] font-medium text-muted-foreground">Measured by</span>
+        <span className="text-[11px] font-medium text-muted-foreground">
+          Measured by
+        </span>
         <BpReadingOverrideSelect
           value={reading.measuredBy}
           defaultValue={measuredByDefault}
-          defaultLabel={bpMeasuredByLabel(measuredByDefault) ?? measuredByDefault}
+          defaultLabel={
+            bpMeasuredByLabel(measuredByDefault) ?? measuredByDefault
+          }
           onChange={(measuredBy) => onChange({ ...reading, measuredBy })}
           options={BP_MEASURED_BY_OPTIONS}
           ariaLabel="Reading measured by override"
@@ -317,7 +353,9 @@ function BpReadingRowOverride({
         />
       </div>
       <div className="flex min-w-0 flex-col gap-1">
-        <span className="text-[11px] font-medium text-muted-foreground">Method</span>
+        <span className="text-[11px] font-medium text-muted-foreground">
+          Method
+        </span>
         <BpReadingOverrideSelect
           value={reading.method}
           defaultValue={methodDefault}
@@ -329,7 +367,9 @@ function BpReadingRowOverride({
         />
       </div>
       <div className="flex min-w-0 flex-col gap-1">
-        <span className="text-[11px] font-medium text-muted-foreground">Setting</span>
+        <span className="text-[11px] font-medium text-muted-foreground">
+          Setting
+        </span>
         <BpReadingOverrideSelect
           value={reading.setting}
           defaultValue={settingDefault}
@@ -373,7 +413,9 @@ function BpReadingProvenanceControl({
         data-testid={`bp-reading-provenance-panel-${index}`}
       >
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <span className="text-[11px] text-muted-foreground">Differs from visit default</span>
+          <span className="text-[11px] text-muted-foreground">
+            Differs from visit default
+          </span>
           <Button
             type="button"
             variant="ghost"
@@ -450,10 +492,15 @@ function BpReadingRow({
   const sysDef = resolveVital("vitalsBpSystolic");
   const diaDef = resolveVital("vitalsBpDiastolic");
   const map = computeMap(reading.systolic, reading.diastolic);
-  const bpCategory = categorizeBpPair(reading.systolic, reading.diastolic, rangeCtx ?? {});
+  const bpCategory = categorizeBpPair(
+    reading.systolic,
+    reading.diastolic,
+    rangeCtx ?? {}
+  );
   const isPrimary = index === 0;
   const postureMinCh = vitalSelectMinWidthCh(BP_POSTURE_OPTIONS, "Posture");
   const limbMinCh = vitalSelectMinWidthCh(BP_LIMB_OPTIONS, "Limb");
+  const extras = useVitalExtrasOpen(bpReadingExtrasHaveData(reading));
 
   return (
     <div
@@ -472,7 +519,11 @@ function BpReadingRow({
                 ? String(ghost.vitalsBpSystolic)
                 : "120"
             }
-            ariaLabel={isPrimary ? "Systolic blood pressure" : `Reading ${index + 1} systolic`}
+            ariaLabel={
+              isPrimary
+                ? "Systolic blood pressure"
+                : `Reading ${index + 1} systolic`
+            }
           />
 
           <span className="text-muted-foreground">/</span>
@@ -487,12 +538,17 @@ function BpReadingRow({
                 ? String(ghost.vitalsBpDiastolic)
                 : "80"
             }
-            ariaLabel={isPrimary ? "Diastolic blood pressure" : `Reading ${index + 1} diastolic`}
+            ariaLabel={
+              isPrimary
+                ? "Diastolic blood pressure"
+                : `Reading ${index + 1} diastolic`
+            }
           />
           <RangeFlagIcon label="Blood pressure" category={bpCategory} />
         </div>
 
-        {isPrimary && bpPrimaryReadingEmpty(reading.systolic, reading.diastolic) ? (
+        {isPrimary &&
+        bpPrimaryReadingEmpty(reading.systolic, reading.diastolic) ? (
           <VitalQuickFillChips
             options={BP_QUICK_FILL_PAIRS}
             onSelect={(index) => {
@@ -524,6 +580,14 @@ function BpReadingRow({
             testId={`bp-remove-reading-${index}`}
           />
         ) : null}
+        <VitalExtrasToggle
+          open={extras.open}
+          onToggle={extras.toggle}
+          label={
+            isPrimary ? "blood pressure" : `blood pressure reading ${index + 1}`
+          }
+          testId={`bp-reading-extras-toggle-${index}`}
+        />
       </div>
 
       {isPrimary &&
@@ -545,71 +609,91 @@ function BpReadingRow({
         />
       ) : null}
 
-      <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-        {showSequenceLabel ? (
-          <div className="flex shrink-0 items-center gap-1">
-            <label
-              htmlFor={`bp-reading-label-${index}`}
-              className="shrink-0 text-[11px] text-muted-foreground"
-            >
-              Label
-            </label>
-            <input
-              id={`bp-reading-label-${index}`}
-              type="text"
-              value={reading.sequenceLabel ?? ""}
-              onChange={(e) =>
-                onChange({
-                  ...reading,
-                  sequenceLabel: e.target.value.length > 0 ? e.target.value : null,
-                })
-              }
-              placeholder="e.g. 1 min"
-              maxLength={24}
-              className={cn(
-                RX_FIELD_INPUT_CLASS,
-                "mt-0 h-7 w-24 max-w-full py-1 text-xs placeholder:text-muted-foreground",
-              )}
-              aria-label={
-                isPrimary ? "Primary BP reading label" : `Reading ${index + 1} sequence label`
-              }
-              data-testid={`bp-reading-label-${index}`}
+      <VitalExtrasPanel open={extras.open}>
+        <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+          {showSequenceLabel ? (
+            <div className="flex shrink-0 items-center gap-1">
+              <label
+                htmlFor={`bp-reading-label-${index}`}
+                className="shrink-0 text-[11px] text-muted-foreground"
+              >
+                Label
+              </label>
+              <input
+                id={`bp-reading-label-${index}`}
+                type="text"
+                value={reading.sequenceLabel ?? ""}
+                onChange={(e) =>
+                  onChange({
+                    ...reading,
+                    sequenceLabel:
+                      e.target.value.length > 0 ? e.target.value : null,
+                  })
+                }
+                placeholder="e.g. 1 min"
+                maxLength={24}
+                className={cn(
+                  RX_FIELD_INPUT_CLASS,
+                  "mt-0 h-7 w-24 max-w-full py-1 text-xs placeholder:text-muted-foreground"
+                )}
+                aria-label={
+                  isPrimary
+                    ? "Primary BP reading label"
+                    : `Reading ${index + 1} sequence label`
+                }
+                data-testid={`bp-reading-label-${index}`}
+              />
+            </div>
+          ) : null}
+          <BpReadingInlineSelect
+            id={`bp-reading-posture-${index}`}
+            label="Posture"
+            value={reading.posture}
+            onChange={(posture) => onChange({ ...reading, posture })}
+            options={BP_POSTURE_OPTIONS}
+            placeholder="—"
+            ariaLabel={
+              isPrimary
+                ? "BP measurement posture"
+                : `Reading ${index + 1} posture`
+            }
+            minWidthCh={postureMinCh}
+          />
+          <BpReadingInlineSelect
+            id={`bp-reading-limb-${index}`}
+            label="Limb"
+            value={reading.limb}
+            onChange={(limb) => onChange({ ...reading, limb })}
+            options={BP_LIMB_OPTIONS}
+            placeholder="—"
+            ariaLabel={
+              isPrimary ? "BP measurement limb" : `Reading ${index + 1} limb`
+            }
+            minWidthCh={limbMinCh}
+          />
+          <ReadingNoteField
+            id={`bp-reading-note-${index}`}
+            value={reading.note ?? ""}
+            onChange={(next) =>
+              onChange({
+                ...reading,
+                note: next.length > 0 ? next : null,
+              })
+            }
+            label={isPrimary ? "Primary BP reading" : `Reading ${index + 1}`}
+            testId={`bp-reading-note-${index}`}
+          />
+          {!readingHasContextOverride(reading) ? (
+            <BpReadingProvenanceControl
+              reading={reading}
+              index={index}
+              blockContext={blockContext}
+              onChange={onChange}
             />
-          </div>
-        ) : null}
-        <BpReadingInlineSelect
-          id={`bp-reading-posture-${index}`}
-          label="Posture"
-          value={reading.posture}
-          onChange={(posture) => onChange({ ...reading, posture })}
-          options={BP_POSTURE_OPTIONS}
-          placeholder="—"
-          ariaLabel={isPrimary ? "BP measurement posture" : `Reading ${index + 1} posture`}
-          minWidthCh={postureMinCh}
-        />
-        <BpReadingInlineSelect
-          id={`bp-reading-limb-${index}`}
-          label="Limb"
-          value={reading.limb}
-          onChange={(limb) => onChange({ ...reading, limb })}
-          options={BP_LIMB_OPTIONS}
-          placeholder="—"
-          ariaLabel={isPrimary ? "BP measurement limb" : `Reading ${index + 1} limb`}
-          minWidthCh={limbMinCh}
-        />
-        <ReadingNoteField
-          id={`bp-reading-note-${index}`}
-          value={reading.note ?? ""}
-          onChange={(next) =>
-            onChange({
-              ...reading,
-              note: next.length > 0 ? next : null,
-            })
-          }
-          label={isPrimary ? "Primary BP reading" : `Reading ${index + 1}`}
-          testId={`bp-reading-note-${index}`}
-        />
-        {!readingHasContextOverride(reading) ? (
+          ) : null}
+        </div>
+
+        {readingHasContextOverride(reading) ? (
           <BpReadingProvenanceControl
             reading={reading}
             index={index}
@@ -617,16 +701,7 @@ function BpReadingRow({
             onChange={onChange}
           />
         ) : null}
-      </div>
-
-      {readingHasContextOverride(reading) ? (
-        <BpReadingProvenanceControl
-          reading={reading}
-          index={index}
-          blockContext={blockContext}
-          onChange={onChange}
-        />
-      ) : null}
+      </VitalExtrasPanel>
     </div>
   );
 }
@@ -641,28 +716,32 @@ export function BpReadingsBlock({
   const readings = state.fields.vitalsBpReadings;
   const bpContext = state.fields.vitalsBpContext;
   const measurementContext = state.fields.vitalsMeasurementContext;
-  const effectiveBlockContext = mergeBpBlockContext(measurementContext, bpContext);
-  const [pendingPresetKind, setPendingPresetKind] = useState<BpPresetKind | null>(null);
+  const effectiveBlockContext = mergeBpBlockContext(
+    measurementContext,
+    bpContext
+  );
+  const [pendingPresetKind, setPendingPresetKind] =
+    useState<BpPresetKind | null>(null);
 
   const updateReadings = useCallback(
     (next: BpReading[]) => {
       setField("vitalsBpReadings", next);
     },
-    [setField],
+    [setField]
   );
 
   const updateMethod = useCallback(
     (method: BpMethod) => {
       setField("vitalsBpContext", { ...bpContext, method });
     },
-    [bpContext, setField],
+    [bpContext, setField]
   );
 
   const updateRow = useCallback(
     (index: number, next: BpReading) => {
       updateReadings(readings.map((row, i) => (i === index ? next : row)));
     },
-    [readings, updateReadings],
+    [readings, updateReadings]
   );
 
   const addReading = useCallback(() => {
@@ -675,14 +754,14 @@ export function BpReadingsBlock({
       if (readings.length <= 1) return;
       updateReadings(readings.filter((_, i) => i !== index));
     },
-    [readings, updateReadings],
+    [readings, updateReadings]
   );
 
   const applyPreset = useCallback(
     (preset: BpReading[]) => {
       updateReadings(mergeBpReadingsWithPreset(readings, preset));
     },
-    [readings, updateReadings],
+    [readings, updateReadings]
   );
 
   const requestPreset = useCallback(
@@ -694,7 +773,7 @@ export function BpReadingsBlock({
       }
       applyPreset(preset);
     },
-    [applyPreset, readings],
+    [applyPreset, readings]
   );
 
   const confirmPendingPreset = useCallback(() => {
@@ -703,7 +782,9 @@ export function BpReadingsBlock({
     setPendingPresetKind(null);
   }, [applyPreset, pendingPresetKind]);
 
-  const pendingPresetLabel = pendingPresetKind ? BP_PRESET_LABELS[pendingPresetKind] : "";
+  const pendingPresetLabel = pendingPresetKind
+    ? BP_PRESET_LABELS[pendingPresetKind]
+    : "";
 
   const interArm = computeInterArmDelta(readings);
   const orthostatic = computeOrthostaticDrop(readings);
@@ -714,7 +795,7 @@ export function BpReadingsBlock({
       ? categorizeBpPair(
           primaryReading.systolic,
           primaryReading.diastolic,
-          rangeCtx ?? {},
+          rangeCtx ?? {}
         )
       : null;
 
@@ -727,126 +808,137 @@ export function BpReadingsBlock({
       data-bp-grid-span={readings.length > 1 ? "full" : "unit"}
     >
       <div className={VITAL_CLUSTER_CELL_CLASS}>
-      <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-        <span className={RX_FIELD_LABEL_CLASS}>Blood pressure (mmHg)</span>
-        <VitalRangeHelp
-          kind="bp"
-          rangeCtx={rangeCtx}
-          currentCategory={primaryBpCategory}
-        />
-        {sparklineFor("vitalsBpSystolic", "Blood pressure")}
-        <BpMethodInlineSelect method={bpContext.method} onMethodChange={updateMethod} />
-      </div>
-
-      <div className={VITAL_CLUSTER_BODY_CLASS}>
-        {readings.map((reading, index) => (
-          <BpReadingRow
-            key={index}
-            reading={reading}
-            index={index}
-            blockContext={effectiveBlockContext}
-            ghost={ghost}
-            ghostSourceLabel={ghostSourceLabel}
+        <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+          <span className={RX_FIELD_LABEL_CLASS}>Blood pressure (mmHg)</span>
+          <VitalRangeHelp
+            kind="bp"
             rangeCtx={rangeCtx}
-            canRemove={readings.length > 1}
-            showSequenceLabel={
-              readings.length > 1 ||
-              (reading.sequenceLabel != null && reading.sequenceLabel.length > 0)
-            }
-            onChange={(next) => updateRow(index, next)}
-            onRemove={() => removeReading(index)}
+            currentCategory={primaryBpCategory}
           />
-        ))}
-      </div>
+          {sparklineFor("vitalsBpSystolic", "Blood pressure")}
+          <BpMethodInlineSelect
+            method={bpContext.method}
+            onMethodChange={updateMethod}
+          />
+        </div>
 
-      <div className="flex shrink-0 flex-wrap items-center gap-2">
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={addReading}
-          disabled={readings.length >= MAX_BP_READINGS}
-          data-testid="bp-add-reading"
-        >
-          + Add reading
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          onClick={() => requestPreset("both_arms")}
-          data-testid="bp-preset-both-arms"
-        >
-          Both arms
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          onClick={() => requestPreset("orthostatic")}
-          data-testid="bp-preset-orthostatic"
-        >
-          Orthostatic
-        </Button>
-      </div>
+        <div className={VITAL_CLUSTER_BODY_CLASS}>
+          {readings.map((reading, index) => (
+            <BpReadingRow
+              key={index}
+              reading={reading}
+              index={index}
+              blockContext={effectiveBlockContext}
+              ghost={ghost}
+              ghostSourceLabel={ghostSourceLabel}
+              rangeCtx={rangeCtx}
+              canRemove={readings.length > 1}
+              showSequenceLabel={
+                readings.length > 1 ||
+                (reading.sequenceLabel != null &&
+                  reading.sequenceLabel.length > 0)
+              }
+              onChange={(next) => updateRow(index, next)}
+              onRemove={() => removeReading(index)}
+            />
+          ))}
+        </div>
 
-      <AlertDialog
-        open={pendingPresetKind != null}
-        onOpenChange={(open) => {
-          if (!open) setPendingPresetKind(null);
-        }}
-      >
-        <AlertDialogContent data-testid="bp-preset-drop-dialog">
-          <AlertDialogHeader>
-            <AlertDialogTitle>Reformat to {pendingPresetLabel}?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This shapes your blood pressure readings into the {pendingPresetLabel} layout.
-              Extra readings with data will be removed.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={confirmPendingPreset}>Reformat</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+        <div className="flex shrink-0 flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={addReading}
+            disabled={readings.length >= MAX_BP_READINGS}
+            data-testid="bp-add-reading"
+          >
+            + Add reading
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => requestPreset("both_arms")}
+            data-testid="bp-preset-both-arms"
+          >
+            Both arms
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => requestPreset("orthostatic")}
+            data-testid="bp-preset-orthostatic"
+          >
+            Orthostatic
+          </Button>
+        </div>
 
-      <div className={VITAL_CLUSTER_STATS_FOOTER_CLASS}>
-        {interArm ? (
-          <span
-            className={
-              interArm.flagged
-                ? "rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-amber-900"
-                : "rounded-full border border-border px-2 py-0.5 text-muted-foreground"
-            }
-            data-testid="bp-inter-arm-delta"
-          >
-            Inter-arm Δ {interArm.delta} mmHg
-            {interArm.flagged ? " — review" : ""}
-          </span>
-        ) : null}
-        {orthostatic ? (
-          <span
-            className={
-              orthostatic.flagged
-                ? "rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-amber-900"
-                : "rounded-full border border-border px-2 py-0.5 text-muted-foreground"
-            }
-            data-testid="bp-orthostatic-drop"
-          >
-            Orthostatic Δ {orthostatic.systolicDrop}/{orthostatic.diastolicDrop} mmHg
-            {orthostatic.flagged ? " — review" : ""}
-          </span>
-        ) : null}
-        {average && average.count > 1 ? (
-          <span
-            className="rounded-full border border-border px-2 py-0.5 text-muted-foreground"
-            data-testid="bp-average"
-          >
-            Avg {average.systolic}/{average.diastolic} ({average.count} readings)
-          </span>
-        ) : null}
-      </div>
+        <AlertDialog
+          open={pendingPresetKind != null}
+          onOpenChange={(open) => {
+            if (!open) setPendingPresetKind(null);
+          }}
+        >
+          <AlertDialogContent data-testid="bp-preset-drop-dialog">
+            <AlertDialogHeader>
+              <AlertDialogTitle>
+                Reformat to {pendingPresetLabel}?
+              </AlertDialogTitle>
+              <AlertDialogDescription>
+                This shapes your blood pressure readings into the{" "}
+                {pendingPresetLabel} layout. Extra readings with data will be
+                removed.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction onClick={confirmPendingPreset}>
+                Reformat
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        <div className={VITAL_CLUSTER_STATS_FOOTER_CLASS}>
+          {interArm ? (
+            <span
+              className={
+                interArm.flagged
+                  ? "rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-amber-900"
+                  : "rounded-full border border-border px-2 py-0.5 text-muted-foreground"
+              }
+              data-testid="bp-inter-arm-delta"
+            >
+              Inter-arm Δ {interArm.delta} mmHg
+              {interArm.flagged ? " — review" : ""}
+            </span>
+          ) : null}
+          {orthostatic ? (
+            <span
+              className={
+                orthostatic.flagged
+                  ? "rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-amber-900"
+                  : "rounded-full border border-border px-2 py-0.5 text-muted-foreground"
+              }
+              data-testid="bp-orthostatic-drop"
+            >
+              Orthostatic Δ {orthostatic.systolicDrop}/
+              {orthostatic.diastolicDrop} mmHg
+              {orthostatic.flagged ? " — review" : ""}
+            </span>
+          ) : null}
+          {average && average.count > 1 ? (
+            <span
+              className="rounded-full border border-border px-2 py-0.5 text-muted-foreground"
+              data-testid="bp-average"
+            >
+              Avg {average.systolic}/{average.diastolic} ({average.count}{" "}
+              readings)
+            </span>
+          ) : null}
+        </div>
       </div>
     </div>
   );

@@ -29,7 +29,19 @@ describe("parseDeskVitalsFields", () => {
       })
     ).toEqual({
       ok: true,
-      payload: { bpSystolic: 120, bpDiastolic: 80, heartRate: 72 },
+      payload: { bpSystolic: 120, bpDiastolic: 80, heartRate: 72, note: null },
+    });
+  });
+
+  it("includes a trimmed note and allows note-only save", () => {
+    expect(
+      parseDeskVitalsFields({
+        ...EMPTY_DESK_VITALS,
+        note: "  sitting  ",
+      })
+    ).toEqual({
+      ok: true,
+      payload: { note: "sitting" },
     });
   });
 });
@@ -45,12 +57,14 @@ describe("deskVitalsFromReading", () => {
         spo2: null,
         weight_kg: null,
         height_cm: null,
+        note: " post-walk ",
       })
     ).toMatchObject({
       bpSystolic: "118",
       bpDiastolic: "76",
       heartRate: "70",
       temperatureC: "",
+      note: "post-walk",
     });
   });
 });

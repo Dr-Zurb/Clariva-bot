@@ -3,6 +3,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRxForm } from "@/components/cockpit/rx/RxFormContext";
+import { useRxSectionLock } from "@/components/cockpit/rx/useRxLock";
+import {
+  registerRxHiddenSource,
+  type RxHiddenTarget,
+} from "@/components/cockpit/rx/command-bar/rx-hidden-set";
+import { listRxFieldIndex } from "@/lib/search/rx-fields";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -14,9 +20,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
-import {
-  TooltipProvider,
-} from "@/components/ui/tooltip";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import {
   VitalField,
   VitalsExtended,
@@ -24,6 +28,7 @@ import {
 } from "@/components/cockpit/rx/inputs/VitalsExtended";
 import { ExamSystemShortcutButton } from "@/components/cockpit/rx/inputs/ExamSystemShortcutButton";
 import { VitalsMeasurementContextBar } from "@/components/cockpit/rx/inputs/VitalsMeasurementContextBar";
+import { useVitalExtrasOpen } from "@/components/cockpit/rx/inputs/VitalExtrasCollapse";
 import {
   ManageVitalsMenu,
   resolveVitalHasDataHint,
@@ -37,9 +42,15 @@ import {
   WeightHeightDerivedRow,
 } from "@/components/cockpit/rx/inputs/WeightHeightDerivedRow";
 import {
+  DeskVitalsSectionNoteSeed,
   useDeskVisitVitals,
   useLastVisitVitals,
 } from "@/components/cockpit/rx/inputs/useLastVisitVitals";
+import { VITALS_SECTION_NOTE_MAX } from "@/lib/cockpit/vital-notes";
+import {
+  RX_FIELD_INPUT_CLASS,
+  RX_FIELD_LABEL_CLASS,
+} from "@/components/cockpit/rx/sections/field-styles";
 import { patientDemographicsToRangeContext } from "@/components/cockpit/rx/objective/VitalTrendChart";
 import { VitalTrendButton } from "@/components/cockpit/rx/objective/VitalTrendButton";
 import { AllVitalTrendsDialog } from "@/components/cockpit/rx/objective/AllVitalTrendsDialog";
@@ -50,7 +61,11 @@ import {
 } from "@/lib/cockpit/custom-vitals-trends";
 import { useVitalsTrendsQuery } from "@/hooks/queries/useVitalsTrendsQuery";
 import { useDoctorSettingsQuery } from "@/hooks/queries/useDoctorSettingsQuery";
-import { getPatientById, type ApiSuccess, type DoctorSettingsData } from "@/lib/api";
+import {
+  getPatientById,
+  type ApiSuccess,
+  type DoctorSettingsData,
+} from "@/lib/api";
 import { computeBmi } from "@/lib/cockpit/bmi";
 import {
   resolveCategoricalVital,
@@ -71,7 +86,11 @@ import {
   visibleCoreMainGridKeys,
   visibleCoreSecondaryGridKeys,
 } from "@/lib/cockpit/vitals-group-layout";
-import { resolveVital, VITAL_ORDER, type VitalKey } from "@/lib/cockpit/vitals-schema";
+import {
+  resolveVital,
+  VITAL_ORDER,
+  type VitalKey,
+} from "@/lib/cockpit/vitals-schema";
 import {
   expandBpClusterVisibilityKeys,
   BP_CLUSTER_MENU_KEY,
@@ -87,6 +106,7 @@ import {
   resolvePupilClusterMenuLabel,
 } from "@/lib/cockpit/pupil-cluster";
 import {
+  isVitalExcludedFromObjectiveUi,
   isVitalHidden,
   resolveEffectiveVitalsHidden,
   resolveDefaultVitalsLayout,
@@ -118,7 +138,9 @@ import {
 
 const DOCTOR_LAYOUT_AUTOSAVE_MS = 500;
 
-const FACTORY_DEFAULT_HIDDEN = resolveEffectiveVitalsHidden({ storedHidden: [] }).hidden;
+const FACTORY_DEFAULT_HIDDEN = resolveEffectiveVitalsHidden({
+  storedHidden: [],
+}).hidden;
 
 function resolveVisibilityKeyLabel(key: VitalVisibilityKey): string {
   const bpLabel = resolveBpClusterMenuLabel(key);
@@ -135,7 +157,48 @@ export interface VitalsGridProps {
   disabled?: boolean;
 }
 
-export function VitalsGrid({ disabled = false }: VitalsGridProps) {
+function VitalsSectionNote({ disabled }: { disabled: boolean }): JSX.Element {
+  const { state, setField } = useRxForm();
+  const value = state.fields.vitalsSectionNote;
+  const extras = useVitalExtrasOpen(value.trim().length > 0);
+
+  if (!extras.open) {
+    return (
+      <button
+        type="button"
+        className="text-xs text-muted-foreground hover:text-foreground"
+        onClick={extras.expand}
+        disabled={disabled}
+        data-testid="vitals-section-note-add"
+      >
+        Add note
+      </button>
+    );
+  }
+
+  return (
+    <div className="space-y-1">
+      <label htmlFor="vitals-section-note" className={RX_FIELD_LABEL_CLASS}>
+        Note
+      </label>
+      <textarea
+        id="vitals-section-note"
+        rows={2}
+        value={value}
+        onChange={(event) => setField("vitalsSectionNote", event.target.value)}
+        className={RX_FIELD_INPUT_CLASS}
+        placeholder="e.g. sitting, post-walk, refused…"
+        maxLength={VITALS_SECTION_NOTE_MAX}
+        disabled={disabled}
+        data-testid="vitals-section-note"
+      />
+    </div>
+  );
+}
+
+export function VitalsGrid({ disabled: disabledProp = false }: VitalsGridProps) {
+  const { contentLocked, prefsLocked } = useRxSectionLock(disabledProp);
+  const disabled = contentLocked;
   const { state, token, patientId, setField } = useRxForm();
   const queryClient = useQueryClient();
   // Shared, cached doctor-settings read. Both the custom-vital defs and the
@@ -158,10 +221,10 @@ export function VitalsGrid({ disabled = false }: VitalsGridProps) {
                   settings: { ...old.data.settings, ...patch },
                 },
               }
-            : old,
+            : old
       );
     },
-    [queryClient],
+    [queryClient]
   );
 
   const lastGhost = useLastVisitVitals();
@@ -169,8 +232,13 @@ export function VitalsGrid({ disabled = false }: VitalsGridProps) {
   const ghost = lastGhost || deskGhost ? { ...lastGhost, ...deskGhost } : null;
   const ghostLabel = (key: keyof NonNullable<typeof deskGhost>) =>
     deskGhost?.[key] != null ? "desk" : "prev";
-  const { byMetric, categoricalTimelines, customTrendSeries, customTextTimelines, isLoading } =
-    useVitalsTrendsQuery(token, patientId);
+  const {
+    byMetric,
+    categoricalTimelines,
+    customTrendSeries,
+    customTextTimelines,
+    isLoading,
+  } = useVitalsTrendsQuery(token, patientId);
 
   const customDefs = state.fields.vitalsCustomDefs;
   const customValues = state.fields.vitalsCustomValues;
@@ -184,7 +252,10 @@ export function VitalsGrid({ disabled = false }: VitalsGridProps) {
     const stored = normalizeCustomVitalDefs(settings.vitals_custom);
     hasSeededCustomRef.current = true;
     lastPersistedCustomRef.current = customVitalDefsStructureKey(stored);
-    setField("vitalsCustomDefs", mergeCustomVitalDefs(state.fields.vitalsCustomDefs, stored));
+    setField(
+      "vitalsCustomDefs",
+      mergeCustomVitalDefs(state.fields.vitalsCustomDefs, stored)
+    );
     // Seed once from the shared (cached) doctor-settings read; on error the
     // query yields no data so we keep any defs already seeded from the rx.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -205,7 +276,7 @@ export function VitalsGrid({ disabled = false }: VitalsGridProps) {
         }
       })();
     },
-    [patchDoctorSettingsCache, token],
+    [patchDoctorSettingsCache, token]
   );
 
   const handleAddCustomVital = useCallback(
@@ -214,7 +285,7 @@ export function VitalsGrid({ disabled = false }: VitalsGridProps) {
       setField("vitalsCustomDefs", next);
       persistCustomDefs(next);
     },
-    [customDefs, persistCustomDefs, setField],
+    [customDefs, persistCustomDefs, setField]
   );
 
   const handleEditCustomVital = useCallback(
@@ -227,7 +298,7 @@ export function VitalsGrid({ disabled = false }: VitalsGridProps) {
         setField("vitalsCustomValues", { ...customValues, [def.id]: null });
       }
     },
-    [customDefs, customValues, persistCustomDefs, setField],
+    [customDefs, customValues, persistCustomDefs, setField]
   );
 
   const handleRemoveCustomVital = useCallback(
@@ -240,28 +311,32 @@ export function VitalsGrid({ disabled = false }: VitalsGridProps) {
       setField("vitalsCustomValues", restValues);
       persistCustomDefs(next);
     },
-    [customDefs, customValues, persistCustomDefs, setField],
+    [customDefs, customValues, persistCustomDefs, setField]
   );
 
   const handleCustomValueChange = useCallback(
     (id: string, value: number | string | null) => {
       setField("vitalsCustomValues", { ...customValues, [id]: value });
     },
-    [customValues, setField],
+    [customValues, setField]
   );
 
   const customCatalog = useMemo(
     () => buildVitalsMenuCatalog(customDefs),
-    [customDefs],
+    [customDefs]
   );
 
-  const [storedVitalsHidden, setStoredVitalsHidden] = useState<VitalsHiddenSet | null>(null);
-  const [hiddenIds, setHiddenIds] = useState<VitalsHiddenSet>(FACTORY_DEFAULT_HIDDEN);
-  const [menuOpen, setMenuOpen] = useState(false);
-  const [pendingHideKey, setPendingHideKey] = useState<VitalVisibilityKey | null>(null);
-  const [pendingWnlPlan, setPendingWnlPlan] = useState<ReturnType<typeof buildWnlFillPlan> | null>(
-    null,
+  const [storedVitalsHidden, setStoredVitalsHidden] =
+    useState<VitalsHiddenSet | null>(null);
+  const [hiddenIds, setHiddenIds] = useState<VitalsHiddenSet>(
+    FACTORY_DEFAULT_HIDDEN
   );
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [pendingHideKey, setPendingHideKey] =
+    useState<VitalVisibilityKey | null>(null);
+  const [pendingWnlPlan, setPendingWnlPlan] = useState<ReturnType<
+    typeof buildWnlFillPlan
+  > | null>(null);
   const hasHydratedHiddenRef = useRef(false);
   const hasSeededHiddenRef = useRef(false);
   const lastPersistedHiddenRef = useRef<string>("");
@@ -284,12 +359,12 @@ export function VitalsGrid({ disabled = false }: VitalsGridProps) {
     });
     setHiddenIds(initialHidden);
     lastPersistedHiddenRef.current = serializeVitalsHidden(
-      vitalsHiddenOverridesToPersist(initialHidden),
+      vitalsHiddenOverridesToPersist(initialHidden)
     );
   }, [storedVitalsHidden]);
 
   useEffect(() => {
-    if (disabled || !token || storedVitalsHidden === null) return;
+    if (prefsLocked || !token || storedVitalsHidden === null) return;
 
     const toPersist = vitalsHiddenOverridesToPersist(hiddenIds);
     const serialized = serializeVitalsHidden(toPersist);
@@ -309,7 +384,13 @@ export function VitalsGrid({ disabled = false }: VitalsGridProps) {
     }, DOCTOR_LAYOUT_AUTOSAVE_MS);
 
     return () => window.clearTimeout(timer);
-  }, [disabled, hiddenIds, patchDoctorSettingsCache, storedVitalsHidden, token]);
+  }, [
+    prefsLocked,
+    hiddenIds,
+    patchDoctorSettingsCache,
+    storedVitalsHidden,
+    token,
+  ]);
 
   const applyToggleHidden = useCallback((key: VitalVisibilityKey) => {
     const bpKeys = expandBpClusterVisibilityKeys(key);
@@ -335,25 +416,62 @@ export function VitalsGrid({ disabled = false }: VitalsGridProps) {
       storedVitalsHidden === null
         ? resolveDefaultVitalsLayout().defaultHidden
         : hiddenIds,
-    [hiddenIds, storedVitalsHidden],
+    [hiddenIds, storedVitalsHidden]
   );
 
+  const hiddenVitalTargets = useMemo((): RxHiddenTarget[] => {
+    const index = listRxFieldIndex();
+    const out: RxHiddenTarget[] = [];
+    for (const key of effectiveHiddenIds) {
+      if (isVitalExcludedFromObjectiveUi(key)) continue;
+      const entry = index.find((item) => item.field === key);
+      if (!entry) continue;
+      out.push({
+        kind: "vital",
+        pane: "objective",
+        section: "vitals",
+        field: key,
+        label: entry.label,
+      });
+    }
+    return out;
+  }, [effectiveHiddenIds]);
+
+  const showRegisteredVital = useCallback((target: RxHiddenTarget) => {
+    if (target.kind !== "vital" || !target.field) return false;
+    const key = target.field as VitalVisibilityKey;
+    const bpKeys = expandBpClusterVisibilityKeys(key);
+    const keysToUnhide =
+      bpKeys.length > 1 ? bpKeys : expandPupilClusterVisibilityKeys(key);
+    setHiddenIds((prev) => prev.filter((id) => !keysToUnhide.includes(id)));
+    return true;
+  }, []);
+
+  useEffect(() => {
+    return registerRxHiddenSource("vitals", {
+      hidden: hiddenVitalTargets,
+      show: showRegisteredVital,
+    });
+  }, [hiddenVitalTargets, showRegisteredVital]);
+
   const visibleCategoricalKeys = useMemo(
-    () => new Set(resolveVisibleCategoricalVitals({ hidden: effectiveHiddenIds })),
-    [effectiveHiddenIds],
+    () =>
+      new Set(resolveVisibleCategoricalVitals({ hidden: effectiveHiddenIds })),
+    [effectiveHiddenIds]
   );
 
   const visibleCustomDefs = useMemo(
     () =>
       customDefs.filter(
-        (def) => !isVitalHidden(def.id as VitalVisibilityKey, effectiveHiddenIds),
+        (def) =>
+          !isVitalHidden(def.id as VitalVisibilityKey, effectiveHiddenIds)
       ),
-    [customDefs, effectiveHiddenIds],
+    [customDefs, effectiveHiddenIds]
   );
 
   const visibleCoreCustomDefs = useMemo(
     () => visibleCustomDefs.filter((def) => def.group === "core"),
-    [visibleCustomDefs],
+    [visibleCustomDefs]
   );
 
   const toggleHiddenRef = useRef<(key: VitalVisibilityKey) => void>(() => {});
@@ -385,7 +503,7 @@ export function VitalsGrid({ disabled = false }: VitalsGridProps) {
 
   const visibleNumericKeys = useMemo(
     () => new Set(resolveVisibleVitals({ hidden: effectiveHiddenIds })),
-    [effectiveHiddenIds],
+    [effectiveHiddenIds]
   );
 
   const showBp = hasVisibleBpPair(visibleNumericKeys);
@@ -410,19 +528,22 @@ export function VitalsGrid({ disabled = false }: VitalsGridProps) {
     () =>
       patientDemographicsToRangeContext(
         demographicsQuery.data?.dateOfBirth,
-        demographicsQuery.data?.gender,
+        demographicsQuery.data?.gender
       ),
-    [demographicsQuery.data?.dateOfBirth, demographicsQuery.data?.gender],
+    [demographicsQuery.data?.dateOfBirth, demographicsQuery.data?.gender]
   );
 
   const enrichedByCustomId = useMemo(
-    () => indexCustomVitalTrendSeries(enrichCustomVitalTrendGroups(customTrendSeries, customDefs)),
-    [customTrendSeries, customDefs],
+    () =>
+      indexCustomVitalTrendSeries(
+        enrichCustomVitalTrendGroups(customTrendSeries, customDefs)
+      ),
+    [customTrendSeries, customDefs]
   );
 
   const enrichedCustomTextTimelines = useMemo(
     () => enrichCustomVitalTextTimelineGroups(customTextTimelines, customDefs),
-    [customTextTimelines, customDefs],
+    [customTextTimelines, customDefs]
   );
 
   const sparklineFor = useCallback(
@@ -435,12 +556,12 @@ export function VitalsGrid({ disabled = false }: VitalsGridProps) {
         isLoading={isLoading}
       />
     ),
-    [byMetric, isLoading, rangeCtx],
+    [byMetric, isLoading, rangeCtx]
   );
 
   const sparklineForVital = useCallback(
     (vitalKey: VitalKey, label: string) => sparklineFor(vitalKey, label),
-    [sparklineFor],
+    [sparklineFor]
   );
 
   const heightCm = state.fields.vitalsHtCm ?? null;
@@ -448,9 +569,15 @@ export function VitalsGrid({ disabled = false }: VitalsGridProps) {
   const bmi = computeBmi(heightCm, weightKg);
   const bsa = computeBsa(heightCm, weightKg);
 
-  const showWtHtDerived = shouldShowWeightHeightDerivedRow(visibleNumericKeys, bmi, bsa);
+  const showWtHtDerived = shouldShowWeightHeightDerivedRow(
+    visibleNumericKeys,
+    bmi,
+    bsa
+  );
 
-  const pendingHideLabel = pendingHideKey ? resolveVisibilityKeyLabel(pendingHideKey) : "";
+  const pendingHideLabel = pendingHideKey
+    ? resolveVisibilityKeyLabel(pendingHideKey)
+    : "";
 
   const wnlFillPlan = useMemo(
     () =>
@@ -461,7 +588,7 @@ export function VitalsGrid({ disabled = false }: VitalsGridProps) {
         showGlucose,
         ctx: rangeCtx,
       }),
-    [rangeCtx, showBp, showGlucose, state.fields, visibleNumericKeys],
+    [rangeCtx, showBp, showGlucose, state.fields, visibleNumericKeys]
   );
 
   const wnlFillEnabled = !disabled && wnlFillPlanHasTargets(wnlFillPlan);
@@ -489,192 +616,228 @@ export function VitalsGrid({ disabled = false }: VitalsGridProps) {
   return (
     <TooltipProvider delayDuration={200}>
       <div className={`${VITALS_CONTAINER_CLASS} space-y-4`}>
-      <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className="h-8 shrink-0 text-xs"
-          disabled={!wnlFillEnabled}
-          data-testid="vitals-wnl-fill-trigger"
-          onClick={requestWnlFill}
-        >
-          All within normal limits
-        </Button>
-        <div className="flex min-w-0 flex-wrap items-center gap-1">
-          <AllVitalTrendsDialog
-            byMetric={byMetric}
-            categoricalTimelines={categoricalTimelines}
-            customTrendSeries={enrichCustomVitalTrendGroups(customTrendSeries, customDefs)}
-            customTextTimelines={enrichedCustomTextTimelines}
-            rangeCtx={rangeCtx}
-            isLoading={isLoading}
-            token={token}
-            patientId={patientId}
-          />
-          <ManageVitalsMenu
-            disabled={disabled}
-            open={menuOpen}
-            onOpenChange={setMenuOpen}
-            effectiveHiddenIds={effectiveHiddenIds}
-            fields={state.fields}
-            onToggleHidden={handleToggleHidden}
-            catalog={customCatalog}
-            onAddCustomVital={handleAddCustomVital}
-            onEditCustomVital={handleEditCustomVital}
-            onRemoveCustomVital={handleRemoveCustomVital}
-          />
+        <DeskVitalsSectionNoteSeed />
+        <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-8 shrink-0 text-xs"
+            disabled={!wnlFillEnabled}
+            data-testid="vitals-wnl-fill-trigger"
+            onClick={requestWnlFill}
+          >
+            All within normal limits
+          </Button>
+          <div className="flex min-w-0 flex-wrap items-center gap-1">
+            <AllVitalTrendsDialog
+              byMetric={byMetric}
+              categoricalTimelines={categoricalTimelines}
+              customTrendSeries={enrichCustomVitalTrendGroups(
+                customTrendSeries,
+                customDefs
+              )}
+              customTextTimelines={enrichedCustomTextTimelines}
+              rangeCtx={rangeCtx}
+              isLoading={isLoading}
+              token={token}
+              patientId={patientId}
+            />
+            <ManageVitalsMenu
+              disabled={prefsLocked}
+              open={menuOpen}
+              onOpenChange={setMenuOpen}
+              effectiveHiddenIds={effectiveHiddenIds}
+              fields={state.fields}
+              onToggleHidden={handleToggleHidden}
+              catalog={customCatalog}
+              onAddCustomVital={handleAddCustomVital}
+              onEditCustomVital={handleEditCustomVital}
+              onRemoveCustomVital={handleRemoveCustomVital}
+            />
+          </div>
         </div>
-      </div>
 
-      <VitalsMeasurementContextBar />
+        <VitalsMeasurementContextBar />
 
-      <section className={VITALS_GROUP_CARD_CLASS} data-testid="vitals-group-core">
-        <h3 className={VITALS_GROUP_HEADING_CLASS}>Core</h3>
-        {showBp || showGlucose ? (
-          <div className={VITAL_CLUSTER_GRID_CLASS} data-testid="vitals-cluster-row">
-            {showBp ? (
-              <BpReadingsBlock
-                ghost={ghost}
-                ghostSourceLabel={ghostLabel("vitalsBpSystolic")}
-                sparklineFor={sparklineFor}
+        <fieldset
+          disabled={disabled}
+          className="min-w-0 space-y-4 border-0 p-0 [min-inline-size:0]"
+        >
+        <VitalsSectionNote disabled={disabled} />
+
+        <section
+          className={VITALS_GROUP_CARD_CLASS}
+          data-testid="vitals-group-core"
+        >
+          <h3 className={VITALS_GROUP_HEADING_CLASS}>Core</h3>
+          {showBp || showGlucose ? (
+            <div
+              className={VITAL_CLUSTER_GRID_CLASS}
+              data-testid="vitals-cluster-row"
+            >
+              {showBp ? (
+                <BpReadingsBlock
+                  ghost={ghost}
+                  ghostSourceLabel={ghostLabel("vitalsBpSystolic")}
+                  sparklineFor={sparklineFor}
+                  rangeCtx={rangeCtx}
+                />
+              ) : null}
+              {showGlucose ? (
+                <GlucoseReadingsBlock
+                  ghost={ghost}
+                  sparklineFor={sparklineFor}
+                  rangeCtx={rangeCtx}
+                />
+              ) : null}
+            </div>
+          ) : null}
+          <div className={VITALS_GRID_CLASS}>
+            {coreMainKeys.map((vitalKey) =>
+              vitalKey === "vitalsHtCm" ? (
+                <HeightVitalField
+                  key={vitalKey}
+                  label={vitalFieldShortLabel(vitalKey)}
+                  rangeCtx={rangeCtx}
+                  ghost={ghost?.[vitalKey]}
+                  ghostSourceLabel={ghostLabel(vitalKey)}
+                  sparkline={sparklineForVital(
+                    vitalKey,
+                    vitalSparklineLabel(vitalKey)
+                  )}
+                  gridSpan={vitalGridSpan(vitalKey)}
+                />
+              ) : (
+                <VitalField
+                  key={vitalKey}
+                  vitalKey={vitalKey}
+                  label={vitalFieldShortLabel(vitalKey)}
+                  rangeCtx={rangeCtx}
+                  ghost={ghost?.[vitalKey]}
+                  ghostSourceLabel={ghostLabel(vitalKey)}
+                  sparkline={sparklineForVital(
+                    vitalKey,
+                    vitalSparklineLabel(vitalKey)
+                  )}
+                  gridSpan={vitalGridSpan(vitalKey)}
+                  trailing={
+                    vitalKey === "vitalsHr" ? (
+                      <ExamSystemShortcutButton
+                        systemId="cvs"
+                        label="Examine CVS"
+                      />
+                    ) : undefined
+                  }
+                />
+              )
+            )}
+            {coreSecondaryKeys.map((vitalKey) => (
+              <VitalField
+                key={vitalKey}
+                vitalKey={vitalKey}
+                label={vitalFieldShortLabel(vitalKey)}
                 rangeCtx={rangeCtx}
+                ghost={ghost?.[vitalKey]}
+                ghostSourceLabel={ghostLabel(vitalKey)}
+                sparkline={sparklineForVital(
+                  vitalKey,
+                  vitalSparklineLabel(vitalKey)
+                )}
+                gridSpan={vitalGridSpan(vitalKey)}
+              />
+            ))}
+            {showWtHtDerived ? (
+              <WeightHeightDerivedRow
+                bmi={bmi}
+                bsa={bsa}
+                bmiSparkline={sparklineFor("bmi", "BMI")}
               />
             ) : null}
-            {showGlucose ? (
-              <GlucoseReadingsBlock ghost={ghost} sparklineFor={sparklineFor} rangeCtx={rangeCtx} />
-            ) : null}
+            <CustomVitalsGridFields
+              defs={visibleCoreCustomDefs}
+              values={customValues}
+              disabled={disabled}
+              byCustomTrendId={enrichedByCustomId}
+              trendsLoading={isLoading}
+              onChange={handleCustomValueChange}
+            />
           </div>
-        ) : null}
-        <div className={VITALS_GRID_CLASS}>
-        {coreMainKeys.map((vitalKey) =>
-          vitalKey === "vitalsHtCm" ? (
-            <HeightVitalField
-              key={vitalKey}
-              label={vitalFieldShortLabel(vitalKey)}
-              rangeCtx={rangeCtx}
-              ghost={ghost?.[vitalKey]}
-              ghostSourceLabel={ghostLabel(vitalKey)}
-              sparkline={sparklineForVital(vitalKey, vitalSparklineLabel(vitalKey))}
-              gridSpan={vitalGridSpan(vitalKey)}
-            />
-          ) : (
-            <VitalField
-              key={vitalKey}
-              vitalKey={vitalKey}
-              label={vitalFieldShortLabel(vitalKey)}
-              rangeCtx={rangeCtx}
-              ghost={ghost?.[vitalKey]}
-              ghostSourceLabel={ghostLabel(vitalKey)}
-              sparkline={sparklineForVital(vitalKey, vitalSparklineLabel(vitalKey))}
-              gridSpan={vitalGridSpan(vitalKey)}
-              trailing={
-                vitalKey === "vitalsHr" ? (
-                  <ExamSystemShortcutButton systemId="cvs" label="Examine CVS" />
-                ) : undefined
-              }
-            />
-          ),
-        )}
-        {coreSecondaryKeys.map((vitalKey) => (
-          <VitalField
-            key={vitalKey}
-            vitalKey={vitalKey}
-            label={vitalFieldShortLabel(vitalKey)}
-            rangeCtx={rangeCtx}
-            ghost={ghost?.[vitalKey]}
-            ghostSourceLabel={ghostLabel(vitalKey)}
-            sparkline={sparklineForVital(vitalKey, vitalSparklineLabel(vitalKey))}
-            gridSpan={vitalGridSpan(vitalKey)}
-          />
-        ))}
-        {showWtHtDerived ? (
-          <WeightHeightDerivedRow
-            bmi={bmi}
-            bsa={bsa}
-            bmiSparkline={sparklineFor("bmi", "BMI")}
-          />
-        ) : null}
-        <CustomVitalsGridFields
-          defs={visibleCoreCustomDefs}
-          values={customValues}
-          disabled={disabled}
+        </section>
+
+        <VitalsExtended
+          ghost={ghost}
+          ghostSourceOf={ghostLabel}
+          rangeCtx={rangeCtx}
+          sparklineFor={sparklineForVital}
+          visibleKeys={visibleNumericKeys}
+          visibleCategoricalKeys={visibleCategoricalKeys}
+          customVitals={visibleCustomDefs}
+          customVitalValues={customValues}
+          onCustomVitalChange={handleCustomValueChange}
+          customVitalsDisabled={disabled}
           byCustomTrendId={enrichedByCustomId}
-          trendsLoading={isLoading}
-          onChange={handleCustomValueChange}
+          customTrendsLoading={isLoading}
         />
-        </div>
-      </section>
+        </fieldset>
 
-      <VitalsExtended
-        ghost={ghost}
-        ghostSourceOf={ghostLabel}
-        rangeCtx={rangeCtx}
-        sparklineFor={sparklineForVital}
-        visibleKeys={visibleNumericKeys}
-        visibleCategoricalKeys={visibleCategoricalKeys}
-        customVitals={visibleCustomDefs}
-        customVitalValues={customValues}
-        onCustomVitalChange={handleCustomValueChange}
-        customVitalsDisabled={disabled}
-        byCustomTrendId={enrichedByCustomId}
-        customTrendsLoading={isLoading}
-      />
+        <AlertDialog
+          open={pendingWnlPlan != null}
+          onOpenChange={(open) => {
+            if (!open) setPendingWnlPlan(null);
+          }}
+        >
+          <AlertDialogContent data-testid="vitals-wnl-fill-dialog">
+            <AlertDialogHeader>
+              <AlertDialogTitle>Fill normal values?</AlertDialogTitle>
+              <AlertDialogDescription asChild>
+                <div className="space-y-2">
+                  <p>
+                    Empty visible vitals will be set to typical normal readings:
+                  </p>
+                  <ul className="list-disc space-y-1 pl-5 text-sm">
+                    {wnlSummaryLines.map((line) => (
+                      <li key={line}>{line}</li>
+                    ))}
+                  </ul>
+                </div>
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction onClick={confirmWnlFill}>
+                Fill
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
 
-      <AlertDialog
-        open={pendingWnlPlan != null}
-        onOpenChange={(open) => {
-          if (!open) setPendingWnlPlan(null);
-        }}
-      >
-        <AlertDialogContent data-testid="vitals-wnl-fill-dialog">
-          <AlertDialogHeader>
-            <AlertDialogTitle>Fill normal values?</AlertDialogTitle>
-            <AlertDialogDescription asChild>
-              <div className="space-y-2">
-                <p>Empty visible vitals will be set to typical normal readings:</p>
-                <ul className="list-disc space-y-1 pl-5 text-sm">
-                  {wnlSummaryLines.map((line) => (
-                    <li key={line}>{line}</li>
-                  ))}
-                </ul>
-              </div>
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={confirmWnlFill}>Fill</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-
-      <AlertDialog
-        open={pendingHideKey != null}
-        onOpenChange={(open) => {
-          if (!open) setPendingHideKey(null);
-        }}
-      >
-        <AlertDialogContent data-testid="hide-vital-with-data-dialog">
-          <AlertDialogHeader>
-            <AlertDialogTitle>Hide {pendingHideLabel}?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Value is kept, just hidden.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={() => {
-                if (pendingHideKey) applyToggleHidden(pendingHideKey);
-                setPendingHideKey(null);
-              }}
-            >
-              Hide
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-
+        <AlertDialog
+          open={pendingHideKey != null}
+          onOpenChange={(open) => {
+            if (!open) setPendingHideKey(null);
+          }}
+        >
+          <AlertDialogContent data-testid="hide-vital-with-data-dialog">
+            <AlertDialogHeader>
+              <AlertDialogTitle>Hide {pendingHideLabel}?</AlertDialogTitle>
+              <AlertDialogDescription>
+                Value is kept, just hidden.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={() => {
+                  if (pendingHideKey) applyToggleHidden(pendingHideKey);
+                  setPendingHideKey(null);
+                }}
+              >
+                Hide
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
     </TooltipProvider>
   );

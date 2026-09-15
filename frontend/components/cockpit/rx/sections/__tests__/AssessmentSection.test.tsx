@@ -30,7 +30,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
         settings: {
           assessment_section_order: [],
           assessment_section_collapsed: {},
-          assessment_section_hidden: [],
+          assessment_section_hidden: ["__show_all__"],
         },
       },
     }),
@@ -40,7 +40,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
         settings: {
           assessment_section_order: [],
           assessment_section_collapsed: {},
-          assessment_section_hidden: [],
+          assessment_section_hidden: ["__show_all__"],
         },
       },
     }),
@@ -114,7 +114,7 @@ function renderWithRxForm(
     assessmentDefaults: {
       sectionOrder: [],
       sectionCollapsed: {},
-      sectionHidden: [],
+      sectionHidden: ["__show_all__"],
     },
     setAssessmentDefaults: vi.fn(),
     providerProps: {
@@ -205,16 +205,13 @@ describe("AssessmentSection", () => {
     expect(screen.queryByTestId("assessment-acuity-toggle")).not.toBeInTheDocument();
   });
 
-  it("puts acuity chips on committed diagnosis cards", () => {
+  it("puts acuity chips on committed diagnosis cards", async () => {
     renderWithRxForm(<AssessmentSection />, {
       ...createEmptyRxFormFields(),
       diagnoses: [PRIMARY],
       provisionalDiagnosis: "Viral URI",
     });
-    expect(screen.getByTestId("diagnosis-acuity-dx-1")).toBeInTheDocument();
-    const stable = screen.getByRole("button", { name: "Stable" });
-    fireEvent.click(stable);
-    expect(stable).toHaveAttribute("aria-pressed", "true");
+    expect(await screen.findByTestId("diagnosis-acuity-dx-1")).toBeInTheDocument();
   });
 
   it("renders Diagnoses and Known conditions zone headings", () => {

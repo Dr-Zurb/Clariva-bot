@@ -12,7 +12,9 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
-import { getPrescription } from "@/lib/api";
+import { Printer } from "lucide-react";
+import { getPrescription, getPrescriptionPdfUrl } from "@/lib/api";
+import { printSignedPdf } from "@/components/cockpit/rx/useRxCommitActions";
 import { formatDate } from "@/lib/format-date";
 import { resolveFollowUpForOutput } from "@/lib/cockpit/follow-up-format";
 import type {
@@ -20,8 +22,15 @@ import type {
   PrescriptionMedicine,
   PrescriptionWithRelations,
 } from "@/types/prescription";
+import { RxSupersededNotice } from "@/components/cockpit/rx/RxReviseStrip";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
+import {
+  historyNoteClockIso,
+  historyNoteState,
+  historyNoteVersionLabel,
+} from "@/components/patient-profile/historyNoteMeta";
 
 export interface VisitDetailSideSheetProps {
   rxId: string;
@@ -176,11 +185,18 @@ function VisitDetailBody({ rx }: { rx: PrescriptionWithRelations }) {
   );
   const diff = rx.differential_diagnosis ?? [];
   const investigations = rx.investigations_orders ?? rx.investigations ?? null;
+  const clockIso = historyNoteClockIso(rx);
+  const state = historyNoteState(rx);
+  const version = historyNoteVersionLabel(rx);
+  const stateCopy =
+    state === "superseded" ? "Superseded" : state === "closed" ? "Closed" : "Draft";
 
   return (
     <div className="space-y-5 p-4">
       <p className="text-xs text-muted-foreground">
-        {formatDate(rx.created_at)} · {formatRelative(rx.created_at)}
+        {formatDate(clockIso)} · {formatRelative(clockIso)}
+        {version ? ` · ${version}` : ""}
+        {` · ${stateCopy}`}
       </p>
       <FieldBlock label="Chief complaint" value={emDash(rx.cc)} large />
       <FieldBlock
@@ -308,5 +324,60 @@ export default function VisitDetailSideSheet({
     );
   }
 
-  return <VisitDetailBody rx={rx} />;
+  return (
+    <>
+      {historyNoteState(rx) === "superseded" ? <RxSupersededNotice /> : null}
+      <VisitReprintBar token={token} rxId={rx.id} />
+      <VisitDetailBody rx={rx} />
+    </>
+  );
+}
+
+function VisitReprintBar({
+  token,
+  rxId,
+}: {
+  token: string;
+  rxId: string;
+}): JSX.Element {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleReprint = async () => {
+    setError(null);
+    setBusy(true);
+    try {
+      const res = await getPrescriptionPdfUrl(token, rxId);
+      await printSignedPdf(res.data.signedUrl);
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Could not open the print dialog",
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="sticky top-0 z-10 border-b bg-background/95 px-4 py-2 backdrop-blur">
+      <div className="flex items-center justify-end">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled={busy}
+          onClick={() => void handleReprint()}
+          data-testid="visit-detail-reprint"
+        >
+          <Printer aria-hidden />
+          {busy ? "Printing…" : "Reprint"}
+        </Button>
+      </div>
+      {error ? (
+        <p role="alert" className="mt-1.5 text-xs text-destructive">
+          {error}
+        </p>
+      ) : null}
+    </div>
+  );
 }

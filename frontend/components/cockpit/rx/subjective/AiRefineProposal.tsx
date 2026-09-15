@@ -13,12 +13,13 @@ interface AiRefineProposalProps {
   onAddAll: () => void;
   onDismiss: () => void;
   /**
-   * subj-14 auto-gate: commit the doctor's original typed line as-is. When set
-   * (Enter path), a "Keep as typed" action replaces the dismiss "✕" so the typed
-   * text is never silently lost. Absent on the explicit ✨ refine path (the text
-   * is still sitting in the capture bar there).
+   * Card-refine: merge this suggestion into the existing card (empty fields
+   * only). When set, the first row shows Apply instead of Add.
    */
-  onKeepAsTyped?: () => void;
+  onApply?: (index: number) => void;
+  /** Opt-in rename when the AI title differs from the typed card. */
+  renameTo?: string | null;
+  onRename?: () => void;
 }
 
 function humanizeKey(key: string): string {
@@ -38,8 +39,8 @@ function summarize(complaint: AiParsedComplaint): string {
 
 /**
  * Suggestion-only proposal panel for the subj-14 AI parse (confirm-to-apply).
- * Non-blocking: it never gates capture. The doctor adds detected complaints
- * explicitly (per-item or "Add all"); nothing is committed silently.
+ * Non-blocking: capture already committed the typed card. The doctor applies
+ * fields to that card or adds extras explicitly — nothing is committed silently.
  */
 export function AiRefineProposal({
   status,
@@ -47,7 +48,9 @@ export function AiRefineProposal({
   onAdd,
   onAddAll,
   onDismiss,
-  onKeepAsTyped,
+  onApply,
+  renameTo,
+  onRename,
 }: AiRefineProposalProps) {
   return (
     <div
@@ -64,9 +67,9 @@ export function AiRefineProposal({
               ? "Couldn’t refine — keeping your typed text."
               : complaints.length === 0
                 ? "No extra detail found."
-                : complaints.length === 1
-                  ? "AI suggestion"
-                  : `AI found ${complaints.length} complaints`}
+              : complaints.length === 1
+                ? "AI suggestion"
+                : `AI found ${complaints.length} complaints`}
         </span>
         {status === "ready" && complaints.length > 1 ? (
           <button
@@ -74,27 +77,17 @@ export function AiRefineProposal({
             onClick={onAddAll}
             className="rounded-sm border border-primary/40 px-2 py-0.5 text-xs font-medium text-primary hover:bg-primary/10"
           >
-            Add all
+            {onApply ? "Apply all" : "Add all"}
           </button>
         ) : null}
-        {onKeepAsTyped ? (
-          <button
-            type="button"
-            onClick={onKeepAsTyped}
-            className="rounded-sm border border-border px-2 py-0.5 text-xs font-medium text-muted-foreground hover:bg-muted"
-          >
-            Keep as typed
-          </button>
-        ) : (
-          <button
-            type="button"
-            onClick={onDismiss}
-            className="flex h-5 w-5 shrink-0 items-center justify-center rounded-sm text-muted-foreground hover:bg-muted hover:text-foreground"
-            aria-label="Dismiss AI suggestions"
-          >
-            <X className="h-3.5 w-3.5" aria-hidden />
-          </button>
-        )}
+        <button
+          type="button"
+          onClick={onDismiss}
+          className="flex h-5 w-5 shrink-0 items-center justify-center rounded-sm text-muted-foreground hover:bg-muted hover:text-foreground"
+          aria-label="Dismiss AI suggestions"
+        >
+          <X className="h-3.5 w-3.5" aria-hidden />
+        </button>
       </div>
 
       {status === "ready" && complaints.length > 0 ? (
@@ -112,15 +105,38 @@ export function AiRefineProposal({
                     <span className="ml-1 text-xs text-muted-foreground">{detail}</span>
                   ) : null}
                 </div>
-                <button
-                  type="button"
-                  onClick={() => onAdd(index)}
-                  className="flex shrink-0 items-center gap-0.5 rounded-sm border border-primary/40 px-1.5 py-0.5 text-xs font-medium text-primary hover:bg-primary/10"
-                  aria-label={`Add ${complaint.name}`}
-                >
-                  <Plus className="h-3 w-3" aria-hidden />
-                  Add
-                </button>
+                <div className="flex shrink-0 flex-wrap items-center justify-end gap-1">
+                  {index === 0 && renameTo && onRename ? (
+                    <button
+                      type="button"
+                      onClick={onRename}
+                      className="rounded-sm border border-border px-1.5 py-0.5 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
+                      aria-label={`Use name ${renameTo}`}
+                    >
+                      Use “{renameTo}”
+                    </button>
+                  ) : null}
+                  {index === 0 && onApply ? (
+                    <button
+                      type="button"
+                      onClick={() => onApply(index)}
+                      className="flex items-center gap-0.5 rounded-sm border border-primary/40 px-1.5 py-0.5 text-xs font-medium text-primary hover:bg-primary/10"
+                      aria-label={`Apply ${complaint.name} to this complaint`}
+                    >
+                      Apply
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => onAdd(index)}
+                      className="flex items-center gap-0.5 rounded-sm border border-primary/40 px-1.5 py-0.5 text-xs font-medium text-primary hover:bg-primary/10"
+                      aria-label={`Add ${complaint.name}`}
+                    >
+                      <Plus className="h-3 w-3" aria-hidden />
+                      Add
+                    </button>
+                  )}
+                </div>
               </li>
             );
           })}

@@ -63,10 +63,6 @@ vi.mock("@/lib/api", async (importOriginal) => {
   };
 });
 
-vi.mock("@/lib/api/last-subjective", () => ({
-  getLastSubjectiveForPatient: vi.fn().mockResolvedValue({ data: { subjective: null } }),
-}));
-
 vi.mock("@/lib/api/complaint-master", () => ({
   searchComplaints: vi.fn().mockResolvedValue({ data: { results: [] } }),
 }));
@@ -357,7 +353,9 @@ describe("subj-10 close-gate · Subjective-tab integration smoke", () => {
 
     renderTab(<SubjectiveSection heading={null} />);
 
-    expect(screen.getByLabelText("Chief complaints")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByLabelText("Chief complaints")).toBeInTheDocument();
+    });
     expect(screen.getByTestId("subjective-template-trigger")).toBeInTheDocument();
 
     const capture = screen.getByPlaceholderText(/Type a complaint, press Enter/i);

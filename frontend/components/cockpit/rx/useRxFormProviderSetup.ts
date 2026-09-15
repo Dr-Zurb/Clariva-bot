@@ -1,10 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   listPrescriptionsByAppointment,
   getAppointmentById,
 } from "@/lib/api";
+import { deskVitalsQueryOptions } from "@/lib/cockpit/desk-vitals-query";
+/** Hydrate-time seed — merge lands via `setInitialFields` / RESET, not setField. */
+import { mergeDeskVitalsIntoFields } from "@/lib/cockpit/desk-vitals-seed";
 import {
   getDoctorSettingsShared,
   peekDoctorSettingsShared,
@@ -14,6 +18,7 @@ import {
   resolveDefaultLayout,
   type DefaultLayout,
 } from "@/lib/cockpit/objective-default-layout";
+import type { AppointmentStatus } from "@/types/appointment";
 import type { PrescriptionWithRelations, PrescriptionType } from "@/types/prescription";
 import {
   createEmptyRxFormFields,
@@ -22,6 +27,12 @@ import {
   type RxFormFields,
   type RxFormProviderProps,
 } from "@/components/cockpit/rx/RxFormContext";
+import {
+  applySubjectiveCarrySeed,
+  closedSiblingFromSource,
+  resolveRxLoadDecision,
+  type ClosedSiblingRef,
+} from "@/components/cockpit/rx/rxLoadDecision";
 import {
   seedCustomSubsectionsFromDefault,
   serializeCustomSubsections,
@@ -93,6 +104,7 @@ type DoctorLayoutDefaultsBundle = {
   plan: DoctorPlanDefaults;
   assessment: DoctorAssessmentDefaults;
   specialty: string | null;
+  timezone: string;
 };
 
 function doctorLayoutDefaultsFromSettings(
@@ -124,7 +136,37 @@ function doctorLayoutDefaultsFromSettings(
       customSections: settings.assessment_custom_sections ?? [],
     },
     specialty: settings.specialty ?? null,
+    timezone: settings.timezone?.trim() || "Asia/Kolkata",
   };
+}
+
+function applyDoctorCustomSeeds(
+  fields: RxFormFields,
+  defaults: DoctorLayoutDefaultsBundle,
+): void {
+  if (defaults.customSubsections.length > 0 && fields.customSubsections.length === 0) {
+    fields.customSubsections = seedCustomSubsectionsFromDefault(
+      defaults.customSubsections,
+    );
+    fields.customSubsectionsText = serializeCustomSubsections(
+      fields.customSubsections,
+    );
+  }
+  if (defaults.objective.customSections.length > 0) {
+    fields.objectiveCustomSections = seedCustomSubsectionsFromDefault(
+      defaults.objective.customSections,
+    );
+  }
+  if (defaults.assessment.customSections.length > 0) {
+    fields.assessmentCustomSections = seedCustomSubsectionsFromDefault(
+      defaults.assessment.customSections,
+    );
+  }
+  if (defaults.plan.customSections.length > 0) {
+    fields.planCustomSections = seedCustomSubsectionsFromDefault(
+      defaults.plan.customSections,
+    );
+  }
 }
 
 async function loadDoctorSubjectiveDefaults(
@@ -143,19 +185,28 @@ async function loadDoctorSubjectiveDefaults(
       plan: EMPTY_PLAN_DEFAULTS,
       assessment: EMPTY_ASSESSMENT_DEFAULTS,
       specialty: null,
+      timezone: "Asia/Kolkata",
     };
   }
 }
 
-async function loadConsultationType(
+type AppointmentLoadContext = {
+  consultationType: string | null;
+  status: AppointmentStatus | null;
+};
+
+async function loadAppointmentContext(
   token: string,
   appointmentId: string,
-): Promise<string | null> {
+): Promise<AppointmentLoadContext> {
   try {
     const apptRes = await getAppointmentById(appointmentId, token);
-    return apptRes.data.appointment.consultation_type ?? null;
+    return {
+      consultationType: apptRes.data.appointment.consultation_type ?? null,
+      status: apptRes.data.appointment.status ?? null,
+    };
   } catch {
-    return null;
+    return { consultationType: null, status: null };
   }
 }
 
@@ -166,6 +217,14 @@ export interface UseRxFormProviderSetupArgs {
   existingPrescription?: PrescriptionWithRelations | null;
   /** When true, skip fetch/bootstrap (cockpit shell owns setup via context). */
   disabled?: boolean;
+  /**
+   * Modality + status the caller already holds (the cockpit route fetches the
+   * appointment server-side). Supplying it drops two `GET /appointments/:id`
+   * round-trips from every patient switch — they were the doctor's wait before
+   * the form accepted typing. Read once per appointment, like the fetch it
+   * replaces, so a later status flip cannot re-decide an open note.
+   */
+  appointmentContext?: AppointmentLoadContext | null;
 }
 
 export interface RxFormProviderSetup {
@@ -234,6 +293,14 @@ export interface RxFormProviderSetup {
    */
   objectiveSeed?: DefaultLayout | null;
   /**
+   * rxl-07 / rxl-24 — `false` for a draft or today's issued slip; `true` when
+   * reviewing a later-day or superseded note. `undefined` only during the
+   * first load. Drives {@link RxLockProvider}.
+   */
+  noteClosed?: boolean;
+  /** Closed newest note when the form started a continuation. Discoverable for rxl-09. */
+  closedSibling?: ClosedSiblingRef | null;
+  /**
    * Props for `<RxFormProvider>`. Always non-null so callers can mount the
    * provider on the first render — during the fetch window we mount it with
    * empty fields and `autosaveEnabled: false`, then soft-`RESET` when the
@@ -254,7 +321,11 @@ export function useRxFormProviderSetup({
   token,
   existingPrescription: initialPrescription,
   disabled = false,
+  appointmentContext,
 }: UseRxFormProviderSetupArgs): RxFormProviderSetup {
+  const queryClient = useQueryClient();
+  const appointmentContextRef = useRef(appointmentContext ?? null);
+  appointmentContextRef.current = appointmentContext ?? null;
   const [entryMode, setEntryMode] = useState<PrescriptionType>("structured");
   const [prescription, setPrescription] = useState<PrescriptionWithRelations | null>(
     initialPrescription ?? null,
@@ -305,6 +376,10 @@ export function useRxFormProviderSetup({
     useState<DoctorAssessmentDefaults | null>(layoutSeed?.assessment ?? null);
   const [objectiveSeed, setObjectiveSeed] = useState<DefaultLayout | null>(null);
   const [consultationType, setConsultationType] = useState<string | null>(null);
+  const [noteClosed, setNoteClosed] = useState<boolean | undefined>(undefined);
+  const [closedSibling, setClosedSibling] = useState<ClosedSiblingRef | null>(
+    null,
+  );
   const settingsWarmRef = useRef(false);
 
   // Kick the shared settings fetch once on first render so cold open overlaps
@@ -314,15 +389,32 @@ export function useRxFormProviderSetup({
     void getDoctorSettingsShared(token);
   }
 
+  const loadDeskVitals = useCallback(async () => {
+    try {
+      return await queryClient.fetchQuery(
+        deskVitalsQueryOptions(token, appointmentId),
+      );
+    } catch {
+      return { ghost: null, note: null };
+    }
+  }, [appointmentId, queryClient, token]);
+
+  const resolveAppointmentContext =
+    useCallback(async (): Promise<AppointmentLoadContext> => {
+      const supplied = appointmentContextRef.current;
+      if (supplied) return supplied;
+      return loadAppointmentContext(token, appointmentId);
+    }, [appointmentId, token]);
+
   useEffect(() => {
     if (disabled || !token) return;
     let cancelled = false;
     void (async () => {
       // Settings + appointment modality in parallel — seed only needs specialty
       // from settings after both settle (avoids a second appointment round-trip).
-      const [defaults, modality] = await Promise.all([
+      const [defaults, appt] = await Promise.all([
         loadDoctorSubjectiveDefaults(token),
-        loadConsultationType(token, appointmentId),
+        resolveAppointmentContext(),
       ]);
       if (cancelled) return;
       setSubjectiveSectionOrder(defaults.sectionOrder);
@@ -333,7 +425,7 @@ export function useRxFormProviderSetup({
       setAssessmentDefaults(defaults.assessment);
       setObjectiveSeed(
         resolveDefaultLayout({
-          modality,
+          modality: appt.consultationType,
           specialty: defaults.specialty,
         }),
       );
@@ -341,107 +433,126 @@ export function useRxFormProviderSetup({
     return () => {
       cancelled = true;
     };
-  }, [disabled, token, appointmentId]);
+  }, [disabled, token, appointmentId, resolveAppointmentContext]);
 
   useEffect(() => {
     if (disabled) return;
-    if (initialPrescription) {
-      let cancelled = false;
-      void (async () => {
-        const consultationType = await loadConsultationType(token, appointmentId);
-        if (cancelled) return;
-        setConsultationType(consultationType);
-        setPrescription(initialPrescription);
-        prescriptionIdRef.current = initialPrescription.id;
-        setEntryMode(initialPrescription.type);
-        const meds = medicinesFromPrescription(initialPrescription);
-        setInitialFields(
-          rxFormFieldsFromPrescription(initialPrescription, meds, { consultationType }),
-        );
-        if ((initialPrescription.prescription_medicines ?? []).length > 0) {
-          setMedicineInstanceIds(
-            generateInstanceIds(initialPrescription.prescription_medicines!.length),
-          );
-        }
-        setAttachments(initialPrescription.prescription_attachments ?? []);
-        setLoading(false);
-      })();
-      return () => {
-        cancelled = true;
-      };
-    }
     let cancelled = false;
-    const load = async () => {
-      setLoading(true);
+
+    const applyLayoutDefaults = (defaults: DoctorLayoutDefaultsBundle) => {
+      setSubjectiveSectionOrder(defaults.sectionOrder);
+      setSubjectiveSectionCollapsed(defaults.sectionCollapsed);
+      setSubjectiveSectionHidden(defaults.sectionHidden);
+      setObjectiveDefaults(defaults.objective);
+      setPlanDefaults(defaults.plan);
+      setAssessmentDefaults(defaults.assessment);
+    };
+
+    const adoptDraft = (
+      rx: PrescriptionWithRelations,
+      visitConsultationType: string | null,
+      desk: Awaited<ReturnType<typeof loadDeskVitals>>,
+      options?: { noteClosed?: boolean },
+    ) => {
+      setPrescription(rx);
+      prescriptionIdRef.current = rx.id;
+      setEntryMode(rx.type);
+      setNoteClosed(options?.noteClosed ?? false);
+      setClosedSibling(null);
+      const meds = medicinesFromPrescription(rx);
+      setInitialFields(
+        mergeDeskVitalsIntoFields(
+          rxFormFieldsFromPrescription(rx, meds, {
+            consultationType: visitConsultationType,
+          }),
+          desk,
+        ),
+      );
+      if ((rx.prescription_medicines ?? []).length > 0) {
+        setMedicineInstanceIds(
+          generateInstanceIds(rx.prescription_medicines!.length),
+        );
+      }
+      setAttachments(rx.prescription_attachments ?? []);
+    };
+
+    const startFresh = async (
+      visitConsultationType: string | null,
+      desk: Awaited<ReturnType<typeof loadDeskVitals>>,
+      source?: PrescriptionWithRelations,
+    ) => {
+      setPrescription(null);
+      prescriptionIdRef.current = null;
+      setEntryMode("structured");
+      setAttachments([]);
+      setNoteClosed(false);
+      setClosedSibling(source ? closedSiblingFromSource(source) : null);
+      let fields = createEmptyRxFormFields(undefined, {
+        consultationType: visitConsultationType,
+      });
+      if (source) {
+        fields = applySubjectiveCarrySeed(fields, source);
+      }
       try {
-        const [consultationType, res] = await Promise.all([
-          loadConsultationType(token, appointmentId),
-          listPrescriptionsByAppointment(token, appointmentId),
+        const defaults = await loadDoctorSubjectiveDefaults(token);
+        if (cancelled) return;
+        applyLayoutDefaults(defaults);
+        applyDoctorCustomSeeds(fields, defaults);
+      } catch {
+        // Non-fatal — fresh / continuation still opens.
+      }
+      if (cancelled) return;
+      setInitialFields(mergeDeskVitalsIntoFields(fields, desk));
+    };
+
+    const load = async () => {
+      if (!initialPrescription) setLoading(true);
+      try {
+        const [appt, desk, listed, defaults] = await Promise.all([
+          resolveAppointmentContext(),
+          loadDeskVitals(),
+          initialPrescription
+            ? Promise.resolve(null)
+            : listPrescriptionsByAppointment(token, appointmentId),
+          loadDoctorSubjectiveDefaults(token),
         ]);
         if (cancelled) return;
-        setConsultationType(consultationType);
-        const list = res.data.prescriptions ?? [];
-        if (list.length > 0) {
-          const latest = list[0];
-          setPrescription(latest);
-          prescriptionIdRef.current = latest.id;
-          setEntryMode(latest.type);
-          const meds = medicinesFromPrescription(latest);
-          setInitialFields(
-            rxFormFieldsFromPrescription(latest, meds, { consultationType }),
-          );
-          if ((latest.prescription_medicines ?? []).length > 0) {
-            setMedicineInstanceIds(
-              generateInstanceIds(latest.prescription_medicines!.length),
-            );
-          }
-          setAttachments(latest.prescription_attachments ?? []);
+        setConsultationType(appt.consultationType);
+        const newest =
+          initialPrescription ?? listed?.data.prescriptions?.[0] ?? null;
+        const decision = resolveRxLoadDecision(newest, appt.status, {
+          now: new Date(),
+          timezone: defaults.timezone,
+        });
+        if (decision.kind === "adopt") {
+          adoptDraft(decision.rx, appt.consultationType, desk);
+        } else if (decision.kind === "review") {
+          adoptDraft(decision.rx, appt.consultationType, desk, {
+            noteClosed: true,
+          });
+        } else if (decision.kind === "continue") {
+          await startFresh(appt.consultationType, desk, decision.source);
         } else {
-          const fields = createEmptyRxFormFields(undefined, { consultationType });
-          try {
-            // Hits shared settings cache when the defaults effect already ran.
-            const defaults = await loadDoctorSubjectiveDefaults(token);
-            setSubjectiveSectionOrder(defaults.sectionOrder);
-            setSubjectiveSectionCollapsed(defaults.sectionCollapsed);
-            setSubjectiveSectionHidden(defaults.sectionHidden);
-            setObjectiveDefaults(defaults.objective);
-            setPlanDefaults(defaults.plan);
-            setAssessmentDefaults(defaults.assessment);
-            if (defaults.customSubsections.length > 0) {
-              fields.customSubsections = seedCustomSubsectionsFromDefault(defaults.customSubsections);
-              fields.customSubsectionsText = serializeCustomSubsections(fields.customSubsections);
-            }
-            if (defaults.objective.customSections.length > 0) {
-              // obj-13: seed per-visit objective custom sections from the doctor default.
-              fields.objectiveCustomSections = seedCustomSubsectionsFromDefault(
-                defaults.objective.customSections,
-              );
-            }
-            if (defaults.assessment.customSections.length > 0) {
-              // assessment-plan-custom-sections: seed per-visit assessment sections.
-              fields.assessmentCustomSections = seedCustomSubsectionsFromDefault(
-                defaults.assessment.customSections,
-              );
-            }
-            if (defaults.plan.customSections.length > 0) {
-              // assessment-plan-custom-sections: seed per-visit plan sections.
-              fields.planCustomSections = seedCustomSubsectionsFromDefault(
-                defaults.plan.customSections,
-              );
-            }
-          } catch {
-            // Non-fatal — fresh visit still opens with empty custom subsections.
-          }
-          setInitialFields(fields);
+          await startFresh(appt.consultationType, desk);
         }
       } catch {
-        if (!cancelled) {
-          const consultationType = await loadConsultationType(token, appointmentId);
-          if (!cancelled) {
-            setConsultationType(consultationType);
-            setInitialFields(createEmptyRxFormFields(undefined, { consultationType }));
-          }
-        }
+        if (cancelled) return;
+        const [appt, desk] = await Promise.all([
+          resolveAppointmentContext(),
+          loadDeskVitals(),
+        ]);
+        if (cancelled) return;
+        setConsultationType(appt.consultationType);
+        setNoteClosed(false);
+        setClosedSibling(null);
+        setInitialFields(
+          mergeDeskVitalsIntoFields(
+            createEmptyRxFormFields(undefined, {
+              consultationType: appt.consultationType,
+            }),
+            desk,
+          ),
+        );
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -450,7 +561,15 @@ export function useRxFormProviderSetup({
     return () => {
       cancelled = true;
     };
-  }, [appointmentId, token, initialPrescription, generateInstanceIds, disabled]);
+  }, [
+    appointmentId,
+    token,
+    initialPrescription,
+    generateInstanceIds,
+    disabled,
+    loadDeskVitals,
+    resolveAppointmentContext,
+  ]);
 
   // Stable placeholder used during the brief loading window before the draft
   // resolves. Memoised so the reference stays identical across re-renders —
@@ -507,6 +626,8 @@ export function useRxFormProviderSetup({
     assessmentDefaults,
     setAssessmentDefaults,
     objectiveSeed,
+    noteClosed,
+    closedSibling,
     providerProps,
   };
 }

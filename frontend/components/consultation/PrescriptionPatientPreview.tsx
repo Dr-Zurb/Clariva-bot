@@ -20,6 +20,7 @@ import {
 } from "@/components/settings/LetterheadPagePreview";
 import { LetterheadPreviewPane } from "@/components/settings/LetterheadPreviewPane";
 import { Button } from "@/components/ui/button";
+import { parseDoseSchedulePattern } from "@/lib/chart/chart-medication";
 import {
   formatDoseLabel,
   formatDurationLegacyLabel,
@@ -28,6 +29,10 @@ import {
   getRouteLegacyLabel,
 } from "@/lib/medicineCodes";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+  readAlsoPrintPreference,
+  writeAlsoPrintPreference,
+} from "@/lib/cockpit/rx-also-print";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -39,7 +44,10 @@ function formatPreviewMedicine(
   med: PatientRxViewModel["medicines"][number]
 ): LetterheadPreviewMedicine {
   let frequency = "";
-  if (med.frequencyCode && med.frequencyCode !== "CUSTOM") {
+  const storedSchedule = parseDoseSchedulePattern(med.frequency);
+  if (storedSchedule) {
+    frequency = storedSchedule;
+  } else if (med.frequencyCode && med.frequencyCode !== "CUSTOM") {
     frequency = getFrequencyLegacyLabel(med.frequencyCode);
   } else if (med.frequency) {
     frequency = med.frequency;
@@ -128,6 +136,7 @@ export function letterheadPreviewModelFromRx(
     patientTextSize: vm.patientTextSize ?? undefined,
     bodyTextSize: vm.bodyTextSize ?? undefined,
     registrationNumber: vm.registrationNumber,
+    generatedAtLabel: vm.visitDateLabel,
     rx: {
       patientName: vm.patientName,
       patientAge: vm.patientAge,
@@ -138,8 +147,11 @@ export function letterheadPreviewModelFromRx(
       guardianRelation: vm.guardianRelation,
       address: vm.address,
       medicalRecordNumber: vm.medicalRecordNumber,
+      allergies: vm.allergies,
       cc: vm.cc,
       hopi: vm.hopi,
+      vitals: vm.vitals,
+      examinationFindings: vm.examinationFindings,
       socialHistory: vm.socialHistory,
       diagnosis: vm.provisionalDiagnosis,
       investigations: vm.investigations,
@@ -172,9 +184,6 @@ export interface PrescriptionPatientPreviewProps {
   onFinish?: () => void;
   onPrint?: () => void;
   onDownload?: () => void;
-  /** Back / leave path only — omitted on intentional Done. */
-  onStay?: () => void;
-  onResumeLater?: () => void;
 }
 
 const PrescriptionPatientPreview: React.FC<PrescriptionPatientPreviewProps> = ({
@@ -195,16 +204,22 @@ const PrescriptionPatientPreview: React.FC<PrescriptionPatientPreviewProps> = ({
   onFinish,
   onPrint,
   onDownload,
-  onStay,
-  onResumeLater,
 }) => {
   const busy = sending || printBusy || finishBusy;
-  const showLeaveExit = Boolean(onStay && onResumeLater);
   const hasCommitActions = Boolean(
     onSendRx || onSendAndFinish || onSendFinishAndPrint || onFinish || onPrint
   );
-  const showFooter = hasCommitActions || showLeaveExit;
+  const showFooter = hasCommitActions;
   const [alsoPrint, setAlsoPrint] = React.useState(false);
+
+  React.useEffect(() => {
+    setAlsoPrint(readAlsoPrintPreference());
+  }, []);
+
+  const handleAlsoPrintChange = (value: boolean) => {
+    setAlsoPrint(value);
+    writeAlsoPrintPreference(value);
+  };
 
   const canPrimarySend = canSend && Boolean(onSendAndFinish);
   const canPrimaryFinish = !canPrimarySend && canFinish && Boolean(onFinish);
@@ -214,10 +229,6 @@ const PrescriptionPatientPreview: React.FC<PrescriptionPatientPreviewProps> = ({
   const showFinishOnly = canPrimarySend && canFinish && Boolean(onFinish);
   const showMore = showSendOnly || showFinishOnly;
   const showPreviewPrint = canPrint && Boolean(onPrint);
-
-  React.useEffect(() => {
-    if (open) setAlsoPrint(false);
-  }, [open]);
 
   React.useEffect(() => {
     if (!open) return;
@@ -253,11 +264,9 @@ const PrescriptionPatientPreview: React.FC<PrescriptionPatientPreviewProps> = ({
               Prescription
             </h2>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              {showLeaveExit
-                ? "Leave now and OPD will show Incomplete consult — or send & finish."
-                : hasCommitActions
-                  ? "Check it, then send & finish."
-                  : "What the patient will see."}
+              {hasCommitActions
+                ? "Check it, then send & finish."
+                : "What the patient will see."}
             </p>
           </div>
           <button
@@ -296,32 +305,6 @@ const PrescriptionPatientPreview: React.FC<PrescriptionPatientPreviewProps> = ({
               </p>
             ) : null}
 
-            {showLeaveExit ? (
-              <div
-                className="flex flex-wrap items-center gap-2"
-                data-testid="rx-leave-exit"
-              >
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  disabled={busy}
-                  onClick={onStay}
-                >
-                  Stay
-                </Button>
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="sm"
-                  disabled={busy}
-                  onClick={onResumeLater}
-                >
-                  Leave — resume later
-                </Button>
-              </div>
-            ) : null}
-
             {hasCommitActions ? (
               <div className="flex items-center justify-between gap-3">
                 {showAlsoPrint ? (
@@ -329,7 +312,9 @@ const PrescriptionPatientPreview: React.FC<PrescriptionPatientPreviewProps> = ({
                     <Checkbox
                       checked={alsoPrint}
                       disabled={busy}
-                      onCheckedChange={(value) => setAlsoPrint(value === true)}
+                      onCheckedChange={(value) =>
+                        handleAlsoPrintChange(value === true)
+                      }
                       aria-label="Also print"
                     />
                     Also print

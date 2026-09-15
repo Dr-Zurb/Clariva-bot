@@ -11,7 +11,7 @@ export interface PreviousRxPlanTriggerProps {
 
 /**
  * Plan-zone chip that opens the previous-Rx side sheet (rxss-03).
- * Cockpit mounts use this instead of `<PreviousRxPopover>` (DL-1).
+ * `PreviousRxPopover` retired in lvc-12 (LVC-Q4).
  */
 export function PreviousRxPlanTrigger({ token }: PreviousRxPlanTriggerProps) {
   const sideSheet = useSideSheet();

@@ -1,10 +1,17 @@
 import { describe, it, expect } from "vitest";
-import { shouldRequestAiParse } from "@/lib/cockpit/should-request-ai-parse";
+import {
+  complaintParseWarning,
+  shouldRequestAiParse,
+} from "@/lib/cockpit/should-request-ai-parse";
 import { parseComplaintText } from "@/lib/cockpit/parse-complaint-text";
 
 /** Run the real deterministic parser so the gate is exercised end-to-end. */
 function gate(text: string): boolean {
   return shouldRequestAiParse(text, parseComplaintText(text));
+}
+
+function warning(text: string) {
+  return complaintParseWarning(text, parseComplaintText(text));
 }
 
 describe("shouldRequestAiParse", () => {
@@ -41,5 +48,26 @@ describe("shouldRequestAiParse", () => {
   it("fires on romanised vernacular the rules cannot parse", () => {
     // ASCII but rules extract ~nothing from 6+ words.
     expect(gate("pet me jalan aur ulti ho rahi hai")).toBe(true);
+  });
+});
+
+describe("complaintParseWarning", () => {
+  it("is null on a clean extracted line", () => {
+    expect(warning("severe headache for 3 days at night")).toBeNull();
+    expect(warning("tingling in toes")).toBeNull();
+  });
+
+  it("returns vernacular for non-Latin script", () => {
+    expect(warning("पेट में जलन ३ दिन से")).toBe("vernacular");
+  });
+
+  it("returns negation when a deny-word is present", () => {
+    expect(warning("no fever but cough")).toBe("negation");
+  });
+
+  it("returns under_extracted for a long bare list", () => {
+    expect(warning("fever cough loose motions body ache weakness")).toBe(
+      "under_extracted",
+    );
   });
 });

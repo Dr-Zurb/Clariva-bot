@@ -19,10 +19,15 @@ import {
   ChevronUp,
   GripVertical,
   SlidersHorizontal,
+  Sparkles,
   StickyNote,
   Trash2,
 } from "lucide-react";
-import type { Complaint, ComplaintSeverity, PrescriptionAttachment } from "@/types/prescription";
+import type {
+  Complaint,
+  ComplaintSeverity,
+  PrescriptionAttachment,
+} from "@/types/prescription";
 import type { ComplaintMasterRow } from "@/types/complaint-master";
 import {
   HoverCard,
@@ -33,6 +38,7 @@ import {
   buildComplaintAssociatedSuffix,
   buildComplaintDetailSummary,
   complaintHasNotes,
+  complaintNotePrefersInline,
   complaintNotesText,
   isComplaintComplete,
   isScoreInSeverityBand,
@@ -73,14 +79,7 @@ import {
   isLateralityValidForComplaint,
   parseComplaintText,
 } from "@/lib/cockpit/parse-complaint-text";
-import {
-  buildConfirmedDefaultsPatch,
-  filterSuggestionsForEmptyFields,
-  mergePriorComplaintPools,
-  resolveComplaintAttributeDefaults,
-  suggestedFieldCount,
-  type ComplaintAttributeDefaults,
-} from "@/lib/cockpit/complaint-defaults";
+import { type ComplaintAttributeDefaults } from "@/lib/cockpit/complaint-defaults";
 import {
   COMPLAINT_QUICK_FIELD_KEYS,
   isAbdomenLateralityChips,
@@ -89,7 +88,6 @@ import {
   resolveComplaintAttributeFields,
   resolveComplaintNameFieldDefaults,
   type ComplaintAttributeFieldDef,
-  type ComplaintAttributeKey,
   type ComplaintCategory,
 } from "@/lib/cockpit/complaint-schema";
 import {
@@ -116,7 +114,6 @@ import {
   useOptionalRxForm,
 } from "@/components/cockpit/rx/RxFormContext";
 import { usePersistedComplaintChildOpen } from "@/lib/cockpit/use-persisted-entry-open";
-import { getLastSubjectiveForPatient } from "@/lib/api/last-subjective";
 import { recordNoteFavoriteUse } from "@/lib/api/note-favorites";
 import {
   RX_FIELD_INPUT_CLASS,
@@ -147,12 +144,13 @@ const COMPLAINT_CARD_DRAG_CLASS =
 const COMPLAINT_CARD_COMPACT_INPUT =
   "mt-0.5 w-full min-h-9 rounded-md border border-border px-2 py-1.5 text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary disabled:bg-muted/30";
 
-const COMPLAINT_CARD_COMPACT_LABEL = "block text-xs font-medium text-foreground/80";
+const COMPLAINT_CARD_COMPACT_LABEL =
+  "block text-xs font-medium text-foreground/80";
 
 const COMPLAINT_CARD_CHIP_CLASS =
   "min-h-9 rounded-full border px-2.5 text-xs disabled:opacity-50";
 
-const lastSubjectiveComplaintsCache = new Map<string, Complaint[]>();
+const EMPTY_ATTRIBUTE_SUGGESTIONS: ComplaintAttributeDefaults = {};
 
 function ComplaintCardDragHandle({
   dragHandleProps,
@@ -167,7 +165,9 @@ function ComplaintCardDragHandle({
     <div
       {...dragHandleProps}
       className={COMPLAINT_CARD_DRAG_CLASS}
-      onClick={stopPropagation ? (e) => e.stopPropagation() : dragHandleProps?.onClick}
+      onClick={
+        stopPropagation ? (e) => e.stopPropagation() : dragHandleProps?.onClick
+      }
       aria-label={ariaLabel}
     >
       <GripVertical className="h-4 w-4" aria-hidden />
@@ -245,10 +245,12 @@ export interface ComplaintCardProps {
   mainListDragActive?: boolean;
   onMainNestHover?: () => void;
   onAcceptMainNestDrop?: () => void;
+  /** Opt-in AI refine for an already-added card — never auto-runs. */
+  onRefine?: (index: number) => void;
 }
 
 function mainListDragSurfaceClass(
-  dropIntent: MainComplaintDropIntent | null | undefined,
+  dropIntent: MainComplaintDropIntent | null | undefined
 ): string {
   // Drop-target affordances only — the dragged card itself stays at full opacity
   // (dimming on mousedown stuck when the doctor clicked without dragging).
@@ -279,7 +281,7 @@ function inlineCardOptionClass(active: boolean): string {
 function useInlineDropdownDismiss(
   wrapperRef: RefObject<HTMLDivElement | null>,
   open: boolean,
-  onClose: () => void,
+  onClose: () => void
 ) {
   useEffect(() => {
     if (!open) return;
@@ -352,7 +354,9 @@ function InlineDurationCombo({
   const wrapperRef = useRef<HTMLDivElement>(null);
   const optionRefs = useRef<Array<HTMLLIElement | null>>([]);
   const activeIdxRef = useRef(0);
-  const durationOptionsRef = useRef<ReturnType<typeof buildInlineDurationOptions>>([]);
+  const durationOptionsRef = useRef<
+    ReturnType<typeof buildInlineDurationOptions>
+  >([]);
   const [draft, setDraft] = useState("");
   const [open, setOpen] = useState(false);
   const [activeIdx, setActiveIdx] = useState(0);
@@ -362,11 +366,11 @@ function InlineDurationCombo({
   const n = Number.parseInt(numericDraft, 10);
   const durationOptions = useMemo(
     () => (Number.isFinite(n) && n > 0 ? buildInlineDurationOptions(n) : []),
-    [n],
+    [n]
   );
   const listOptions = useMemo(
     () => durationOptions.map((o) => ({ key: o.unit, label: o.label })),
-    [durationOptions],
+    [durationOptions]
   );
   const showDropdown = open && listOptions.length > 0;
 
@@ -452,7 +456,9 @@ function InlineDurationCombo({
         aria-expanded={showDropdown}
         aria-autocomplete="list"
         aria-controls={showDropdown ? listId : undefined}
-        aria-activedescendant={showDropdown ? `${listId}-opt-${activeIdx}` : undefined}
+        aria-activedescendant={
+          showDropdown ? `${listId}-opt-${activeIdx}` : undefined
+        }
         role="combobox"
         className={`${INLINE_CARD_CONTROL_CLASS} placeholder:text-muted-foreground/70`}
       />
@@ -484,7 +490,8 @@ function ComplaintCardDurationField({
   disabled?: boolean;
   onDurationChange: (duration: string) => void;
 }) {
-  const durationValue = typeof value.duration === "string" ? value.duration : "";
+  const durationValue =
+    typeof value.duration === "string" ? value.duration : "";
 
   return (
     <InlineDurationCombo
@@ -500,7 +507,12 @@ function ComplaintNotePopover({ text }: { text: string }) {
   const [open, setOpen] = useState(false);
 
   return (
-    <HoverCard open={open} onOpenChange={setOpen} openDelay={150} closeDelay={100}>
+    <HoverCard
+      open={open}
+      onOpenChange={setOpen}
+      openDelay={150}
+      closeDelay={100}
+    >
       <HoverCardTrigger asChild>
         <button
           type="button"
@@ -524,6 +536,22 @@ function ComplaintNotePopover({ text }: { text: string }) {
         {text}
       </HoverCardContent>
     </HoverCard>
+  );
+}
+
+function ComplaintCollapsedNote({ text }: { text: string }) {
+  if (!complaintNotePrefersInline(text)) {
+    return <ComplaintNotePopover text={text} />;
+  }
+
+  return (
+    <span
+      className="min-w-0 max-w-[12rem] truncate text-[11px] leading-tight text-muted-foreground"
+      title={text}
+      data-testid="complaint-card-note-text"
+    >
+      {text}
+    </span>
   );
 }
 
@@ -595,6 +623,7 @@ interface ComplaintCardSummaryProps {
   dragHandleProps?: HTMLAttributes<HTMLDivElement>;
   scrollInstanceId?: string;
   parsedCue?: ReactNode;
+  onRefine?: (index: number) => void;
 }
 
 function complaintSummaryAriaLabel(
@@ -603,7 +632,7 @@ function complaintSummaryAriaLabel(
   depth: 0 | 1,
   parentName: string | undefined,
   readOnly: boolean,
-  expanded: boolean,
+  expanded: boolean
 ): string {
   const suffix = buildComplaintAssociatedSuffix(value);
   const displayName = formatComplaintDisplayName(value.name);
@@ -652,6 +681,7 @@ function ComplaintSummaryRow({
   mainListDropIntent,
   dragHandleProps,
   parsedCue,
+  onRefine,
 }: ComplaintCardSummaryProps) {
   const associatedNames = listAssociatedComplaintNames(value);
   const displayName =
@@ -663,7 +693,8 @@ function ComplaintSummaryRow({
       ? `Drag associated symptom ${index + 1} of ${parentName}`
       : `Drag complaint ${index + 1}`;
   const canEditInline = !readOnly && Boolean(onPatch);
-  const durationValue = typeof value.duration === "string" ? value.duration : "";
+  const durationValue =
+    typeof value.duration === "string" ? value.duration : "";
   const detailSummary = buildComplaintDetailSummary(value);
   const hasNotes = complaintHasNotes(value);
   const notesText = complaintNotesText(value);
@@ -679,9 +710,9 @@ function ComplaintSummaryRow({
     depth === 1 && parentName
       ? `Move ${value.name.trim() || "symptom"} to main complaints`
       : `Move complaint ${index + 1} to main complaints`;
-  const canPromote = depth === 1 && Boolean(onPromote) && value.name.trim().length > 0;
-  const metaVisible =
-    showCollapsedMeta && (detailSummary.hasRow || hasNotes);
+  const canPromote =
+    depth === 1 && Boolean(onPromote) && value.name.trim().length > 0;
+  const metaVisible = showCollapsedMeta && (detailSummary.hasRow || hasNotes);
 
   function handleRowActivate() {
     if (readOnly) return;
@@ -703,7 +734,7 @@ function ComplaintSummaryRow({
         className={cn(
           "flex shrink-0 items-center gap-1.5",
           // Narrow: second row, indent past drag+badge, actions end-aligned.
-          "w-full justify-end pl-9 @[22rem]/complaints:w-auto @[22rem]/complaints:justify-start @[22rem]/complaints:self-center @[22rem]/complaints:pl-0",
+          "w-full justify-end pl-9 @[22rem]/complaints:w-auto @[22rem]/complaints:justify-start @[22rem]/complaints:self-center @[22rem]/complaints:pl-0"
         )}
       >
         {canEditInline ? (
@@ -721,6 +752,21 @@ function ComplaintSummaryRow({
 
         {!readOnly && (
           <>
+            {onRefine && value.name.trim() ? (
+              <button
+                type="button"
+                disabled={disabled}
+                title="Refine with AI"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onRefine(index);
+                }}
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-sm text-muted-foreground hover:bg-muted/60 hover:text-foreground disabled:opacity-50"
+                aria-label={`Refine complaint ${index + 1} with AI`}
+              >
+                <Sparkles className="h-3.5 w-3.5" aria-hidden />
+              </button>
+            ) : null}
             <button
               type="button"
               disabled={disabled}
@@ -776,13 +822,11 @@ function ComplaintSummaryRow({
         className={cn(
           "group relative flex min-h-9 gap-1.5 px-2 py-1.5 text-left focus:outline-none focus:ring-2 focus:ring-ring focus:ring-inset",
           "flex-col @[22rem]/complaints:flex-row @[22rem]/complaints:items-center",
-          readOnly
-            ? "cursor-default"
-            : "cursor-pointer hover:bg-muted/40",
+          readOnly ? "cursor-default" : "cursor-pointer hover:bg-muted/40",
           expanded && "border-b border-border/60",
           stickyHeader
             ? "sticky top-[var(--collapsible-sticky-top,2.75rem)] z-10 scroll-mt-[var(--collapsible-sticky-top,2.75rem)] bg-background shadow-sm"
-            : cn("scroll-mt-2", headerSurfaceClass),
+            : cn("scroll-mt-2", headerSurfaceClass)
         )}
         data-readonly={readOnly || undefined}
         aria-label={complaintSummaryAriaLabel(
@@ -791,7 +835,7 @@ function ComplaintSummaryRow({
           depth,
           parentName,
           readOnly,
-          expanded,
+          expanded
         )}
         aria-expanded={readOnly ? undefined : expanded}
       >
@@ -814,7 +858,9 @@ function ComplaintSummaryRow({
           <div className="min-w-0 flex-1">
             <div className="flex min-w-0 items-baseline text-sm font-medium leading-tight">
               <span className="min-w-0 truncate">{displayName}</span>
-              {parsedCue ? <span className="ml-1 shrink-0 self-center">{parsedCue}</span> : null}
+              {parsedCue ? (
+                <span className="ml-1 shrink-0 self-center">{parsedCue}</span>
+              ) : null}
               {associatedNames.length > 0 ? (
                 <ComplaintAssociatedNamesInline names={associatedNames} />
               ) : null}
@@ -829,7 +875,7 @@ function ComplaintSummaryRow({
                     className="min-w-0"
                   />
                 ) : null}
-                {hasNotes ? <ComplaintNotePopover text={notesText} /> : null}
+                {hasNotes ? <ComplaintCollapsedNote text={notesText} /> : null}
               </div>
             ) : null}
           </div>
@@ -856,7 +902,9 @@ function SeverityField({
   onChange: (next: ComplaintSeverity | null) => void;
   compact?: boolean;
 }) {
-  const chipClass = compact ? COMPLAINT_CARD_CHIP_CLASS : "min-h-11 rounded-full border px-3 text-sm disabled:opacity-50";
+  const chipClass = compact
+    ? COMPLAINT_CARD_CHIP_CLASS
+    : "min-h-11 rounded-full border px-3 text-sm disabled:opacity-50";
   const options: Array<{ value: ComplaintSeverity; label: string }> = [
     { value: "mild", label: "Mild" },
     { value: "moderate", label: "Moderate" },
@@ -872,7 +920,8 @@ function SeverityField({
       {options.map((option) => {
         const selected = value === option.value;
         const isSuggested =
-          (value === null || value === undefined) && suggestedValue === option.value;
+          (value === null || value === undefined) &&
+          suggestedValue === option.value;
         return (
           <button
             key={option.value}
@@ -880,7 +929,9 @@ function SeverityField({
             disabled={disabled}
             aria-pressed={selected}
             aria-label={
-              isSuggested ? `${option.label} ${PRIOR_CHARTING_ARIA_SUFFIX}` : option.label
+              isSuggested
+                ? `${option.label} ${PRIOR_CHARTING_ARIA_SUFFIX}`
+                : option.label
             }
             onClick={() => onChange(selected ? null : option.value)}
             className={`${chipClass} ${
@@ -938,7 +989,11 @@ function PainScaleField({
         aria-valuemin={0}
         aria-valuemax={10}
         aria-valuenow={score ?? undefined}
-        aria-valuetext={score === null ? "Not set" : `${score} out of 10 (${painScoreBand(score)})`}
+        aria-valuetext={
+          score === null
+            ? "Not set"
+            : `${score} out of 10 (${painScoreBand(score)})`
+        }
       />
       <span className="w-24 shrink-0 text-right text-xs tabular-nums text-muted-foreground">
         {score === null ? "Not set" : `${score}/10 · ${painScoreBand(score)}`}
@@ -981,7 +1036,9 @@ function FeverGradeField({
   onChange: (next: FeverGrade | null) => void;
   compact?: boolean;
 }) {
-  const chipClass = compact ? COMPLAINT_CARD_CHIP_CLASS : "min-h-11 rounded-full border px-3 text-sm disabled:opacity-50";
+  const chipClass = compact
+    ? COMPLAINT_CARD_CHIP_CLASS
+    : "min-h-11 rounded-full border px-3 text-sm disabled:opacity-50";
   const options: Array<{ value: FeverGrade; label: string }> = [
     { value: "mild", label: "Mild" },
     { value: "moderate", label: "Moderate" },
@@ -997,7 +1054,8 @@ function FeverGradeField({
       {options.map((option) => {
         const selected = value === option.value;
         const isSuggested =
-          (value === null || value === undefined) && suggestedValue === option.value;
+          (value === null || value === undefined) &&
+          suggestedValue === option.value;
         return (
           <button
             key={option.value}
@@ -1005,7 +1063,9 @@ function FeverGradeField({
             disabled={disabled}
             aria-pressed={selected}
             aria-label={
-              isSuggested ? `${option.label} ${PRIOR_CHARTING_ARIA_SUFFIX}` : option.label
+              isSuggested
+                ? `${option.label} ${PRIOR_CHARTING_ARIA_SUFFIX}`
+                : option.label
             }
             onClick={() => onChange(selected ? null : option.value)}
             className={`${chipClass} ${
@@ -1048,7 +1108,7 @@ function TemperatureInputField({
   const max = unit === "F" ? 110 : 43;
   const inputRef = useRef<HTMLInputElement>(null);
   const [draft, setDraft] = useState(
-    typeof temperature === "number" ? String(temperature) : "",
+    typeof temperature === "number" ? String(temperature) : ""
   );
 
   useEffect(() => {
@@ -1089,7 +1149,7 @@ function TemperatureInputField({
     if (disabled) return;
     const next = Math.min(
       max,
-      Math.max(min, Math.round((resolveStepBase() + delta) * 10) / 10),
+      Math.max(min, Math.round((resolveStepBase() + delta) * 10) / 10)
     );
     commitValue(String(next));
     inputRef.current?.focus();
@@ -1105,7 +1165,9 @@ function TemperatureInputField({
       temperature: nextTemp,
       temperatureUnit: nextUnit,
       feverGrade:
-        typeof nextTemp === "number" ? temperatureToFeverGrade(nextTemp, nextUnit) : null,
+        typeof nextTemp === "number"
+          ? temperatureToFeverGrade(nextTemp, nextUnit)
+          : null,
     });
     if (typeof nextTemp === "number") {
       setDraft(String(nextTemp));
@@ -1165,7 +1227,11 @@ function TemperatureInputField({
           </button>
         </div>
       </div>
-      <div className="flex rounded-md border border-border p-0.5" role="group" aria-label="Temperature unit">
+      <div
+        className="flex rounded-md border border-border p-0.5"
+        role="group"
+        aria-label="Temperature unit"
+      >
         {(["F", "C"] as const).map((u) => (
           <button
             key={u}
@@ -1231,7 +1297,9 @@ function FeverGradeControl({
   onChange: (patch: Partial<Complaint>) => void;
   compact?: boolean;
 }) {
-  const labelClass = compact ? COMPLAINT_CARD_COMPACT_LABEL : RX_FIELD_LABEL_CLASS;
+  const labelClass = compact
+    ? COMPLAINT_CARD_COMPACT_LABEL
+    : RX_FIELD_LABEL_CLASS;
   const unit: TemperatureUnit = temperatureUnit ?? "F";
   const feltOnly = isFeltOnlyMeasured(measuredBy);
 
@@ -1262,7 +1330,9 @@ function FeverGradeControl({
         }}
       />
       {feltOnly ? (
-        <p className="mt-1 text-xs text-muted-foreground">Subjective — no exact reading</p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Subjective — no exact reading
+        </p>
       ) : (
         <div className="mt-1">
           <TemperatureInputField
@@ -1295,7 +1365,9 @@ function SeverityScaleControl({
   onChange: (patch: Partial<Complaint>) => void;
   compact?: boolean;
 }) {
-  const labelClass = compact ? COMPLAINT_CARD_COMPACT_LABEL : RX_FIELD_LABEL_CLASS;
+  const labelClass = compact
+    ? COMPLAINT_CARD_COMPACT_LABEL
+    : RX_FIELD_LABEL_CLASS;
   return (
     <div>
       <span className={labelClass}>Severity</span>
@@ -1328,7 +1400,10 @@ function SeverityScaleControl({
               onChange({ painScore: null, severity: null });
               return;
             }
-            onChange({ painScore: nextScore, severity: painScoreToSeverityBand(nextScore) });
+            onChange({
+              painScore: nextScore,
+              severity: painScoreToSeverityBand(nextScore),
+            });
           }}
         />
       </div>
@@ -1356,13 +1431,17 @@ function DurationField({
   const chipClass = compact
     ? COMPLAINT_CARD_CHIP_CLASS
     : "min-h-11 rounded-full border px-3 text-sm disabled:opacity-50";
-  const inputClass = compact ? COMPLAINT_CARD_COMPACT_INPUT : RX_FIELD_INPUT_CLASS;
+  const inputClass = compact
+    ? COMPLAINT_CARD_COMPACT_INPUT
+    : RX_FIELD_INPUT_CLASS;
   const parsed = parseDuration(value);
   const hasSuggestion = !value.trim() && Boolean(suggestedValue?.trim());
 
   const commitNumber = (rawNum: string, unit: DurationUnit) => {
     const n = Number.parseInt(rawNum, 10);
-    onPatch({ duration: Number.isFinite(n) && n > 0 ? serializeDuration(n, unit) : "" });
+    onPatch({
+      duration: Number.isFinite(n) && n > 0 ? serializeDuration(n, unit) : "",
+    });
   };
 
   return (
@@ -1411,7 +1490,8 @@ function DurationField({
           value={parsed?.unit ?? "day"}
           onChange={(e) => {
             const unit = e.target.value as DurationUnit;
-            if (parsed) onPatch({ duration: serializeDuration(parsed.value, unit) });
+            if (parsed)
+              onPatch({ duration: serializeDuration(parsed.value, unit) });
           }}
           disabled={disabled || !parsed}
           aria-label="Duration unit"
@@ -1460,8 +1540,12 @@ function ChipFieldRow({
   onPatch: (patch: Partial<Complaint>) => void;
   compact?: boolean;
 }) {
-  const chipClass = compact ? COMPLAINT_CARD_CHIP_CLASS : "min-h-11 rounded-full border px-3 text-sm disabled:opacity-50";
-  const labelClass = compact ? COMPLAINT_CARD_COMPACT_LABEL : RX_FIELD_LABEL_CLASS;
+  const chipClass = compact
+    ? COMPLAINT_CARD_CHIP_CLASS
+    : "min-h-11 rounded-full border px-3 text-sm disabled:opacity-50";
+  const labelClass = compact
+    ? COMPLAINT_CARD_COMPACT_LABEL
+    : RX_FIELD_LABEL_CLASS;
   const inputId = `complaint-${field.key}-${index}`;
   const fieldValue = value[field.key];
   const textValue = typeof fieldValue === "string" ? fieldValue : "";
@@ -1492,14 +1576,17 @@ function ChipFieldRow({
           {field.chips.map((chip) => {
             const selected = textValue.toLowerCase() === chip.toLowerCase();
             const isSuggested =
-              !textValue && suggestedValue?.toLowerCase() === chip.toLowerCase();
+              !textValue &&
+              suggestedValue?.toLowerCase() === chip.toLowerCase();
             return (
               <button
                 key={chip}
                 type="button"
                 disabled={disabled}
                 aria-pressed={selected}
-                aria-label={isSuggested ? `${chip} ${PRIOR_CHARTING_ARIA_SUFFIX}` : chip}
+                aria-label={
+                  isSuggested ? `${chip} ${PRIOR_CHARTING_ARIA_SUFFIX}` : chip
+                }
                 onClick={() => onPatch({ [field.key]: selected ? "" : chip })}
                 className={`${chipClass} ${
                   selected
@@ -1527,7 +1614,10 @@ function ChipFieldRow({
         aria-describedby={hasSuggestion ? `${inputId}-suggested` : undefined}
       />
       {hasSuggestion ? (
-        <p id={`${inputId}-suggested`} className="mt-1 text-xs text-muted-foreground">
+        <p
+          id={`${inputId}-suggested`}
+          className="mt-1 text-xs text-muted-foreground"
+        >
           {priorChartingHelperText(suggestedValue!)}
         </p>
       ) : null}
@@ -1552,12 +1642,17 @@ function AttributeFieldRow({
   onPatch: (patch: Partial<Complaint>) => void;
   compact?: boolean;
 }) {
-  const labelClass = compact ? COMPLAINT_CARD_COMPACT_LABEL : RX_FIELD_LABEL_CLASS;
+  const labelClass = compact
+    ? COMPLAINT_CARD_COMPACT_LABEL
+    : RX_FIELD_LABEL_CLASS;
   const inputId = `complaint-${field.key}-${index}`;
   const suggestedRaw = suggestions[field.key];
-  const suggestedText = typeof suggestedRaw === "string" ? suggestedRaw : undefined;
+  const suggestedText =
+    typeof suggestedRaw === "string" ? suggestedRaw : undefined;
   const suggestedSeverity =
-    field.key === "severity" && typeof suggestedRaw !== "string" ? suggestedRaw : undefined;
+    field.key === "severity" && typeof suggestedRaw !== "string"
+      ? suggestedRaw
+      : undefined;
 
   if (field.type === "severity") {
     return (
@@ -1587,7 +1682,8 @@ function AttributeFieldRow({
   }
 
   if (field.type === "duration") {
-    const durationValue = typeof value.duration === "string" ? value.duration : "";
+    const durationValue =
+      typeof value.duration === "string" ? value.duration : "";
     return (
       <div>
         <span className={labelClass}>{field.label}</span>
@@ -1642,62 +1738,13 @@ function AttributeFieldRow({
         aria-describedby={hasSuggestion ? `${inputId}-suggested` : undefined}
       />
       {hasSuggestion ? (
-        <p id={`${inputId}-suggested`} className="mt-1 text-xs text-muted-foreground">
+        <p
+          id={`${inputId}-suggested`}
+          className="mt-1 text-xs text-muted-foreground"
+        >
           {priorChartingHelperText(suggestedText!)}
         </p>
       ) : null}
-    </div>
-  );
-}
-
-function SuggestionBanner({
-  count,
-  disabled,
-  onConfirm,
-  onDismiss,
-  compact = false,
-}: {
-  count: number;
-  disabled?: boolean;
-  onConfirm: () => void;
-  onDismiss: () => void;
-  compact?: boolean;
-}) {
-  if (count === 0) return null;
-
-  const btnClass = compact
-    ? "min-h-9 rounded-md px-2.5 text-xs font-medium disabled:opacity-50"
-    : "min-h-11 rounded-md px-3 text-xs font-medium disabled:opacity-50";
-
-  return (
-    <div
-      className={`flex flex-wrap items-center justify-between gap-1.5 rounded-md border border-dashed border-primary/40 bg-primary/5 ${
-        compact ? "px-2 py-1.5" : "px-3 py-2 gap-2"
-      }`}
-      data-testid="complaint-suggestion-banner"
-    >
-      <p className="text-xs text-foreground">
-        {count} empty field{count === 1 ? "" : "s"} match{count === 1 ? "es" : ""} your prior
-        charting
-      </p>
-      <div className="flex flex-wrap gap-1.5">
-        <button
-          type="button"
-          disabled={disabled}
-          onClick={onConfirm}
-          className={`${btnClass} bg-primary text-primary-foreground hover:bg-primary/90`}
-        >
-          Apply from history
-        </button>
-        <button
-          type="button"
-          disabled={disabled}
-          onClick={onDismiss}
-          className={`${btnClass} border border-border text-muted-foreground hover:text-foreground`}
-        >
-          Not now
-        </button>
-      </div>
     </div>
   );
 }
@@ -1776,25 +1823,27 @@ export function ComplaintCard({
   onMainNestHover,
   onAcceptMainNestDrop,
   scrollInstanceId,
+  onRefine,
 }: ComplaintCardProps) {
   const instanceId = scrollInstanceId ?? value.id;
   const rxForm = useOptionalRxForm();
   const dispatch = rxForm?.dispatch;
   const rowDisabled = disabled || isReadOnly;
   const resolvedCategory =
-    (value.category && isComplaintCategory(value.category) ? value.category : null) ??
-    categoryProp;
+    (value.category && isComplaintCategory(value.category)
+      ? value.category
+      : null) ?? categoryProp;
   const attributeFields = useMemo(
     () =>
       resolveComplaintAttributeFields({
         complaintName: value.name,
         category: resolvedCategory,
       }),
-    [value.name, resolvedCategory],
+    [value.name, resolvedCategory]
   );
   const attributeKeys = useMemo(
     () => attributeFields.map((field) => field.key),
-    [attributeFields],
+    [attributeFields]
   );
   const expandedFields = useMemo(
     () =>
@@ -1806,99 +1855,31 @@ export function ComplaintCard({
           field.key !== "reportedBy" &&
           // Merged controls — not standalone body rows.
           field.type !== "painscale" &&
-          field.type !== "temperature",
+          field.type !== "temperature"
       ),
-    [attributeFields],
+    [attributeFields]
   );
   const severityField = useMemo(
     () => attributeFields.find((field) => field.key === "severity"),
-    [attributeFields],
+    [attributeFields]
   );
   const measuredByField = useMemo(
     () => attributeFields.find((field) => field.key === "measuredBy"),
-    [attributeFields],
+    [attributeFields]
   );
   const reportedByField = useMemo(
     () => attributeFields.find((field) => field.key === "reportedBy"),
-    [attributeFields],
+    [attributeFields]
   );
   const temperatureField = useMemo(
     () => attributeFields.find((field) => field.type === "temperature"),
-    [attributeFields],
+    [attributeFields]
   );
   const hasPainScale = useMemo(
     () => attributeFields.some((field) => field.type === "painscale"),
-    [attributeFields],
+    [attributeFields]
   );
-  const [suggestions, setSuggestions] = useState<ComplaintAttributeDefaults>({});
-  const [suggestionsDismissed, setSuggestionsDismissed] = useState(false);
-  const [lastVisitComplaints, setLastVisitComplaints] = useState<Complaint[]>([]);
-  const prevNameRef = useRef(value.name);
-
-  const siblingComplaints = useMemo(() => {
-    const all = rxForm?.state.fields.complaints ?? [];
-    return all.filter((_, i) => i !== index);
-  }, [rxForm?.state.fields.complaints, index]);
-
-  useEffect(() => {
-    const patientId = rxForm?.patientId;
-    const appointmentId = rxForm?.appointmentId;
-    if (!token || !patientId || !appointmentId) return;
-
-    const cacheKey = `${patientId}:${appointmentId}`;
-    const cached = lastSubjectiveComplaintsCache.get(cacheKey);
-    if (cached) {
-      setLastVisitComplaints(cached);
-      return;
-    }
-
-    let cancelled = false;
-    void getLastSubjectiveForPatient(token, patientId, appointmentId)
-      .then((res) => {
-        const rows = res.data.subjective?.complaints ?? [];
-        lastSubjectiveComplaintsCache.set(cacheKey, rows);
-        if (!cancelled) setLastVisitComplaints(rows);
-      })
-      .catch(() => {
-        if (!cancelled) setLastVisitComplaints([]);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [token, rxForm?.patientId, rxForm?.appointmentId]);
-
-  const priorPool = useMemo(
-    () => mergePriorComplaintPools(lastVisitComplaints, siblingComplaints),
-    [lastVisitComplaints, siblingComplaints],
-  );
-
-  useEffect(() => {
-    if (prevNameRef.current !== value.name) {
-      prevNameRef.current = value.name;
-      setSuggestionsDismissed(false);
-    }
-
-    if (suggestionsDismissed || !value.name.trim()) {
-      if (!value.name.trim()) setSuggestions({});
-      return;
-    }
-
-    const raw = resolveComplaintAttributeDefaults({
-      complaintName: value.name,
-      category: resolvedCategory,
-      priorComplaints: priorPool,
-      attributeKeys,
-    });
-    setSuggestions(filterSuggestionsForEmptyFields(value, raw, attributeKeys));
-  }, [
-    value,
-    value.name,
-    resolvedCategory,
-    priorPool,
-    suggestionsDismissed,
-    attributeKeys,
-  ]);
+  const suggestions = EMPTY_ATTRIBUTE_SUGGESTIONS;
 
   // Name-derived fill, applied once per recognised name (mirrors the capture
   // parse so editing a card's name re-parses trailing detail — subj-13 §2).
@@ -1930,7 +1911,11 @@ export function ComplaintCard({
       if (typeof current === "string" && current.trim()) continue;
       if (
         fieldKey === "laterality" &&
-        !isLateralityValidForComplaint(value.name, value.category ?? undefined, implied)
+        !isLateralityValidForComplaint(
+          value.name,
+          value.category ?? undefined,
+          implied
+        )
       ) {
         continue;
       }
@@ -1945,11 +1930,11 @@ export function ComplaintCard({
         complaintName: value.name,
         category: resolvedCategory,
       }),
-    [value.name, resolvedCategory],
+    [value.name, resolvedCategory]
   );
   const [activeChildId, setActiveChildId] = usePersistedComplaintChildOpen(
     rxForm?.appointmentId,
-    value.id,
+    value.id
   );
   const [promoteError, setPromoteError] = useState<string | null>(null);
 
@@ -1970,14 +1955,17 @@ export function ComplaintCard({
   const complaintPhotoFilter = useCallback(
     (attachments: readonly PrescriptionAttachment[]) =>
       filterSubjectiveAttachmentsForComplaint(attachments, value.id),
-    [value.id],
+    [value.id]
   );
 
   const rootComplaints = rxForm?.state.fields.complaints ?? [];
   // Show the compact summary row when the complaint is complete and not being
   // edited (or read-only); otherwise the editor body is open. Same condition as
   // before, just expressed as the Collapse `open` state instead of a hard swap.
-  const expanded = !(isComplaintComplete(value) && (isReadOnly || isEditing === false));
+  const expanded = !(
+    isComplaintComplete(value) &&
+    (isReadOnly || isEditing === false)
+  );
   // Keep the heavy body mounted through the close fold, then unmount (perf).
   const bodyMounted = useExpandedBodyMounted(expanded);
 
@@ -1987,7 +1975,9 @@ export function ComplaintCard({
         ? { ...patch, name: formatComplaintDisplayName(patch.name) }
         : patch;
     const nextMeasuredBy =
-      nextPatch.measuredBy !== undefined ? nextPatch.measuredBy : value.measuredBy;
+      nextPatch.measuredBy !== undefined
+        ? nextPatch.measuredBy
+        : value.measuredBy;
     const feltOnly = nextMeasuredBy?.trim() === "Felt only";
     if (feltOnly) {
       nextPatch = { ...nextPatch, temperature: null };
@@ -1998,28 +1988,8 @@ export function ComplaintCard({
       nextPatch = { ...nextPatch, reportedBy: null };
     }
     onPatch(index, nextPatch);
-    setSuggestions((prev) => {
-      const next = { ...prev };
-      for (const key of Object.keys(nextPatch) as ComplaintAttributeKey[]) {
-        if (key in next) delete next[key];
-      }
-      return next;
-    });
   };
 
-  const handleConfirmSuggestions = () => {
-    const patch = buildConfirmedDefaultsPatch(suggestions);
-    handlePatch(patch);
-    setSuggestions({});
-    setSuggestionsDismissed(true);
-  };
-
-  const handleDismissSuggestions = () => {
-    setSuggestions({});
-    setSuggestionsDismissed(true);
-  };
-
-  const suggestionCount = suggestedFieldCount(suggestions);
   const associatedComplaints = value.associatedComplaints ?? [];
   const collapseLipLabel =
     depth === 1 && parentName
@@ -2038,17 +2008,29 @@ export function ComplaintCard({
     }
   };
 
-  const handleAddAssociated = ({ name, category, rawText }: ComplaintCapturePayload) => {
+  const handleAddAssociated = ({
+    name,
+    category,
+    rawText,
+  }: ComplaintCapturePayload) => {
     if (!dispatch) return;
     // Parse typed detail off the original text; keep the catalog name when one
     // matched. Children are one level deep, so nested `associated` is ignored.
     const parsed = parseComplaintText(rawText?.trim() || name);
-    const childName = formatComplaintDisplayName((rawText ? name.trim() : parsed.name) || name.trim());
+    const childName = formatComplaintDisplayName(
+      (rawText ? name.trim() : parsed.name) || name.trim()
+    );
     const child = createEmptyComplaint();
     child.name = childName;
     if (category) child.category = category;
     Object.assign(child, parsed.patch);
-    if (!isLateralityValidForComplaint(child.name, child.category ?? undefined, child.laterality)) {
+    if (
+      !isLateralityValidForComplaint(
+        child.name,
+        child.category ?? undefined,
+        child.laterality
+      )
+    ) {
       delete child.laterality;
     }
     // Children are one level deep, so any nested `associated` is dropped here.
@@ -2056,12 +2038,19 @@ export function ComplaintCard({
     dispatch({ type: "ADD_COMPLAINT", complaint: child, parentId: value.id });
   };
 
-  const resolveChildPromoteBlockedReason = (childIndex: number): string | null => {
+  const resolveChildPromoteBlockedReason = (
+    childIndex: number
+  ): string | null => {
     if (depth !== 0) return null;
     if (promoteError) return promoteError;
-    const err = getPromoteAssociatedComplaintError(rootComplaints, value.id, childIndex);
+    const err = getPromoteAssociatedComplaintError(
+      rootComplaints,
+      value.id,
+      childIndex
+    );
     if (err === "duplicate_name") {
-      const name = associatedComplaints[childIndex]?.name.trim() || "This symptom";
+      const name =
+        associatedComplaints[childIndex]?.name.trim() || "This symptom";
       return `${name} is already a main complaint`;
     }
     return null;
@@ -2069,9 +2058,14 @@ export function ComplaintCard({
 
   const handlePromoteChild = (childIndex: number) => {
     if (!dispatch || depth !== 0) return;
-    const err = getPromoteAssociatedComplaintError(rootComplaints, value.id, childIndex);
+    const err = getPromoteAssociatedComplaintError(
+      rootComplaints,
+      value.id,
+      childIndex
+    );
     if (err === "duplicate_name") {
-      const name = associatedComplaints[childIndex]?.name.trim() || "This symptom";
+      const name =
+        associatedComplaints[childIndex]?.name.trim() || "This symptom";
       setPromoteError(`${name} is already a main complaint`);
       return;
     }
@@ -2098,7 +2092,10 @@ export function ComplaintCard({
       <div className="space-y-2 px-2 py-1.5">
         <div>
           <div className="flex items-center gap-1">
-            <label htmlFor={`complaint-name-${value.id}`} className={COMPLAINT_CARD_COMPACT_LABEL}>
+            <label
+              htmlFor={`complaint-name-${value.id}`}
+              className={COMPLAINT_CARD_COMPACT_LABEL}
+            >
               Name
             </label>
             {parsedCueNode}
@@ -2247,7 +2244,9 @@ export function ComplaintCard({
               severity={value.severity}
               painScore={value.painScore}
               suggestedSeverity={
-                typeof suggestions.severity !== "string" ? suggestions.severity : undefined
+                typeof suggestions.severity !== "string"
+                  ? suggestions.severity
+                  : undefined
               }
               disabled={rowDisabled}
               onChange={handlePatch}
@@ -2267,13 +2266,6 @@ export function ComplaintCard({
           )
         ) : null}
 
-        <SuggestionBanner
-          count={suggestionCount}
-          disabled={rowDisabled}
-          onConfirm={handleConfirmSuggestions}
-          onDismiss={handleDismissSuggestions}
-          compact
-        />
         {expandedFields.map((field) => (
           <AttributeFieldRow
             key={field.key}
@@ -2302,9 +2294,13 @@ export function ComplaintCard({
       className={cn(
         "relative overflow-clip rounded-md",
         tone.active
-          ? cn("border border-border/60", !tone.recessed && "shadow-sm", tone.surface)
+          ? cn(
+              "border border-border/60",
+              !tone.recessed && "shadow-sm",
+              tone.surface
+            )
           : "border border-border bg-card",
-        mainListDragSurfaceClass(depth === 0 ? mainListDropIntent : null),
+        mainListDragSurfaceClass(depth === 0 ? mainListDropIntent : null)
       )}
       onKeyDown={(e) => {
         if (e.key === "Escape" && isComplaintComplete(value)) {
@@ -2332,11 +2328,14 @@ export function ComplaintCard({
         mainListDropIntent={mainListDropIntent}
         dragHandleProps={dragHandleProps}
         parsedCue={parsedCueNode}
+        onRefine={onRefine}
       />
 
       <Collapse open={expanded}>
         {tone.active && tone.depth !== null ? (
-          <CollapsibleDepthProvider depth={tone.depth + 1}>{expandedBody}</CollapsibleDepthProvider>
+          <CollapsibleDepthProvider depth={tone.depth + 1}>
+            {expandedBody}
+          </CollapsibleDepthProvider>
         ) : (
           expandedBody
         )}

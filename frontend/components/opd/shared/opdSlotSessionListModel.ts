@@ -6,7 +6,7 @@
 import type { SlotSessionRow } from "@/types/opd-doctor";
 import type { OpdStatusFilterValue } from "../OpdQueueStatusFilter";
 import {
-  partitionSlotRowsForList,
+  orderSlotRowsByTokenDesc,
   sortSlotRowsByScheduledAsc,
 } from "../opdSlotSectioning";
 import { matchesOpdSearch } from "./opdSearchMatcher";
@@ -40,7 +40,7 @@ export function filterSlotSessionRows(
     // Single-status chips (except cancelled) hide cancelled rows.
     rows = rows.filter((r) => !isCancelledRow(r));
   }
-  // All keeps cancelled so the Cancelled section can render them.
+  // All keeps cancelled so they stay visible in the flat token list.
 
   if (!QUEUE_ONLY_STATUS.has(statusFilter) && statusFilter !== "all") {
     if (statusFilter !== "cancelled") {
@@ -56,27 +56,10 @@ export function filterSlotSessionRows(
   return rows;
 }
 
-/** Flat row order matching on-screen J/K traversal (chip section order). */
+/** Flat row order matching on-screen J/K traversal (token desc). */
 export function flatSlotRowsForHotkeys(
   filtered: SlotSessionRow[],
   _statusFilter: OpdStatusFilterValue
 ): SlotSessionRow[] {
-  const {
-    incomplete,
-    late,
-    upcoming,
-    done,
-    missed,
-    overflow,
-    cancelled,
-  } = partitionSlotRowsForList(filtered);
-  return [
-    ...incomplete,
-    ...late,
-    ...upcoming,
-    ...done,
-    ...missed,
-    ...overflow,
-    ...cancelled,
-  ];
+  return orderSlotRowsByTokenDesc(filtered);
 }

@@ -301,10 +301,24 @@ export interface AllergiesListData {
   allergies: PatientAllergy[];
   /** Section-level allergy notes (migration 158). */
   sectionNotes?: string | null;
+  /**
+   * Doctor asserted the patient has no known allergies (migration 222).
+   * False means never asserted — not a negative finding.
+   */
+  noKnownAllergies?: boolean;
+  noKnownAllergiesAt?: string | null;
 }
 
 export interface UpdateAllergySectionNotesPayload {
   notes?: string | null;
+  noKnownAllergies?: boolean;
+}
+
+/** PATCH response for the allergies section (notes + nil-known assertion). */
+export interface AllergySectionNotesData {
+  notes: string | null;
+  noKnownAllergies?: boolean;
+  noKnownAllergiesAt?: string | null;
 }
 
 export interface ConditionData {

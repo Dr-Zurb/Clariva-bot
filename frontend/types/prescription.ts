@@ -6,6 +6,15 @@
 
 export type PrescriptionType = "structured" | "photo" | "both";
 
+/** RXL-Q8 presets persisted on a revision (rxl-22). Relocked 2026-09-11. */
+export const REVISION_REASONS = [
+  "treatment_change",
+  "item_added",
+  "other",
+] as const;
+
+export type RevisionReason = (typeof REVISION_REASONS)[number];
+
 /** Structured follow-up unit (cockpit-v2 / migration 103). */
 export type FollowUpUnit = "days" | "weeks" | "months" | "as_needed";
 
@@ -134,7 +143,12 @@ export interface InvestigationOrder {
 export type VitalsBpLimb = "left_arm" | "right_arm" | "left_leg" | "right_leg";
 
 /** Who performed the BP measurement (teleconsult provenance). */
-export type BpMeasuredBy = "patient" | "caregiver" | "nurse" | "physician" | "other";
+export type BpMeasuredBy =
+  | "patient"
+  | "caregiver"
+  | "nurse"
+  | "physician"
+  | "other";
 
 /** How BP was measured (device / technique). */
 export type BpMethod =
@@ -178,14 +192,20 @@ export interface BpReading {
 
 /** Visit-level default glucose device (vitals_json.glucoseContext). */
 export interface GlucoseContext {
-  device?: import("@/lib/cockpit/categorical-vitals-schema").VitalsGlucoseDevice | null;
+  device?:
+    | import("@/lib/cockpit/categorical-vitals-schema").VitalsGlucoseDevice
+    | null;
 }
 
 /** One blood-glucose reading row (vitals-section · multi-reading glucose). */
 export interface GlucoseReading {
   valueMgDl: number | null;
-  timing?: import("@/lib/cockpit/categorical-vitals-schema").VitalsGlucoseTiming | null;
-  device?: import("@/lib/cockpit/categorical-vitals-schema").VitalsGlucoseDevice | null;
+  timing?:
+    | import("@/lib/cockpit/categorical-vitals-schema").VitalsGlucoseTiming
+    | null;
+  device?:
+    | import("@/lib/cockpit/categorical-vitals-schema").VitalsGlucoseDevice
+    | null;
   sequenceLabel?: string | null;
   note?: string | null;
 }
@@ -228,11 +248,15 @@ export interface VitalsJson {
   vitalsPupilReactivityRight?:
     | import("@/lib/cockpit/categorical-vitals-schema").VitalsPupilReactivity
     | null;
-  vitalsAvpu?: import("@/lib/cockpit/categorical-vitals-schema").VitalsAvpu | null;
+  vitalsAvpu?:
+    | import("@/lib/cockpit/categorical-vitals-schema").VitalsAvpu
+    | null;
   vitalsPulseRhythm?:
     | import("@/lib/cockpit/categorical-vitals-schema").VitalsPulseRhythm
     | null;
-  vitalsTempSite?: import("@/lib/cockpit/categorical-vitals-schema").VitalsTempSite | null;
+  vitalsTempSite?:
+    | import("@/lib/cockpit/categorical-vitals-schema").VitalsTempSite
+    | null;
   vitalsTempDevice?:
     | import("@/lib/cockpit/categorical-vitals-schema").VitalsTempDevice
     | null;
@@ -273,6 +297,11 @@ export interface VitalsJson {
    * or custom vital id. BP/glucose reading notes stay on reading rows.
    */
   vitalNotes?: Record<string, string> | null;
+  /**
+   * Visit-level vitals note (desk check-in + cockpit). Same text the
+   * printed Rx appends after the vitals line.
+   */
+  sectionNote?: string | null;
 }
 
 /**
@@ -420,6 +449,8 @@ export interface TestResultRow {
   refHigh?: number | null;
   /** Non-numeric reference range, e.g. "Negative"/"<200" (migration 159). */
   refText?: string | null;
+  /** Assay / method note (HPLC, enzymatic, …). Optional; not derived into TEXT. */
+  method?: string | null;
 }
 
 /** Report kind for a grouped lab/imaging panel (objective-reports / migration 159). */
@@ -497,6 +528,22 @@ export interface Prescription {
   patient_education: string | null;
   clinical_notes: string | null;
   sent_to_patient_at: string | null;
+  /**
+   * rx-lifecycle / migration 226 — lock boundary. Set once by the first of
+   * finish / send / print. Distinct from `sent_to_patient_at`. Null on drafts
+   * and historical rows. Optional on this type until readers land (rxl-06).
+   */
+  attested_at?: string | null;
+  /**
+   * rx-lifecycle / migration 231 — revision identity (rxl-21).
+   * Optional on this type until writers land (rxl-22).
+   */
+  version?: number | null;
+  supersedes_id?: string | null;
+  superseded_by_id?: string | null;
+  revision_reason?: string | null;
+  issued_at?: string | null;
+  printed_at?: string | null;
   created_at: string;
   updated_at: string;
   vitals_bp_systolic?: number | null;
@@ -533,11 +580,17 @@ export interface Prescription {
   lab_reports_json?: LabReport[];
   complaints?: Complaint[];
   family_history?: string | null;
-  family_history_structured?: import("@/lib/cockpit/family-history").FamilyHistoryStructured | null;
+  family_history_structured?:
+    | import("@/lib/cockpit/family-history").FamilyHistoryStructured
+    | null;
   social_history?: string | null;
-  social_history_structured?: import("@/lib/cockpit/social-history").SocialHistoryStructured | null;
+  social_history_structured?:
+    | import("@/lib/cockpit/social-history").SocialHistoryStructured
+    | null;
   past_surgical_history?: string | null;
-  past_surgical_history_structured?: import("@/lib/cockpit/past-surgical-history").PastSurgicalHistoryStructured | null;
+  past_surgical_history_structured?:
+    | import("@/lib/cockpit/past-surgical-history").PastSurgicalHistoryStructured
+    | null;
   custom_subsections?: CustomSubsection[];
   /** assessment-plan-custom-sections / migration 177 — custom Assessment sections (depth-2). */
   assessment_custom_sections?: CustomSubsection[];
@@ -698,11 +751,17 @@ export interface MedicinePayload {
 export interface SubjectivePayload {
   complaints?: Complaint[];
   familyHistory?: string | null;
-  familyHistoryStructured?: import("@/lib/cockpit/family-history").FamilyHistoryStructured | null;
+  familyHistoryStructured?:
+    | import("@/lib/cockpit/family-history").FamilyHistoryStructured
+    | null;
   socialHistory?: string | null;
-  socialHistoryStructured?: import("@/lib/cockpit/social-history").SocialHistoryStructured | null;
+  socialHistoryStructured?:
+    | import("@/lib/cockpit/social-history").SocialHistoryStructured
+    | null;
   pastSurgicalHistory?: string | null;
-  pastSurgicalHistoryStructured?: import("@/lib/cockpit/past-surgical-history").PastSurgicalHistoryStructured | null;
+  pastSurgicalHistoryStructured?:
+    | import("@/lib/cockpit/past-surgical-history").PastSurgicalHistoryStructured
+    | null;
   customSubsections?: CustomSubsection[];
   /** Derived plain-text mirror for PDF/SMS (computed on save; not persisted). */
   customSubsectionsText?: string | null;
@@ -761,10 +820,13 @@ export interface StructuredSoapPayload {
   testResults?: string | null;
   /** objective-tab / migration 154 — structured test results. `testResults` is derived from this on save (OBJ-D2). */
   testResultsJson?: TestResultRow[];
+  /** objective-reports / migration 159 — lab/imaging report headers. */
+  labReportsJson?: LabReport[];
 }
 
 /** Payload for creating a prescription (camelCase) */
-export interface CreatePrescriptionPayload extends StructuredSoapPayload, SubjectivePayload {
+export interface CreatePrescriptionPayload
+  extends StructuredSoapPayload, SubjectivePayload {
   appointmentId: string;
   patientId?: string | null;
   type: PrescriptionType;
@@ -779,7 +841,8 @@ export interface CreatePrescriptionPayload extends StructuredSoapPayload, Subjec
 }
 
 /** Payload for updating a prescription (partial) */
-export interface UpdatePrescriptionPayload extends StructuredSoapPayload, SubjectivePayload {
+export interface UpdatePrescriptionPayload
+  extends StructuredSoapPayload, SubjectivePayload {
   cc?: string | null;
   hopi?: string | null;
   provisionalDiagnosis?: string | null;

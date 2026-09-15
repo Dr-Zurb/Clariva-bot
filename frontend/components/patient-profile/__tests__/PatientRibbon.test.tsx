@@ -1,5 +1,6 @@
 import React from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import "@testing-library/jest-dom";
 import type { Appointment } from "@/types/appointment";
@@ -17,10 +18,6 @@ vi.mock("@/components/ui/tooltip", () => ({
   TooltipContent: ({ children }: { children: React.ReactNode }) => (
     <span data-testid="tooltip-content">{children}</span>
   ),
-}));
-
-vi.mock("@/components/patient-profile/panes/SnapshotPane", () => ({
-  default: () => <div data-testid="mock-snapshot-pane">SnapshotPane</div>,
 }));
 
 vi.mock("@/components/patient-profile/panes/HistoryPane", () => ({
@@ -68,6 +65,16 @@ vi.mock("@/lib/patient-profile/telemetry", () => ({
 
 const useOptionalRxSafetyMock = vi.fn(() => null);
 
+const { getPrescriptionsForPatientMock } = vi.hoisted(() => ({
+  getPrescriptionsForPatientMock: vi.fn().mockResolvedValue({
+    data: { prescriptions: [] },
+  }),
+}));
+
+vi.mock("@/lib/api", () => ({
+  getPrescriptionsForPatient: getPrescriptionsForPatientMock,
+}));
+
 vi.mock("@/components/cockpit/rx/RxSafetyContext", () => ({
   useOptionalRxSafety: () => useOptionalRxSafetyMock(),
 }));
@@ -113,23 +120,27 @@ function renderRibbon(options?: {
   }
 
   return render(
-    <RxFormProvider
-      appointmentId="appt-1"
-      patientId="pat-1"
-      token="test-token"
-      entryMode="structured"
-      initialFields={fields}
-      autosaveEnabled={false}
-      prescriptionIdRef={prescriptionIdRef}
-      onPrescriptionCreated={() => {}}
+    <QueryClientProvider
+      client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
     >
-      <SideSheetHost>
-        <PatientRibbon
-          appointment={options?.appointment ?? makeAppointment()}
-          token="test-token"
-        />
-      </SideSheetHost>
-    </RxFormProvider>,
+      <RxFormProvider
+        appointmentId="appt-1"
+        patientId="pat-1"
+        token="test-token"
+        entryMode="structured"
+        initialFields={fields}
+        autosaveEnabled={false}
+        prescriptionIdRef={prescriptionIdRef}
+        onPrescriptionCreated={() => {}}
+      >
+        <SideSheetHost>
+          <PatientRibbon
+            appointment={options?.appointment ?? makeAppointment()}
+            token="test-token"
+          />
+        </SideSheetHost>
+      </RxFormProvider>
+    </QueryClientProvider>,
   );
 }
 
@@ -228,20 +239,6 @@ describe("PatientRibbon expand surfaces (ribbon-expand Phase 1)", () => {
     mockRibbonData.activeMedsCount = 0;
   });
 
-  it("opens SnapshotPane in a side sheet from the chart trigger", async () => {
-    renderRibbon();
-
-    fireEvent.click(screen.getByTestId("ribbon-open-chart"));
-
-    await waitFor(() => {
-      expect(screen.getByTestId("side-sheet-host")).toBeInTheDocument();
-      expect(screen.getByTestId("mock-snapshot-pane")).toBeInTheDocument();
-      expect(
-        screen.getByRole("heading", { name: "Patient chart" }),
-      ).toBeInTheDocument();
-    });
-  });
-
   it("opens HistoryPane in a side sheet from the history trigger", async () => {
     renderRibbon();
 
@@ -251,7 +248,7 @@ describe("PatientRibbon expand surfaces (ribbon-expand Phase 1)", () => {
       expect(screen.getByTestId("side-sheet-host")).toBeInTheDocument();
       expect(screen.getByTestId("mock-history-pane")).toBeInTheDocument();
       expect(
-        screen.getByRole("heading", { name: "Visit history" }),
+        screen.getByRole("heading", { name: "Past visits" }),
       ).toBeInTheDocument();
     });
   });

@@ -10,7 +10,7 @@
  *   [RxSectionNav — sticky]
  *     Symptoms · Diagnosis · Investigations · Medicines · Notes
  *   [Form body — scrolls]
- *     <PrescriptionForm> (+ pointer-events:none overlay when ended)
+ *     <PrescriptionForm> (+ read-only notice when ended)
  *
  * Action buttons ("Send Rx", "Send Rx & finish", "Finish visit") live
  * inside PrescriptionForm's own footer — no duplicate sticky bar here.
@@ -19,8 +19,8 @@
  *   Previous (N) / collapse chevron" header strip was removed so the
  *   Rx column's chrome height matches Chart and Body. The collapse
  *   chevron is now solely in the shared <CockpitColumnHeader> via
- *   `RxColumnContent`'s actions slot, and `<PreviousRxPopover>` was
- *   lifted into that same actions slot (rendered by RxColumnContent).
+ *   `RxColumnContent`'s actions slot. The Previous Rx header chip was
+ *   retired in lvc-12; Plan uses `<PreviousRxPlanTrigger>`.
  *   The disabled "Templates ▾" stub was dropped — re-introduce when
  *   PrescriptionForm exposes an external template-apply surface.
  *
@@ -43,15 +43,16 @@ import {
 } from "@/components/cockpit/rx/previous/PreviousRxSideSheet";
 import { FavoritesSideSheetAnchor } from "@/components/cockpit/rx/favorites/FavoritesSideSheet";
 import { useOptionalRxForm } from "@/components/cockpit/rx/RxFormContext";
+import { useRxLock } from "@/components/cockpit/rx/useRxLock";
+import { RxNoteLifecycleStrip } from "@/components/cockpit/rx/RxReviseStrip";
+import { usePrescriptionFormShell } from "@/components/cockpit/rx/PrescriptionFormShellContext";
+import { isSupersededNote } from "@/components/cockpit/rx/rxLoadDecision";
 import { useSideSheet } from "@/components/patient-profile/SideSheetHost";
 import {
   trackCockpitPolishNavClarityLanded,
   trackCockpitV2RRxPolishSideSheetApplied,
 } from "@/lib/patient-profile/telemetry";
-import {
-  canEditPrescriptionDraft,
-  type CockpitState,
-} from "@/lib/patient-profile/state";
+import { type CockpitState } from "@/lib/patient-profile/state";
 
 // ---------------------------------------------------------------------------
 // Props
@@ -61,7 +62,7 @@ export interface RxWorkspaceProps {
   appointmentId: string;
   patientId: string | null;
   token: string;
-  /** Current cockpit state — drives read-only overlay. */
+  /** Current cockpit state — drives the read-only notice. */
   state: CockpitState;
   /**
    * Forwarded to PrescriptionForm.onSent — fires after a successful
@@ -147,7 +148,11 @@ export default function RxWorkspace({
   // a collapse without re-shaping this component. Prefix with `_` to
   // silence unused-variable lints.
   void _onCollapse;
-  const canEdit = canEditPrescriptionDraft(state);
+  const { contentLocked } = useRxLock();
+  const shell = usePrescriptionFormShell();
+  const superseded = shell?.prescription
+    ? isSupersededNote(shell.prescription)
+    : false;
 
   // cs-11: ref for the scroll container inside the Rx column. The
   // RxSectionNav observes sections relative to this scroll root (not the
@@ -241,12 +246,16 @@ export default function RxWorkspace({
             cockpitMode ? "relative" : "relative flex-1 overflow-y-auto"
           }
         >
-          {/* Read-only overlay when state === "ended" */}
-          {!canEdit && state === "ended" && (
+          <RxNoteLifecycleStrip token={token} />
+          {contentLocked && state === "ended" && !superseded && (
             <div
-              aria-label="Prescription is read-only — the consultation has ended"
-              className="pointer-events-none absolute inset-0 z-10"
-            />
+              role="status"
+              aria-live="polite"
+              data-testid="rx-readonly-notice"
+              className="border-b border-border bg-muted/50 px-3 py-2 text-sm text-muted-foreground"
+            >
+              This prescription is read-only. The consultation has ended.
+            </div>
           )}
 
           {/* cs-11: sticky section-nav chip strip. Positioned as the first

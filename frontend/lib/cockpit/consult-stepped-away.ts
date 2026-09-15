@@ -1,8 +1,8 @@
 /**
  * Client-local "doctor stepped away" marker for live consults.
  *
- * Set when the doctor chooses Leave — resume later from CockpitLeaveGuard.
- * Cleared when they re-enter that cockpit or finish the visit.
+ * Set when the doctor leaves a live / wrap-up cockpit (any Back, queue
+ * tab, sidebar, or tab close). Cleared when they re-enter or finish.
  *
  * OPD row labels use this to show "Incomplete consult" instead of "In consult".
  * Browser-local only (localStorage) — not a server status. Cross-device needs a

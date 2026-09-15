@@ -8,6 +8,7 @@ import {
 import { ExamSystemCard } from "@/components/cockpit/rx/inputs/ExamSystemCard";
 import { ClearAllConfirmDialog } from "@/components/cockpit/rx/ClearAllConfirmDialog";
 import { useRxForm } from "@/components/cockpit/rx/RxFormContext";
+import { LastVisitExamStrip } from "@/components/cockpit/rx/last-visit/LastVisitParchiStrips";
 import { RX_FIELD_LABEL_CLASS } from "@/components/cockpit/rx/sections/field-styles";
 import { EXAM_CORE_SYSTEM_ORDER, listExamSystems } from "@/lib/cockpit/exam-schema";
 import type { ExamSystemFinding } from "@/types/prescription";
@@ -98,6 +99,7 @@ export function ExamSystemList({ disabled = false }: ExamSystemListProps) {
   return (
     <TooltipProvider delayDuration={300}>
       <div className="space-y-2" data-testid="exam-system-list">
+      <LastVisitExamStrip disabled={disabled} />
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex min-w-0 flex-col">
           <span className={RX_FIELD_LABEL_CLASS}>Structured examination</span>

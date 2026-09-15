@@ -2,9 +2,8 @@
  * AI complaint-parse API client (subjective-tab · subj-14)
  * POST /api/v1/complaints/parse
  *
- * Gated, suggestion-only. The deterministic parser runs first; this is called
- * only when the gate fires or the doctor taps "✨ refine". Sends the resolved
- * schema field spec so the server constrains + validates the model output.
+ * Suggestion-only. Called when the doctor taps Refine with AI on a card.
+ * Sends the resolved schema field spec so the server constrains + validates.
  */
 
 import { requireApiBaseUrl } from "@/lib/api-base";

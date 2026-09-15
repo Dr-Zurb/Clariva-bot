@@ -9,7 +9,15 @@
 import type { AiParsedMedicine } from "@/lib/api/medicine-parse";
 import type { ParsedMedicineLine } from "@/lib/cockpit/medicine-line-parse";
 import { parseDosePattern } from "@/lib/cockpit/medicine-line-parse";
-import { formatDoseLabel, getFrequencyLegacyLabel, getFoodTimingLabel, FOOD_TIMING_OPTIONS, DOSE_UNIT_OPTIONS, defaultDoseUnitForForm, isTopicalForm } from "@/lib/medicineCodes";
+import {
+  formatDoseLabel,
+  getFrequencyLegacyLabel,
+  getFoodTimingLabel,
+  FOOD_TIMING_OPTIONS,
+  DOSE_UNIT_OPTIONS,
+  defaultDoseUnitForForm,
+  isTopicalForm,
+} from "@/lib/medicineCodes";
 import type { DrugMasterRow } from "@/types/drug-master";
 import type {
   CreatePatientMedicationPayload,
@@ -22,7 +30,12 @@ import type {
   PatientMedicationStatus,
   PatientMedicationStopReason,
 } from "@/types/patient-chart";
-import type { DoseUnit, FoodTiming, FrequencyCode, StrengthUnit } from "@/types/prescription";
+import type {
+  DoseUnit,
+  FoodTiming,
+  FrequencyCode,
+  StrengthUnit,
+} from "@/types/prescription";
 
 /** Meal-time frequency chips (SOS maps to PRN). */
 export const CHART_MED_MEAL_FREQUENCY_OPTIONS: ReadonlyArray<{
@@ -75,10 +88,18 @@ export const STRENGTH_UNIT_OPTIONS: ReadonlyArray<{
 ];
 
 /** Top strength units shown as chips; rest in the More dropdown. */
-export const CHART_MED_STRENGTH_UNIT_PRIMARY = ["mg", "mcg", "g"] as const satisfies readonly StrengthUnit[];
+export const CHART_MED_STRENGTH_UNIT_PRIMARY = [
+  "mg",
+  "mcg",
+  "g",
+] as const satisfies readonly StrengthUnit[];
 
 /** Top dose units shown as chips; rest in the More combobox. */
-export const CHART_MED_DOSE_UNIT_PRIMARY = ["tab", "cap", "spoon"] as const satisfies readonly DoseUnit[];
+export const CHART_MED_DOSE_UNIT_PRIMARY = [
+  "tab",
+  "cap",
+  "spoon",
+] as const satisfies readonly DoseUnit[];
 
 export type ChartMedFrequencyUiMode = "meals" | "hours";
 
@@ -88,10 +109,14 @@ export const CHART_MED_FREQUENCY_MEAL_SLOTS: ReadonlyArray<{
   label: string;
   tooltip: string;
 }> = [
-  { code: "OD", label: "OD", tooltip: "Once daily" },
-  { code: "BID", label: "BID", tooltip: "Twice daily" },
-  { code: "TID", label: "TID", tooltip: "Three times daily" },
-  { code: "QID", label: "QID", tooltip: "Four times daily" },
+  { code: "OD", label: "OD", tooltip: "Once daily — 1-0-0, 0-1-0, or 0-0-1" },
+  {
+    code: "BID",
+    label: "BID",
+    tooltip: "Twice daily — 1-0-1, 1-1-0, or 0-1-1",
+  },
+  { code: "TID", label: "TID", tooltip: "Three times daily — 1-1-1" },
+  { code: "QID", label: "QID", tooltip: "Four times daily — 1-1-1-1" },
 ];
 
 /** Hour-linked slots — same positions as meal slots when toggle is on Hours. */
@@ -106,14 +131,18 @@ export const CHART_MED_FREQUENCY_HOUR_SLOTS: ReadonlyArray<{
   { code: "Q6H", label: "Q6H", tooltip: "Every 6 hours" },
 ];
 
-export const MEAL_TO_HOUR_SLOT_MAP: Partial<Record<FrequencyCode, FrequencyCode>> = {
+export const MEAL_TO_HOUR_SLOT_MAP: Partial<
+  Record<FrequencyCode, FrequencyCode>
+> = {
   OD: "Q24H",
   BID: "Q12H",
   TID: "Q8H",
   QID: "Q6H",
 };
 
-export const HOUR_TO_MEAL_SLOT_MAP: Partial<Record<FrequencyCode, FrequencyCode>> = {
+export const HOUR_TO_MEAL_SLOT_MAP: Partial<
+  Record<FrequencyCode, FrequencyCode>
+> = {
   Q24H: "OD",
   Q12H: "BID",
   Q8H: "TID",
@@ -160,10 +189,11 @@ export const CHART_MED_FREQUENCY_CHIP_OPTIONS: ReadonlyArray<{
 ];
 
 /** @deprecated Use CHART_MED_FREQUENCY_MORE_SUGGESTIONS */
-export const CHART_MED_FREQUENCY_MORE_OPTIONS = CHART_MED_FREQUENCY_MORE_SUGGESTIONS;
+export const CHART_MED_FREQUENCY_MORE_OPTIONS =
+  CHART_MED_FREQUENCY_MORE_SUGGESTIONS;
 
 export function frequencyUiModeFromCode(
-  code: FrequencyCode | null | undefined,
+  code: FrequencyCode | null | undefined
 ): ChartMedFrequencyUiMode {
   if (!code || code === "CUSTOM") return "meals";
   if (code === "QHS" || code === "PRN" || code === "STAT") return "meals";
@@ -171,7 +201,9 @@ export function frequencyUiModeFromCode(
   return "meals";
 }
 
-export function isFrequencyMoreOrCustom(code: FrequencyCode | null | undefined): boolean {
+export function isFrequencyMoreOrCustom(
+  code: FrequencyCode | null | undefined
+): boolean {
   if (!code) return false;
   if (code === "CUSTOM") return true;
   return CHART_MED_FREQUENCY_MORE_SUGGESTIONS.some((o) => o.code === code);
@@ -211,7 +243,9 @@ export function resolveFrequencyMoreInput(raw: string): {
   return { code: "CUSTOM", frequency: text };
 }
 
-export function resolveStrengthUnitInput(raw: string): StrengthUnit | "custom" | null {
+export function resolveStrengthUnitInput(
+  raw: string
+): StrengthUnit | "custom" | null {
   const text = raw.trim();
   if (!text) return null;
   const lower = text.toLowerCase();
@@ -227,9 +261,13 @@ export function resolveStrengthUnitInput(raw: string): StrengthUnit | "custom" |
     pct: "pct",
   };
   if (aliases[lower]) return aliases[lower];
-  if (STRENGTH_UNIT_OPTIONS.some((o) => o.unit === lower || o.label.toLowerCase() === lower)) {
+  if (
+    STRENGTH_UNIT_OPTIONS.some(
+      (o) => o.unit === lower || o.label.toLowerCase() === lower
+    )
+  ) {
     return STRENGTH_UNIT_OPTIONS.find(
-      (o) => o.unit === lower || o.label.toLowerCase() === lower,
+      (o) => o.unit === lower || o.label.toLowerCase() === lower
     )!.unit;
   }
   return "custom";
@@ -242,7 +280,7 @@ export function resolveStrengthUnitInput(raw: string): StrengthUnit | "custom" |
 export function customStrengthUnitFromLegacy(
   strengthText: string | null | undefined,
   strengthValue: number | null | undefined,
-  strengthUnit: StrengthUnit | null | undefined,
+  strengthUnit: StrengthUnit | null | undefined
 ): string | null {
   if (strengthUnit) return null;
   if (strengthValue == null || !strengthText?.trim()) return null;
@@ -277,7 +315,10 @@ export function resolveDoseUnitInput(raw: string): DoseUnit | "custom" | null {
   };
   if (aliases[lower]) return aliases[lower];
   const hit = DOSE_UNIT_OPTIONS.find(
-    (o) => o.unit === lower || o.label.toLowerCase() === lower || o.plural.toLowerCase() === lower,
+    (o) =>
+      o.unit === lower ||
+      o.label.toLowerCase() === lower ||
+      o.plural.toLowerCase() === lower
   );
   if (hit) return hit.unit;
   return "custom";
@@ -298,13 +339,21 @@ export function getChartFrequencyTooltip(code: FrequencyCode): string {
 }
 
 /** True when dose uses a free-text unit in legacy `dose` (no enum unit). */
-export function isCustomDoseUnit(med: Pick<PatientMedication, "dose_qty" | "dose_unit" | "dose">): boolean {
+export function isCustomDoseUnit(
+  med: Pick<PatientMedication, "dose_qty" | "dose_unit" | "dose">
+): boolean {
   return med.dose_qty != null && med.dose_unit == null && !!med.dose?.trim();
 }
 
 /** True when strength is free-text only (no structured value + unit). */
-export function isCustomStrength(med: Pick<PatientMedication, "strength_value" | "strength_unit" | "strength">): boolean {
-  return med.strength_value == null && med.strength_unit == null && !!med.strength?.trim();
+export function isCustomStrength(
+  med: Pick<PatientMedication, "strength_value" | "strength_unit" | "strength">
+): boolean {
+  return (
+    med.strength_value == null &&
+    med.strength_unit == null &&
+    !!med.strength?.trim()
+  );
 }
 
 /** Dose schedule chips shown after OD/BID/TID/QID/QHS is selected. */
@@ -318,6 +367,16 @@ export const DOSE_SCHEDULE_BY_FREQUENCY: Partial<
   QHS: ["0-0-1"],
 };
 
+const DOSE_SCHEDULE_RE = /^[0-9]+(-[0-9]+)+$/;
+
+/** True for stored patterns like `1-0-1` (legacy `frequency` TEXT or chart column). */
+export function parseDoseSchedulePattern(
+  value: string | null | undefined
+): string | null {
+  const trimmed = value?.trim() ?? "";
+  return DOSE_SCHEDULE_RE.test(trimmed) ? trimmed : null;
+}
+
 const CHART_FREQUENCY_LABELS: Partial<Record<FrequencyCode, string>> = {
   Q4H: "Every 4 hours",
   Q6H: "Every 6 hours",
@@ -328,54 +387,84 @@ const CHART_FREQUENCY_LABELS: Partial<Record<FrequencyCode, string>> = {
 };
 
 export function isIntervalFrequency(
-  code: FrequencyCode | null | undefined,
+  code: FrequencyCode | null | undefined
 ): boolean {
   if (!code) return false;
-  return (CHART_MED_INTERVAL_FREQUENCY_CODES as readonly string[]).includes(code);
+  return (CHART_MED_INTERVAL_FREQUENCY_CODES as readonly string[]).includes(
+    code
+  );
 }
 
 export function doseScheduleOptionsForFrequency(
-  code: FrequencyCode | null | undefined,
+  code: FrequencyCode | null | undefined
 ): readonly string[] {
   if (!code || isIntervalFrequency(code)) return [];
   return DOSE_SCHEDULE_BY_FREQUENCY[code] ?? [];
 }
 
 export function frequencySupportsDoseSchedule(
-  code: FrequencyCode | null | undefined,
+  code: FrequencyCode | null | undefined
 ): boolean {
   return doseScheduleOptionsForFrequency(code).length > 0;
 }
 
 /** When a frequency has exactly one schedule pattern, return it (TID/QID/QHS). */
 export function singleDoseScheduleForFrequency(
-  code: FrequencyCode | null | undefined,
+  code: FrequencyCode | null | undefined
 ): string | null {
   const options = doseScheduleOptionsForFrequency(code);
   return options.length === 1 ? options[0]! : null;
 }
 
+/** Restore a 1-0-1 pattern from stored frequency text, or the singleton for TID/QID/QHS. */
+export function hydrateDoseScheduleFromStored(
+  frequency: string | null | undefined,
+  frequencyCode: FrequencyCode | null | undefined
+): string | null {
+  return (
+    parseDoseSchedulePattern(frequency) ??
+    singleDoseScheduleForFrequency(frequencyCode)
+  );
+}
+
 /** Pick schedule when frequency changes — keep valid, auto-fill singleton, else clear. */
 export function doseScheduleForFrequencyChange(
   code: FrequencyCode | null | undefined,
-  currentSchedule: string | null | undefined,
+  currentSchedule: string | null | undefined
 ): string | null {
   if (!code) return null;
   const options = doseScheduleOptionsForFrequency(code);
   if (options.length === 0) return null;
-  if (currentSchedule && options.includes(currentSchedule)) return currentSchedule;
+  if (currentSchedule && options.includes(currentSchedule))
+    return currentSchedule;
   if (options.length === 1) return options[0]!;
   return null;
 }
 
-export function getChartFrequencyLabel(
+/** Frequency TEXT / sig: prefer the 1-0-1 pattern when the doctor picked one. */
+export function frequencyDisplayWithSchedule(
   code: FrequencyCode | null | undefined,
+  frequencyText: string | null | undefined,
+  doseSchedule?: string | null
+): string {
+  const schedule =
+    parseDoseSchedulePattern(doseSchedule) ??
+    parseDoseSchedulePattern(frequencyText);
+  if (schedule) return schedule;
+  if (code && code !== "CUSTOM") return getChartFrequencyLabel(code);
+  return frequencyText?.trim() ?? "";
+}
+
+export function getChartFrequencyLabel(
+  code: FrequencyCode | null | undefined
 ): string {
   if (!code) return "";
   if (code === "PRN") return "SOS";
   const meal = CHART_MED_MEAL_FREQUENCY_OPTIONS.find((o) => o.code === code);
   if (meal) return meal.label;
-  const interval = CHART_MED_INTERVAL_FREQUENCY_OPTIONS.find((o) => o.code === code);
+  const interval = CHART_MED_INTERVAL_FREQUENCY_OPTIONS.find(
+    (o) => o.code === code
+  );
   if (interval) return interval.label;
   return CHART_FREQUENCY_LABELS[code] ?? getFrequencyLegacyLabel(code) ?? code;
 }
@@ -389,7 +478,7 @@ export function doseQtyFromSchedule(pattern: string): number | null {
 /** Display label from structured strength fields. */
 export function formatStrengthLabel(
   value: number | null | undefined,
-  unit: StrengthUnit | null | undefined,
+  unit: StrengthUnit | null | undefined
 ): string {
   if (value == null || value <= 0 || !unit) return "";
   if (unit === "pct") return `${value}%`;
@@ -412,7 +501,11 @@ export function parseStrengthText(text: string | null | undefined): {
   if (pct) {
     const value = Number(pct[1]);
     if (!Number.isNaN(value) && value > 0) {
-      return { strengthValue: value, strengthUnit: "pct", legacy: formatStrengthLabel(value, "pct") };
+      return {
+        strengthValue: value,
+        strengthUnit: "pct",
+        legacy: formatStrengthLabel(value, "pct"),
+      };
     }
   }
 
@@ -420,7 +513,11 @@ export function parseStrengthText(text: string | null | undefined): {
   if (iu) {
     const value = Number(iu[1]);
     if (!Number.isNaN(value) && value > 0) {
-      return { strengthValue: value, strengthUnit: "iu", legacy: formatStrengthLabel(value, "iu") };
+      return {
+        strengthValue: value,
+        strengthUnit: "iu",
+        legacy: formatStrengthLabel(value, "iu"),
+      };
     }
   }
 
@@ -429,9 +526,11 @@ export function parseStrengthText(text: string | null | undefined): {
     const value = Number(compound[1]);
     const unitToken = compound[2].toLowerCase();
     const unit: StrengthUnit =
-      unitToken === "g" || unitToken === "gm" ? "g"
-      : unitToken === "mcg" || unitToken === "µg" || unitToken === "ug" ? "mcg"
-      : "mg";
+      unitToken === "g" || unitToken === "gm"
+        ? "g"
+        : unitToken === "mcg" || unitToken === "µg" || unitToken === "ug"
+          ? "mcg"
+          : "mg";
     if (!Number.isNaN(value) && value > 0) {
       return {
         strengthValue: value,
@@ -446,9 +545,11 @@ export function parseStrengthText(text: string | null | undefined): {
     const value = Number(glued[1]);
     const unitToken = glued[2].toLowerCase();
     const unit: StrengthUnit =
-      unitToken === "g" ? "g"
-      : unitToken === "mcg" || unitToken === "µg" || unitToken === "ug" ? "mcg"
-      : "mg";
+      unitToken === "g"
+        ? "g"
+        : unitToken === "mcg" || unitToken === "µg" || unitToken === "ug"
+          ? "mcg"
+          : "mg";
     if (!Number.isNaN(value) && value > 0) {
       return {
         strengthValue: value,
@@ -465,7 +566,11 @@ export function parseStrengthText(text: string | null | undefined): {
   if (bare) {
     const value = Number(raw);
     if (!Number.isNaN(value) && value > 0) {
-      return { strengthValue: value, strengthUnit: null, legacy: String(value) };
+      return {
+        strengthValue: value,
+        strengthUnit: null,
+        legacy: String(value),
+      };
     }
   }
 
@@ -474,7 +579,7 @@ export function parseStrengthText(text: string | null | undefined): {
 
 export function syncStrengthLegacy(
   value: number | null | undefined,
-  unit: StrengthUnit | null | undefined,
+  unit: StrengthUnit | null | undefined
 ): string | null {
   const label = formatStrengthLabel(value, unit);
   return label || null;
@@ -491,7 +596,7 @@ const STRENGTH_COMPONENT_UNIT_ALIASES: Record<string, StrengthUnit> = {
   gm: "g",
   mcg: "mcg",
   ug: "mcg",
-  "µg": "mcg",
+  µg: "mcg",
   iu: "iu",
   u: "iu",
   "%": "pct",
@@ -522,7 +627,7 @@ export function normalizeComboSeparators(text: string): string {
  * `parseStrengthText`. A bare unit written once is shared across every value.
  */
 export function parseStrengthComponents(
-  text: string | null | undefined,
+  text: string | null | undefined
 ): MedicationStrengthComponent[] | null {
   const raw = normalizeComboSeparators(text?.trim() ?? "");
   if (!raw || !raw.includes("/")) return null;
@@ -551,12 +656,15 @@ export function parseStrengthComponents(
 
   if (components.length < 2) return null;
   // Back-fill the shared unit onto entries that omitted it ("600/300 mg").
-  return components.map((c) => ({ value: c.value, unit: c.unit ?? sharedUnit }));
+  return components.map((c) => ({
+    value: c.value,
+    unit: c.unit ?? sharedUnit,
+  }));
 }
 
 /** Render combo components into the canonical display string ("600/300 mg"). */
 export function formatStrengthComponents(
-  components: MedicationStrengthComponent[] | null | undefined,
+  components: MedicationStrengthComponent[] | null | undefined
 ): string {
   if (!components || components.length < 2) return "";
   const units = components.map((c) => c.unit ?? null);
@@ -576,9 +684,12 @@ export function formatStrengthComponents(
 
 /** True when the medication carries a fixed-dose-combination strength. */
 export function isComboStrength(
-  med: Pick<PatientMedication, "strength_components">,
+  med: Pick<PatientMedication, "strength_components">
 ): boolean {
-  return Array.isArray(med.strength_components) && med.strength_components.length >= 2;
+  return (
+    Array.isArray(med.strength_components) &&
+    med.strength_components.length >= 2
+  );
 }
 
 /**
@@ -613,10 +724,13 @@ export function resolveStrengthFields(text: string | null | undefined): {
 export const CHART_MED_FORM_PRIMARY = ["tablet", "capsule", "syrup"] as const;
 
 /** Pharmaceutical form chips — canonical values match parser + drug_master. */
-export const CHART_MED_FORM_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
+export const CHART_MED_FORM_OPTIONS: ReadonlyArray<{
+  value: string;
+  label: string;
+}> = [
   { value: "tablet", label: "Tab" },
   { value: "capsule", label: "Cap" },
-  { value: "syrup", label: "Syrup" },
+  { value: "syrup", label: "Syp" },
   { value: "ointment", label: "Oint" },
   { value: "cream", label: "Cream" },
   { value: "drops", label: "Drops" },
@@ -628,20 +742,24 @@ export const CHART_MED_FORM_OPTIONS: ReadonlyArray<{ value: string; label: strin
   { value: "patch", label: "Patch" },
 ];
 
-export function formatChartMedFormLabel(form: string | null | undefined): string {
+export function formatChartMedFormLabel(
+  form: string | null | undefined
+): string {
   if (!form?.trim()) return "";
   const hit = CHART_MED_FORM_OPTIONS.find(
-    (o) => o.value === form.trim().toLowerCase(),
+    (o) => o.value === form.trim().toLowerCase()
   );
   if (hit) return hit.label;
   return form.trim().charAt(0).toUpperCase() + form.trim().slice(1);
 }
 
 /** Combobox suggestions for the header form field. */
-export const CHART_MED_FORM_COMBOBOX_OPTIONS = CHART_MED_FORM_OPTIONS.map((o) => ({
-  value: o.value,
-  label: o.label,
-}));
+export const CHART_MED_FORM_COMBOBOX_OPTIONS = CHART_MED_FORM_OPTIONS.map(
+  (o) => ({
+    value: o.value,
+    label: o.label,
+  })
+);
 
 const FORM_INPUT_ALIASES: Record<string, string> = {
   tab: "tablet",
@@ -686,7 +804,7 @@ export function resolveFormInput(raw: string): string | "custom" | null {
   const lower = text.toLowerCase();
   if (FORM_INPUT_ALIASES[lower]) return FORM_INPUT_ALIASES[lower];
   const hit = CHART_MED_FORM_OPTIONS.find(
-    (o) => o.value === lower || o.label.toLowerCase() === lower,
+    (o) => o.value === lower || o.label.toLowerCase() === lower
   );
   if (hit) return hit.value;
   return "custom";
@@ -700,7 +818,10 @@ export function isKnownChartMedForm(form: string | null | undefined): boolean {
 
 /** Dose unit is driven by a known form and has not been manually overridden. */
 export function chartMedFormLocksDoseUnit(
-  med: Pick<PatientMedication, "form" | "dose_unit" | "dose_qty" | "dose" | "strength">,
+  med: Pick<
+    PatientMedication,
+    "form" | "dose_unit" | "dose_qty" | "dose" | "strength"
+  >
 ): boolean {
   if (isCustomDoseUnit(med)) {
     const doseText = med.dose?.trim() ?? "";
@@ -716,13 +837,15 @@ export function chartMedFormLocksDoseUnit(
 
 /** Label for the dose-unit suffix when form locks the unit (e.g. "tab"). */
 export function chartMedLockedDoseUnitLabel(
-  med: Pick<PatientMedication, "form" | "dose_unit">,
+  med: Pick<PatientMedication, "form" | "dose_unit">
 ): string {
   if (chartMedUsesApplyDose(med)) return "Apply";
   const canonical = resolveFormInput(med.form ?? "");
   const unit =
     med.dose_unit ??
-    (canonical && canonical !== "custom" ? defaultDoseUnitForForm(canonical) : null);
+    (canonical && canonical !== "custom"
+      ? defaultDoseUnitForForm(canonical)
+      : null);
   if (!unit) return "";
   const hit = DOSE_UNIT_OPTIONS.find((o) => o.unit === unit);
   return hit?.label ?? unit;
@@ -733,7 +856,10 @@ export function chartMedLockedDoseUnitLabel(
  * qty/unit in the UI unless the doctor overrides via Change (e.g. ml).
  */
 export function chartMedUsesApplyDose(
-  med: Pick<PatientMedication, "form" | "dose_unit" | "dose_qty" | "dose" | "strength">,
+  med: Pick<
+    PatientMedication,
+    "form" | "dose_unit" | "dose_qty" | "dose" | "strength"
+  >
 ): boolean {
   if (!isTopicalForm(med.form)) return false;
   if (med.dose_unit != null && med.dose_unit !== "application") return false;
@@ -764,7 +890,7 @@ export function chartMedPatchFromFormInput(raw: string): ChartMedicationPatch {
 /** Compact relative start summary — mirrors condition ago display. */
 export function formatStartedAgoSummary(
   value: number | null | undefined,
-  unit: PatientConditionAgoUnit | null | undefined,
+  unit: PatientConditionAgoUnit | null | undefined
 ): string {
   if (value == null || value <= 0 || !unit) return "";
   const singular = value === 1 ? unit.replace(/s$/, "") : unit;
@@ -778,8 +904,10 @@ export function normalizeMedicationDrugKey(name: string): string {
 
 /** True when `payload` matches an existing row by drug_master_id or drug name. */
 export function findDuplicateMedication(
-  rows: ReadonlyArray<Pick<PatientMedication, "drug_name" | "drug_master_id" | "id">>,
-  payload: Pick<CreatePatientMedicationPayload, "drugName" | "drugMasterId">,
+  rows: ReadonlyArray<
+    Pick<PatientMedication, "drug_name" | "drug_master_id" | "id">
+  >,
+  payload: Pick<CreatePatientMedicationPayload, "drugName" | "drugMasterId">
 ): Pick<PatientMedication, "id" | "drug_name"> | null {
   const nameKey = normalizeMedicationDrugKey(payload.drugName);
   for (const row of rows) {
@@ -795,8 +923,10 @@ export function findDuplicateMedication(
 
 /** True when `payload` matches an existing row by drug_master_id or drug name. */
 export function medicationListHasDuplicate(
-  rows: ReadonlyArray<Pick<PatientMedication, "drug_name" | "drug_master_id" | "id">>,
-  payload: Pick<CreatePatientMedicationPayload, "drugName" | "drugMasterId">,
+  rows: ReadonlyArray<
+    Pick<PatientMedication, "drug_name" | "drug_master_id" | "id">
+  >,
+  payload: Pick<CreatePatientMedicationPayload, "drugName" | "drugMasterId">
 ): boolean {
   return findDuplicateMedication(rows, payload) != null;
 }
@@ -812,7 +942,8 @@ export const CHART_MED_SOURCE_OPTIONS = [
   { value: "self_started" as const, label: "Self-started" },
 ] as const;
 
-export type ChartMedSourceUi = (typeof CHART_MED_SOURCE_OPTIONS)[number]["value"];
+export type ChartMedSourceUi =
+  (typeof CHART_MED_SOURCE_OPTIONS)[number]["value"];
 
 export const STOP_REASON_OPTIONS: ReadonlyArray<{
   value: PatientMedicationStopReason;
@@ -839,11 +970,13 @@ export const STOP_REASON_CHIP_OPTIONS = STOP_REASON_OPTIONS.map((o) => ({
 }));
 
 /** Match typed stop-reason text to a canonical enum value. */
-export function resolveStopReasonInput(raw: string): PatientMedicationStopReason | null {
+export function resolveStopReasonInput(
+  raw: string
+): PatientMedicationStopReason | null {
   const q = raw.trim().toLowerCase();
   if (!q) return null;
   const hit = STOP_REASON_OPTIONS.find(
-    (o) => o.value.toLowerCase() === q || o.label.toLowerCase() === q,
+    (o) => o.value.toLowerCase() === q || o.label.toLowerCase() === q
   );
   return hit?.value ?? null;
 }
@@ -865,11 +998,12 @@ export function resolveFoodTimingInput(raw: string): FoodTiming | null {
   const q = raw.trim().toLowerCase();
   if (!q) return null;
   const exact = FOOD_TIMING_OPTIONS.find(
-    (o) => o.code.toLowerCase() === q || o.label.toLowerCase() === q,
+    (o) => o.code.toLowerCase() === q || o.label.toLowerCase() === q
   );
   if (exact) return exact.code;
   const prefixHits = FOOD_TIMING_OPTIONS.filter(
-    (o) => o.label.toLowerCase().startsWith(q) || o.code.toLowerCase().startsWith(q),
+    (o) =>
+      o.label.toLowerCase().startsWith(q) || o.code.toLowerCase().startsWith(q)
   );
   return prefixHits.length === 1 ? prefixHits[0]!.code : null;
 }
@@ -903,12 +1037,14 @@ export interface ChartMedicationPatch {
 }
 
 /** UI source → DB source (Self-started → self; otc legacy reads as self-started). */
-export function chartMedSourceToDb(ui: ChartMedSourceUi): PatientMedicationSource {
+export function chartMedSourceToDb(
+  ui: ChartMedSourceUi
+): PatientMedicationSource {
   return ui === "prescribed" ? "prescribed" : "self";
 }
 
 export function chartMedSourceFromDb(
-  source: PatientMedicationSource | null | undefined,
+  source: PatientMedicationSource | null | undefined
 ): ChartMedSourceUi | null {
   if (source === "prescribed") return "prescribed";
   if (source === "self" || source === "otc") return "self_started";
@@ -916,7 +1052,7 @@ export function chartMedSourceFromDb(
 }
 
 export function chartMedSourceLabel(
-  source: PatientMedicationSource | null | undefined,
+  source: PatientMedicationSource | null | undefined
 ): string {
   if (source === "prescribed") return "Prescribed";
   if (source === "self" || source === "otc") return "Self-started";
@@ -928,7 +1064,7 @@ export function chartMedSourceLabel(
  * SOS/PRN frequency already conveys it, so surfacing it again is noise.
  */
 export function chartMedIntakePatternLabel(
-  pattern: PatientMedication["intake_pattern"],
+  pattern: PatientMedication["intake_pattern"]
 ): string {
   if (pattern === "regular") return "Regular";
   if (pattern === "irregular") return "Irregular";
@@ -945,7 +1081,12 @@ export function formatChartMedicationSig(med: PatientMedication): string {
     med.strength?.trim() ||
     (med.dose?.trim() && !isCustomDoseUnit(med) ? med.dose.trim() : "");
   let doseLabel = formatDoseLabel(med.dose_qty, med.dose_unit);
-  if (!doseLabel && med.dose_qty != null && med.dose?.trim() && !med.dose_unit) {
+  if (
+    !doseLabel &&
+    med.dose_qty != null &&
+    med.dose?.trim() &&
+    !med.dose_unit
+  ) {
     doseLabel = `${med.dose_qty} ${med.dose.trim()}`;
   }
   const topicalApply = chartMedUsesApplyDose(med);
@@ -972,7 +1113,10 @@ export function formatChartMedicationSig(med: PatientMedication): string {
   const formLabel = formatChartMedFormLabel(med.form);
   if (formLabel) segments.push(formLabel);
 
-  const since = formatStartedAgoSummary(med.started_ago_value, med.started_ago_unit);
+  const since = formatStartedAgoSummary(
+    med.started_ago_value,
+    med.started_ago_unit
+  );
   if (since) segments.push(since);
 
   const pattern = chartMedIntakePatternLabel(med.intake_pattern);
@@ -988,7 +1132,7 @@ export function formatChartMedicationSig(med: PatientMedication): string {
 
 export function formatStoppedAgoSummary(
   value: number | null | undefined,
-  unit: PatientConditionAgoUnit | null | undefined,
+  unit: PatientConditionAgoUnit | null | undefined
 ): string {
   if (value == null || value <= 0 || !unit) return "";
   const singular = value === 1 ? unit.replace(/s$/, "") : unit;
@@ -996,7 +1140,9 @@ export function formatStoppedAgoSummary(
 }
 
 /** Label for the stop-timing row — depends on linked condition status. */
-export function stoppedSinceLabel(conditionStatus: PatientConditionStatus): string {
+export function stoppedSinceLabel(
+  conditionStatus: PatientConditionStatus
+): string {
   return conditionStatus === "resolved"
     ? "Stopped — condition resolved"
     : "Not taking — for";
@@ -1083,14 +1229,17 @@ export function chartMedStartedAgoFromParsed(parsed: ParsedMedicineLine): {
 }
 
 /** Map parser output → chart-med patch (card editor / capture bar). */
-export function chartMedPatchFromParsed(parsed: ParsedMedicineLine): ChartMedicationPatch {
+export function chartMedPatchFromParsed(
+  parsed: ParsedMedicineLine
+): ChartMedicationPatch {
   const qtyFromSchedule = parsed.doseSchedule
     ? doseQtyFromSchedule(parsed.doseSchedule)
     : null;
   const strengthFields = resolveStrengthFields(parsed.dosage);
   const doseSchedule = isIntervalFrequency(parsed.frequencyCode)
     ? null
-    : parsed.doseSchedule ?? singleDoseScheduleForFrequency(parsed.frequencyCode);
+    : (parsed.doseSchedule ??
+      singleDoseScheduleForFrequency(parsed.frequencyCode));
   const startedAgo = chartMedStartedAgoFromParsed(parsed);
 
   const patch: ChartMedicationPatch = {
@@ -1107,7 +1256,9 @@ export function chartMedPatchFromParsed(parsed: ParsedMedicineLine): ChartMedica
       parsed.frequencyCode === "PRN"
         ? "SOS"
         : parsed.frequency ||
-          (parsed.frequencyCode ? getChartFrequencyLabel(parsed.frequencyCode) : null),
+          (parsed.frequencyCode
+            ? getChartFrequencyLabel(parsed.frequencyCode)
+            : null),
     doseSchedule,
     form: parsed.form,
     startedAgoValue: startedAgo.value,
@@ -1143,7 +1294,7 @@ export function chartMedPayloadFromParsed(
     conditionIds?: string[];
     /** Status of the condition this med is being added under, for inheritance. */
     conditionStatus?: PatientConditionStatus | null;
-  },
+  }
 ): CreatePatientMedicationPayload {
   const patch = chartMedPatchFromParsed(parsed);
   // Priority: explicit parsed status → inherit a resolved condition → active.
@@ -1153,7 +1304,8 @@ export function chartMedPayloadFromParsed(
   // A med inherited as past from a resolved condition gets the "resolved" reason
   // unless the line stated its own reason.
   const stopReason =
-    patch.stopReason ?? (status === "past" && inheritedPast ? "resolved" : null);
+    patch.stopReason ??
+    (status === "past" && inheritedPast ? "resolved" : null);
   return {
     ...patch,
     drugName: parsed.medicineName,
@@ -1167,7 +1319,7 @@ export function chartMedPayloadFromParsed(
 /** Snapshot in-card draft editor state → create payload. */
 export function chartMedPayloadFromDraftRow(
   draft: PatientMedication,
-  drugName: string,
+  drugName: string
 ): CreatePatientMedicationPayload {
   return {
     drugName,
@@ -1196,7 +1348,7 @@ export function chartMedPayloadFromDraftRow(
 /** Parsed / drug-master fields win; card-only edits (notes, origin, pattern) overlay. */
 export function chartMedPayloadMergeDraft(
   payload: CreatePatientMedicationPayload,
-  draft: PatientMedication,
+  draft: PatientMedication
 ): CreatePatientMedicationPayload {
   const fromCard = chartMedPayloadFromDraftRow(draft, payload.drugName);
   return {
@@ -1213,10 +1365,17 @@ export function chartMedPayloadMergeDraft(
     // (manually toggled) status is preserved.
     status: payload.status === "past" ? "past" : draft.status,
     stoppedAgoValue:
-      payload.status === "past" ? (payload.stoppedAgoValue ?? draft.stopped_ago_value) : null,
+      payload.status === "past"
+        ? (payload.stoppedAgoValue ?? draft.stopped_ago_value)
+        : null,
     stoppedAgoUnit:
-      payload.status === "past" ? (payload.stoppedAgoUnit ?? draft.stopped_ago_unit) : null,
-    stopReason: payload.status === "past" ? (payload.stopReason ?? draft.stop_reason) : null,
+      payload.status === "past"
+        ? (payload.stoppedAgoUnit ?? draft.stopped_ago_unit)
+        : null,
+    stopReason:
+      payload.status === "past"
+        ? (payload.stopReason ?? draft.stop_reason)
+        : null,
   };
 }
 
@@ -1232,7 +1391,7 @@ export function chartMedPayloadFromAiMedicine(
     status?: PatientMedicationStatus;
     conditionIds?: string[];
     conditionStatus?: PatientConditionStatus | null;
-  },
+  }
 ): CreatePatientMedicationPayload {
   const aiComponents =
     aiMed.strengthComponents && aiMed.strengthComponents.length >= 2
@@ -1253,10 +1412,11 @@ export function chartMedPayloadFromAiMedicine(
   const intakePattern: PatientMedicationIntakePattern | null =
     frequencyCode === "PRN"
       ? "prn"
-      : ((aiMed.intakePattern as PatientMedicationIntakePattern | null) ?? null);
+      : ((aiMed.intakePattern as PatientMedicationIntakePattern | null) ??
+        null);
   const doseSchedule = isIntervalFrequency(frequencyCode)
     ? null
-    : aiMed.doseSchedule ?? singleDoseScheduleForFrequency(frequencyCode);
+    : (aiMed.doseSchedule ?? singleDoseScheduleForFrequency(frequencyCode));
   const doseQty =
     aiMed.doseQty ?? (doseSchedule ? doseQtyFromSchedule(doseSchedule) : null);
   const doseUnit = (aiMed.doseUnit as DoseUnit | null) ?? null;
@@ -1272,7 +1432,8 @@ export function chartMedPayloadFromAiMedicine(
     (aiMed.status as PatientMedicationStatus | undefined) ??
     options?.status ??
     (inheritedPast ? "past" : "active");
-  const stoppedAgoValue = status === "past" ? (aiMed.stoppedAgoValue ?? null) : null;
+  const stoppedAgoValue =
+    status === "past" ? (aiMed.stoppedAgoValue ?? null) : null;
   const stoppedAgoUnit =
     status === "past"
       ? ((aiMed.stoppedAgoUnit as PatientConditionAgoUnit | null) ?? null)
@@ -1304,7 +1465,8 @@ export function chartMedPayloadFromAiMedicine(
     intakePattern,
     source: (aiMed.source as PatientMedicationSource | null) ?? null,
     startedAgoValue: aiMed.startedAgoValue ?? null,
-    startedAgoUnit: (aiMed.startedAgoUnit as PatientConditionAgoUnit | null) ?? null,
+    startedAgoUnit:
+      (aiMed.startedAgoUnit as PatientConditionAgoUnit | null) ?? null,
     foodTiming: (aiMed.foodTiming as FoodTiming | null) ?? null,
     note: aiMed.instructions ?? null,
     status,
@@ -1333,7 +1495,7 @@ export function inferFormFromDoseUnit(doseUnit: DoseUnit): string | null {
 
 export function chartMedPayloadFromDrugMaster(
   drug: DrugMasterRow,
-  conditionIds?: string[],
+  conditionIds?: string[]
 ): CreatePatientMedicationPayload {
   const strengthFields = resolveStrengthFields(drug.strength);
   const form = drug.form ?? null;
@@ -1383,17 +1545,19 @@ export function nameWorthCatalogLookup(name: string): boolean {
  */
 export function pickUnambiguousCatalogDrug(
   typedName: string,
-  results: readonly DrugMasterRow[],
+  results: readonly DrugMasterRow[]
 ): DrugMasterRow | null {
   const q = typedName.trim().toLowerCase();
   if (!q || results.length === 0) return null;
 
-  const exact = results.filter((r) => r.generic_name.trim().toLowerCase() === q);
+  const exact = results.filter(
+    (r) => r.generic_name.trim().toLowerCase() === q
+  );
   if (exact.length === 1) return exact[0];
   if (exact.length > 1) return null;
 
   const prefix = results.filter((r) =>
-    r.generic_name.trim().toLowerCase().startsWith(q),
+    r.generic_name.trim().toLowerCase().startsWith(q)
   );
   if (prefix.length === 1) return prefix[0];
   return null;
@@ -1406,7 +1570,7 @@ export function pickUnambiguousCatalogDrug(
  */
 export function mergeCatalogDrugIntoPayload(
   base: CreatePatientMedicationPayload,
-  drug: DrugMasterRow,
+  drug: DrugMasterRow
 ): CreatePatientMedicationPayload {
   const fromCatalog = chartMedPayloadFromDrugMaster(drug, base.conditionIds);
   const isBlank = (v: unknown) => v === null || v === undefined || v === "";
@@ -1433,31 +1597,40 @@ export function mergeCatalogDrugIntoPayload(
 
 /** Merge patch into API update payload with legacy mirrors. */
 export function chartMedPatchToApiPayload(
-  patch: ChartMedicationPatch,
+  patch: ChartMedicationPatch
 ): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   if (patch.drugName !== undefined) out.drugName = patch.drugName;
-  if (patch.strengthValue !== undefined) out.strengthValue = patch.strengthValue;
+  if (patch.strengthValue !== undefined)
+    out.strengthValue = patch.strengthValue;
   if (patch.strengthUnit !== undefined) out.strengthUnit = patch.strengthUnit;
-  if (patch.strengthComponents !== undefined) out.strengthComponents = patch.strengthComponents;
+  if (patch.strengthComponents !== undefined)
+    out.strengthComponents = patch.strengthComponents;
   if (patch.strength !== undefined) {
     out.strength = patch.strength;
     out.dose = patch.strength;
   }
-  if (patch.dose !== undefined && patch.strength === undefined) out.dose = patch.dose;
+  if (patch.dose !== undefined && patch.strength === undefined)
+    out.dose = patch.dose;
   if (patch.doseQty !== undefined) out.doseQty = patch.doseQty;
   if (patch.doseUnit !== undefined) out.doseUnit = patch.doseUnit;
-  if (patch.frequencyCode !== undefined) out.frequencyCode = patch.frequencyCode;
+  if (patch.frequencyCode !== undefined)
+    out.frequencyCode = patch.frequencyCode;
   if (patch.frequency !== undefined) out.frequency = patch.frequency;
   if (patch.form !== undefined) out.form = patch.form;
   if (patch.drugMasterId !== undefined) out.drugMasterId = patch.drugMasterId;
   if (patch.status !== undefined) out.status = patch.status;
-  if (patch.intakePattern !== undefined) out.intakePattern = patch.intakePattern;
+  if (patch.intakePattern !== undefined)
+    out.intakePattern = patch.intakePattern;
   if (patch.source !== undefined) out.source = patch.source;
-  if (patch.startedAgoValue !== undefined) out.startedAgoValue = patch.startedAgoValue;
-  if (patch.startedAgoUnit !== undefined) out.startedAgoUnit = patch.startedAgoUnit;
-  if (patch.stoppedAgoValue !== undefined) out.stoppedAgoValue = patch.stoppedAgoValue;
-  if (patch.stoppedAgoUnit !== undefined) out.stoppedAgoUnit = patch.stoppedAgoUnit;
+  if (patch.startedAgoValue !== undefined)
+    out.startedAgoValue = patch.startedAgoValue;
+  if (patch.startedAgoUnit !== undefined)
+    out.startedAgoUnit = patch.startedAgoUnit;
+  if (patch.stoppedAgoValue !== undefined)
+    out.stoppedAgoValue = patch.stoppedAgoValue;
+  if (patch.stoppedAgoUnit !== undefined)
+    out.stoppedAgoUnit = patch.stoppedAgoUnit;
   if (patch.stopReason !== undefined) out.stopReason = patch.stopReason;
   if (patch.note !== undefined) out.note = patch.note;
   if (patch.doseSchedule !== undefined) out.doseSchedule = patch.doseSchedule;
@@ -1466,12 +1639,16 @@ export function chartMedPatchToApiPayload(
 }
 
 export function chartMedPatchToLocalPatch(
-  patch: ChartMedicationPatch,
+  patch: ChartMedicationPatch
 ): Partial<PatientMedication> {
   return {
     ...(patch.drugName !== undefined ? { drug_name: patch.drugName } : {}),
-    ...(patch.strengthValue !== undefined ? { strength_value: patch.strengthValue } : {}),
-    ...(patch.strengthUnit !== undefined ? { strength_unit: patch.strengthUnit } : {}),
+    ...(patch.strengthValue !== undefined
+      ? { strength_value: patch.strengthValue }
+      : {}),
+    ...(patch.strengthUnit !== undefined
+      ? { strength_unit: patch.strengthUnit }
+      : {}),
     ...(patch.strengthComponents !== undefined
       ? { strength_components: patch.strengthComponents }
       : {}),
@@ -1483,12 +1660,18 @@ export function chartMedPatchToLocalPatch(
       : {}),
     ...(patch.doseQty !== undefined ? { dose_qty: patch.doseQty } : {}),
     ...(patch.doseUnit !== undefined ? { dose_unit: patch.doseUnit } : {}),
-    ...(patch.frequencyCode !== undefined ? { frequency_code: patch.frequencyCode } : {}),
+    ...(patch.frequencyCode !== undefined
+      ? { frequency_code: patch.frequencyCode }
+      : {}),
     ...(patch.frequency !== undefined ? { frequency: patch.frequency } : {}),
     ...(patch.form !== undefined ? { form: patch.form } : {}),
-    ...(patch.drugMasterId !== undefined ? { drug_master_id: patch.drugMasterId } : {}),
+    ...(patch.drugMasterId !== undefined
+      ? { drug_master_id: patch.drugMasterId }
+      : {}),
     ...(patch.status !== undefined ? { status: patch.status } : {}),
-    ...(patch.intakePattern !== undefined ? { intake_pattern: patch.intakePattern } : {}),
+    ...(patch.intakePattern !== undefined
+      ? { intake_pattern: patch.intakePattern }
+      : {}),
     ...(patch.source !== undefined ? { source: patch.source } : {}),
     ...(patch.startedAgoValue !== undefined
       ? { started_ago_value: patch.startedAgoValue }
@@ -1499,10 +1682,18 @@ export function chartMedPatchToLocalPatch(
     ...(patch.stoppedAgoValue !== undefined
       ? { stopped_ago_value: patch.stoppedAgoValue }
       : {}),
-    ...(patch.stoppedAgoUnit !== undefined ? { stopped_ago_unit: patch.stoppedAgoUnit } : {}),
-    ...(patch.stopReason !== undefined ? { stop_reason: patch.stopReason } : {}),
+    ...(patch.stoppedAgoUnit !== undefined
+      ? { stopped_ago_unit: patch.stoppedAgoUnit }
+      : {}),
+    ...(patch.stopReason !== undefined
+      ? { stop_reason: patch.stopReason }
+      : {}),
     ...(patch.note !== undefined ? { note: patch.note } : {}),
-    ...(patch.doseSchedule !== undefined ? { dose_schedule: patch.doseSchedule } : {}),
-    ...(patch.foodTiming !== undefined ? { food_timing: patch.foodTiming } : {}),
+    ...(patch.doseSchedule !== undefined
+      ? { dose_schedule: patch.doseSchedule }
+      : {}),
+    ...(patch.foodTiming !== undefined
+      ? { food_timing: patch.foodTiming }
+      : {}),
   };
 }

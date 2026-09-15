@@ -4,8 +4,11 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  CORE_OBJECTIVE_DEFAULT_VISIBLE_IDS,
   hiddenOverridesToPersist,
   isSectionHidden,
+  resolveDefaultObjectiveLayout,
+  resolveEffectiveObjectiveHidden,
   resolveVisibleSections,
   serializeHiddenIds,
 } from "@/lib/cockpit/objective-section-visibility";
@@ -79,6 +82,40 @@ describe("hiddenOverridesToPersist (obj-12 / P10-D4)", () => {
 
   it("retains hidden ids even when not currently mountable (cross-context intent)", () => {
     expect(hiddenOverridesToPersist(["notes"], ["vitals"])).toEqual(["notes"]);
+  });
+});
+
+describe("factory lean default", () => {
+  const DEFAULT_LAYOUT = resolveDefaultObjectiveLayout();
+
+  it("keeps every static objective section visible", () => {
+    expect(DEFAULT_LAYOUT.defaultHidden).toEqual([]);
+    expect(CORE_OBJECTIVE_DEFAULT_VISIBLE_IDS).toEqual([
+      "vitals",
+      "exam",
+      "notes",
+      "test_results",
+    ]);
+  });
+
+  it("uses factory default when stored set is empty", () => {
+    expect(resolveEffectiveObjectiveHidden({ storedHidden: [] })).toEqual({
+      hidden: [],
+    });
+  });
+
+  it("doctor stored set wins wholesale when present", () => {
+    expect(resolveEffectiveObjectiveHidden({ storedHidden: ["exam"] })).toEqual({
+      hidden: ["exam"],
+    });
+  });
+
+  it("drops unknown keys", () => {
+    expect(
+      resolveEffectiveObjectiveHidden({
+        storedHidden: ["bogus_section", "notes", "notes"],
+      }),
+    ).toEqual({ hidden: ["notes"] });
   });
 });
 

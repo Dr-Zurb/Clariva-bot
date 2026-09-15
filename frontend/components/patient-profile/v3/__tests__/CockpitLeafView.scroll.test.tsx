@@ -6,10 +6,13 @@
 
 import React from "react";
 import { describe, it, expect, vi } from "vitest";
-import { render } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import "@testing-library/jest-dom";
 import CockpitLeafView from "../CockpitLeafView";
-import type { PaneDefinition, PaneTreeNode } from "@/lib/patient-profile/v3/foundation";
+import type {
+  PaneDefinition,
+  PaneTreeNode,
+} from "@/lib/patient-profile/v3/foundation";
 import type { CockpitV3Layout } from "@/lib/patient-profile/v3/useCockpitV3Layout";
 
 vi.mock("../CockpitDropOverlay", () => ({
@@ -24,7 +27,9 @@ vi.mock("../CockpitLeafMenu", () => ({
 }));
 
 vi.mock("../PaneTabStripV3", () => ({
-  default: () => <div data-testid="tab-strip" />,
+  default: ({ trailingActions }: { trailingActions?: React.ReactNode }) => (
+    <div data-testid="tab-strip">{trailingActions}</div>
+  ),
 }));
 
 vi.mock("../PaneFocusButton", () => ({
@@ -78,7 +83,7 @@ describe("CockpitLeafView — stacked-leaf scrollport", () => {
     ]);
 
     const { container } = render(
-      <CockpitLeafView node={node} paneById={paneById} layout={layoutStub} />,
+      <CockpitLeafView node={node} paneById={paneById} layout={layoutStub} />
     );
 
     const body = container.querySelector("#pane-body-consult");
@@ -86,5 +91,33 @@ describe("CockpitLeafView — stacked-leaf scrollport", () => {
     expect(body).toHaveClass("overflow-y-auto");
     expect(body).toHaveClass("touch-pan-y");
     expect(body).toHaveClass("overscroll-y-contain");
+  });
+
+  it("keeps tab-strip trailing actions to swap / maximize / close — no SOAP chrome slot", () => {
+    const node: PaneTreeNode = {
+      id: "subjective",
+      sizePct: 50,
+      hidden: false,
+      paneIds: ["subjective"],
+      activeTabId: "subjective",
+    };
+    const paneById = new Map<string, PaneDefinition>([
+      [
+        "subjective",
+        {
+          id: "subjective",
+          title: "Subjective",
+          render: () => <div>subjective body</div>,
+        },
+      ],
+    ]);
+
+    render(
+      <CockpitLeafView node={node} paneById={paneById} layout={layoutStub} />
+    );
+
+    expect(
+      screen.queryByTestId("soap-pane-chrome-slot")
+    ).not.toBeInTheDocument();
   });
 });

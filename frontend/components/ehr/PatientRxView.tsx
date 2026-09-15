@@ -138,8 +138,11 @@ export interface PatientRxViewModel {
   address?: string | null;
   medicalRecordNumber?: string | null;
 
+  allergies?: string | null;
   cc: string | null;
   hopi: string | null;
+  vitals?: string | null;
+  examinationFindings?: string | null;
   socialHistory?: string | null;
   customSubsections?: Array<{
     title: string;
@@ -669,6 +672,12 @@ const PatientRxView: React.FC<PatientRxViewProps> = ({
       {/* Sections */}
       <div className="mt-5">
         <Section
+          label="Allergies"
+          body={viewModel.allergies}
+          accentColor={accentColor}
+          textSize={viewModel.bodyTextSize}
+        />
+        <Section
           label="Chief complaint"
           body={viewModel.cc}
           accentColor={accentColor}
@@ -677,6 +686,18 @@ const PatientRxView: React.FC<PatientRxViewProps> = ({
         <Section
           label="History of present illness"
           body={viewModel.hopi}
+          accentColor={accentColor}
+          textSize={viewModel.bodyTextSize}
+        />
+        <Section
+          label="Vitals"
+          body={viewModel.vitals}
+          accentColor={accentColor}
+          textSize={viewModel.bodyTextSize}
+        />
+        <Section
+          label="Examination"
+          body={viewModel.examinationFindings}
           accentColor={accentColor}
           textSize={viewModel.bodyTextSize}
         />

@@ -17,6 +17,9 @@ import {
   DiagnosisRowsList,
 } from "@/components/cockpit/rx/inputs/DiagnosisRowsList";
 import { OngoingProblemsZone } from "@/components/cockpit/rx/inputs/OngoingProblemsZone";
+import { LastVisitDiagnosesStrip } from "@/components/cockpit/rx/last-visit/LastVisitDiagnosesStrip";
+import { LastVisitAssessmentNotesStrip } from "@/components/cockpit/rx/last-visit/LastVisitParchiStrips";
+import { LastVisitUnmatchedCustomSectionsStrip } from "@/components/cockpit/rx/last-visit/LastVisitCustomSectionStrip";
 import {
   AssessmentSectionTemplateButton,
   AssessmentWholeTemplateButton,
@@ -31,6 +34,7 @@ import {
   SoapTabExpandCollapseClearButtons,
   SoapTabLayoutSaveStatus,
 } from "@/components/cockpit/rx/SoapTabChromeActions";
+import { SoapPaneChromePortal } from "@/components/patient-profile/v3/SoapPaneChrome";
 import { SoapTabCustomSectionsAddChrome } from "@/components/cockpit/rx/SoapTabCustomSectionsAddChrome";
 import {
   RX_FIELD_INPUT_CLASS,
@@ -115,11 +119,12 @@ export { ASSESSMENT_TAB_DX_INPUT_ID };
 const DOCTOR_LAYOUT_AUTOSAVE_MS = 500;
 
 /** Canonical default open/closed state — all Assessment L1s start open. */
-const ASSESSMENT_COLLAPSE_DEFAULTS: Record<StaticAssessmentSectionId, boolean> = {
-  diagnoses: true,
-  known_conditions: true,
-  assessment_notes: true,
-};
+const ASSESSMENT_COLLAPSE_DEFAULTS: Record<StaticAssessmentSectionId, boolean> =
+  {
+    diagnoses: true,
+    known_conditions: true,
+    assessment_notes: true,
+  };
 
 const ASSESSMENT_CLEAR_ALL_BULLETS = [
   "Diagnoses on this visit",
@@ -136,12 +141,14 @@ type DropTargetState = {
 type SaveStatus = "idle" | "saving" | "saved" | "error";
 
 function buildCollapseDefaults(
-  order: readonly AssessmentSectionId[],
+  order: readonly AssessmentSectionId[]
 ): Record<string, boolean> {
   const result: Record<string, boolean> = {};
   for (const id of order) {
     // Custom blocks default open (mirrors subjective).
-    result[id] = isCustomBlockSectionId(id) ? true : ASSESSMENT_COLLAPSE_DEFAULTS[id];
+    result[id] = isCustomBlockSectionId(id)
+      ? true
+      : ASSESSMENT_COLLAPSE_DEFAULTS[id];
   }
   return result;
 }
@@ -150,7 +157,7 @@ function buildCollapseDefaults(
 function seedAssessmentCollapseOpen(
   sectionCollapsed: AssessmentSectionCollapseMap | null | undefined,
   sectionOrder: AssessmentSectionId[] | null | undefined,
-  customBlockIds: readonly string[],
+  customBlockIds: readonly string[]
 ): {
   openById: Record<string, boolean>;
   ready: boolean;
@@ -169,7 +176,7 @@ function seedAssessmentCollapseOpen(
     openById: resolved,
     ready: true,
     persistedKey: serializeCollapseOverrides(
-      collapseOverridesToPersist(resolved, defaults),
+      collapseOverridesToPersist(resolved, defaults)
     ),
   };
 }
@@ -198,9 +205,7 @@ export function AssessmentSection({
     return null;
   }
 
-  return (
-    <AssessmentSectionChrome heading={heading} disabled={disabled} />
-  );
+  return <AssessmentSectionChrome heading={heading} disabled={disabled} />;
 }
 
 function AssessmentSectionChrome({
@@ -214,13 +219,16 @@ function AssessmentSectionChrome({
   const shell = usePrescriptionFormShell();
   const queryClient = useQueryClient();
 
-  const conditionsQuery = usePatientConditionsQuery(token ?? "", patientId ?? "");
+  const conditionsQuery = usePatientConditionsQuery(
+    token ?? "",
+    patientId ?? ""
+  );
   const chartConditions = useMemo(
     () =>
       (conditionsQuery.data ?? []).filter(
-        (c) => !c.archived_at && c.status === "active",
+        (c) => !c.archived_at && c.status === "active"
       ),
-    [conditionsQuery.data],
+    [conditionsQuery.data]
   );
 
   const applyKnownConditions = useKnownConditionsTemplateApply({
@@ -234,7 +242,7 @@ function AssessmentSectionChrome({
         await createPatientCondition(
           token,
           patientId,
-          knownConditionToCreatePayload(c),
+          knownConditionToCreatePayload(c)
         );
         await invalidatePatientConditions(queryClient, patientId);
         return "created";
@@ -259,7 +267,7 @@ function AssessmentSectionChrome({
   const customSections = state.fields.assessmentCustomSections;
   const customBlockIds = useMemo(
     () => customSections.map((section) => section.id),
-    [customSections],
+    [customSections]
   );
   const focusBlockIdRef = useRef<string | null>(null);
   const focusChildIdRef = useRef<string | null>(null);
@@ -268,26 +276,29 @@ function AssessmentSectionChrome({
   const dragSectionIdRef = useRef<AssessmentSectionId | null>(null);
   const [dropTarget, setDropTarget] = useState<DropTargetState | null>(null);
   const [layoutSaveStatus, setLayoutSaveStatus] = useState<SaveStatus>("idle");
-  const [collapseSaveStatus, setCollapseSaveStatus] = useState<SaveStatus>("idle");
+  const [collapseSaveStatus, setCollapseSaveStatus] =
+    useState<SaveStatus>("idle");
   const [visibilitySaveStatus, setVisibilitySaveStatus] =
     useState<SaveStatus>("idle");
   const [sectionManagerOpen, setSectionManagerOpen] = useState(false);
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
   const [clearBusy, setClearBusy] = useState(false);
-  const collapseSeedRef = useRef<ReturnType<typeof seedAssessmentCollapseOpen> | null>(
-    null,
-  );
+  const collapseSeedRef = useRef<ReturnType<
+    typeof seedAssessmentCollapseOpen
+  > | null>(null);
   if (collapseSeedRef.current === null) {
     collapseSeedRef.current = seedAssessmentCollapseOpen(
       shell?.assessmentDefaults?.sectionCollapsed,
       shell?.assessmentDefaults?.sectionOrder,
-      customBlockIds,
+      customBlockIds
     );
   }
   const collapseSeed = collapseSeedRef.current;
 
   const lastPersistedSectionOrderRef = useRef<string | null>(null);
-  const lastPersistedCollapseRef = useRef<string | null>(collapseSeed.persistedKey);
+  const lastPersistedCollapseRef = useRef<string | null>(
+    collapseSeed.persistedKey
+  );
   const lastPersistedHiddenRef = useRef<string | null>(null);
   const hasHydratedCollapseRef = useRef(collapseSeed.ready);
   const hasHydratedHiddenRef = useRef(false);
@@ -297,25 +308,27 @@ function AssessmentSectionChrome({
   >(shell?.assessmentDefaults?.sectionOrder ?? null);
   const [storedSectionCollapsed, setStoredSectionCollapsed] =
     useState<AssessmentSectionCollapseMap | null>(
-      shell?.assessmentDefaults?.sectionCollapsed ?? null,
+      shell?.assessmentDefaults?.sectionCollapsed ?? null
     );
   const [storedSectionHidden, setStoredSectionHidden] =
     useState<AssessmentSectionHiddenSet | null>(
-      shell?.assessmentDefaults?.sectionHidden ?? null,
+      shell?.assessmentDefaults?.sectionHidden ?? null
     );
   const [openById, setOpenById] = useState<Record<string, boolean>>(
-    () => collapseSeed.openById,
+    () => collapseSeed.openById
   );
   const [collapseReady, setCollapseReady] = useState(() => collapseSeed.ready);
   const [hiddenIds, setHiddenIds] = useState<AssessmentSectionHiddenSet>(
-    () => shell?.assessmentDefaults?.sectionHidden ?? [],
+    () => shell?.assessmentDefaults?.sectionHidden ?? []
   );
 
-  const [sectionOrder, setSectionOrder] = useState<AssessmentSectionId[]>(() => {
-    const stored = shell?.assessmentDefaults?.sectionOrder;
-    if (stored == null) return [];
-    return resolveInitialSectionOrder(stored, customBlockIds);
-  });
+  const [sectionOrder, setSectionOrder] = useState<AssessmentSectionId[]>(
+    () => {
+      const stored = shell?.assessmentDefaults?.sectionOrder;
+      if (stored == null) return [];
+      return resolveInitialSectionOrder(stored, customBlockIds);
+    }
+  );
 
   const layoutHydrated =
     storedSectionOrder !== null &&
@@ -324,17 +337,17 @@ function AssessmentSectionChrome({
 
   const mountableIds = useMemo(
     () => resolveAvailableSectionIds(customBlockIds),
-    [customBlockIds],
+    [customBlockIds]
   );
 
   const visibleSectionOrder = useMemo(
     () => resolveVisibleSections(sectionOrder, hiddenIds, mountableIds),
-    [hiddenIds, mountableIds, sectionOrder],
+    [hiddenIds, mountableIds, sectionOrder]
   );
 
   const defaultsById = useMemo(
     () => buildCollapseDefaults(sectionOrder),
-    [sectionOrder],
+    [sectionOrder]
   );
 
   const collapseHydrated = storedSectionCollapsed !== null;
@@ -373,7 +386,7 @@ function AssessmentSectionChrome({
     (sectionId: AssessmentSectionId, open: boolean) => {
       setOpenById((prev) => ({ ...prev, [sectionId]: open }));
     },
-    [],
+    []
   );
 
   const expandAllSections = useCallback(() => {
@@ -398,7 +411,7 @@ function AssessmentSectionChrome({
 
   const hasClearableAssessment = useMemo(
     () => rxFormHasClearableAssessmentContent(state.fields),
-    [state.fields],
+    [state.fields]
   );
 
   const clearAllAssessment = useCallback(() => {
@@ -413,7 +426,13 @@ function AssessmentSectionChrome({
     } finally {
       setClearBusy(false);
     }
-  }, [collapseAllSections, disabled, dispatch, hasClearableAssessment, state.fields]);
+  }, [
+    collapseAllSections,
+    disabled,
+    dispatch,
+    hasClearableAssessment,
+    state.fields,
+  ]);
 
   // ---- Hydration: shell prefetch or standalone settings fetch --------------
   useEffect(() => {
@@ -484,7 +503,10 @@ function AssessmentSectionChrome({
 
   useEffect(() => {
     if (storedSectionOrder === null) return;
-    const resolved = resolveInitialSectionOrder(storedSectionOrder, customBlockIds);
+    const resolved = resolveInitialSectionOrder(
+      storedSectionOrder,
+      customBlockIds
+    );
     setSectionOrder(resolved);
     lastPersistedSectionOrderRef.current = JSON.stringify(resolved);
     // customBlockIds intentionally omitted — sync effect below merges new blocks.
@@ -522,7 +544,7 @@ function AssessmentSectionChrome({
 
     setHiddenIds(storedSectionHidden);
     lastPersistedHiddenRef.current = serializeHiddenIds(
-      hiddenOverridesToPersist(storedSectionHidden, mountableIds),
+      hiddenOverridesToPersist(storedSectionHidden, mountableIds)
     );
     // Intentionally omit mountableIds — one-shot hydrate.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -534,11 +556,14 @@ function AssessmentSectionChrome({
     if (Object.keys(defaultsById).length === 0) return;
     hasHydratedCollapseRef.current = true;
 
-    const resolved = resolveSectionOpenState(storedSectionCollapsed, defaultsById);
+    const resolved = resolveSectionOpenState(
+      storedSectionCollapsed,
+      defaultsById
+    );
     setOpenById(resolved);
     setCollapseReady(true);
     lastPersistedCollapseRef.current = serializeCollapseOverrides(
-      collapseOverridesToPersist(resolved, defaultsById),
+      collapseOverridesToPersist(resolved, defaultsById)
     );
     // Intentionally omit further defaultsById changes — one-shot after first non-empty defaults.
     // eslint-disable-next-line react-hooks/exhaustive-deps -- subsequent stored map writes must not clobber openById
@@ -561,7 +586,12 @@ function AssessmentSectionChrome({
           shell?.setAssessmentDefaults((prev) =>
             prev
               ? { ...prev, sectionOrder: saved }
-              : { sectionOrder: saved, sectionCollapsed: {}, sectionHidden: [], customSections: [] },
+              : {
+                  sectionOrder: saved,
+                  sectionCollapsed: {},
+                  sectionHidden: [],
+                  customSections: [],
+                }
           );
           setLayoutSaveStatus("saved");
         } catch {
@@ -577,7 +607,10 @@ function AssessmentSectionChrome({
   useEffect(() => {
     if (disabled || !token || storedSectionCollapsed === null) return;
 
-    const overrides = collapseOverridesToPersist(effectiveOpenById, defaultsById);
+    const overrides = collapseOverridesToPersist(
+      effectiveOpenById,
+      defaultsById
+    );
     const serialized = serializeCollapseOverrides(overrides);
     if (serialized === lastPersistedCollapseRef.current) return;
 
@@ -591,7 +624,12 @@ function AssessmentSectionChrome({
           shell?.setAssessmentDefaults((prev) =>
             prev
               ? { ...prev, sectionCollapsed: saved }
-              : { sectionOrder: [], sectionCollapsed: saved, sectionHidden: [], customSections: [] },
+              : {
+                  sectionOrder: [],
+                  sectionCollapsed: saved,
+                  sectionHidden: [],
+                  customSections: [],
+                }
           );
           setCollapseSaveStatus("saved");
         } catch {
@@ -628,7 +666,12 @@ function AssessmentSectionChrome({
           shell?.setAssessmentDefaults((prev) =>
             prev
               ? { ...prev, sectionHidden: saved }
-              : { sectionOrder: [], sectionCollapsed: {}, sectionHidden: saved, customSections: [] },
+              : {
+                  sectionOrder: [],
+                  sectionCollapsed: {},
+                  sectionHidden: saved,
+                  customSections: [],
+                }
           );
           setVisibilitySaveStatus("saved");
         } catch {
@@ -642,7 +685,7 @@ function AssessmentSectionChrome({
 
   // ---- Doctor-default autosave: custom section structure ----------------------
   const lastPersistedCustomStructureRef = useRef<string>(
-    assessmentCustomSectionsStructureKey(state.fields.assessmentCustomSections),
+    assessmentCustomSectionsStructureKey(state.fields.assessmentCustomSections)
   );
 
   useEffect(() => {
@@ -671,7 +714,7 @@ function AssessmentSectionChrome({
                   sectionCollapsed: {},
                   sectionHidden: [],
                   customSections: template,
-                },
+                }
           );
         } catch {
           // Best-effort; visit content is unaffected by a default-save failure.
@@ -685,7 +728,10 @@ function AssessmentSectionChrome({
   const handleAddCustomSection = useCallback(() => {
     if (disabled) return;
     if (customSections.length >= ASSESSMENT_CUSTOM_SECTIONS_MAX) return;
-    dispatch({ type: "ADD_ASSESSMENT_CUSTOM_SECTION", section: createEmptyCustomSubsection() });
+    dispatch({
+      type: "ADD_ASSESSMENT_CUSTOM_SECTION",
+      section: createEmptyCustomSubsection(),
+    });
     setSectionManagerOpen(false);
   }, [customSections.length, disabled, dispatch]);
 
@@ -693,11 +739,13 @@ function AssessmentSectionChrome({
     (sectionId: AssessmentSectionId) => {
       if (disabled || !isCustomBlockSectionId(sectionId)) return;
       const blockId = customBlockIdFromSectionId(sectionId);
-      const index = customSections.findIndex((section) => section.id === blockId);
+      const index = customSections.findIndex(
+        (section) => section.id === blockId
+      );
       if (index === -1) return;
       dispatch({ type: "REMOVE_ASSESSMENT_CUSTOM_SECTION", index });
     },
-    [customSections, disabled, dispatch],
+    [customSections, disabled, dispatch]
   );
 
   const clearDragState = useCallback(() => {
@@ -710,7 +758,7 @@ function AssessmentSectionChrome({
       if (disabled) return;
       setSectionOrder((prev) => moveSectionInOrder(prev, index, direction));
     },
-    [disabled],
+    [disabled]
   );
 
   const handleMoveSectionById = useCallback(
@@ -719,7 +767,7 @@ function AssessmentSectionChrome({
       if (index === -1) return;
       handleMoveByDirection(index, direction);
     },
-    [handleMoveByDirection, sectionOrder],
+    [handleMoveByDirection, sectionOrder]
   );
 
   const handleToggleSectionHidden = useCallback(
@@ -727,10 +775,10 @@ function AssessmentSectionChrome({
       setHiddenIds((prev) =>
         prev.includes(sectionId)
           ? prev.filter((id) => id !== sectionId)
-          : [...prev, sectionId],
+          : [...prev, sectionId]
       );
     },
-    [],
+    []
   );
 
   const dragHandleProps = useCallback(
@@ -746,14 +794,14 @@ function AssessmentSectionChrome({
         clearDragState();
       },
     }),
-    [clearDragState, disabled],
+    [clearDragState, disabled]
   );
 
   const handleSectionDragOver = useCallback(
     (
       targetIndex: number,
       sectionId: AssessmentSectionId,
-      e: DragEvent<HTMLDivElement>,
+      e: DragEvent<HTMLDivElement>
     ) => {
       const sourceId = dragSectionIdRef.current;
       if (disabled || !sourceId || sourceId === sectionId) return;
@@ -765,7 +813,7 @@ function AssessmentSectionChrome({
       const intent = resolveSectionDropIntent(e.clientY, rect);
       setDropTarget({ index: targetIndex, intent });
     },
-    [disabled],
+    [disabled]
   );
 
   const handleDropOnTarget = useCallback(
@@ -782,22 +830,29 @@ function AssessmentSectionChrome({
       });
       clearDragState();
     },
-    [clearDragState, disabled],
+    [clearDragState, disabled]
   );
 
   const diagnosisCount = normalizeDiagnoses(state.fields.diagnoses).length;
   const AssessmentTabIcon = SOAP_TAB_HEADING_ICON.assessment;
-  const showAllHiddenEmptyState = layoutHydrated && visibleSectionOrder.length === 0;
+  const showAllHiddenEmptyState =
+    layoutHydrated && visibleSectionOrder.length === 0;
 
   const sectionBody = (sectionId: StaticAssessmentSectionId): ReactNode => {
     switch (sectionId) {
       case "diagnoses":
-        return <DiagnosisRowsList disabled={disabled} hideHeading />;
+        return (
+          <>
+            <LastVisitDiagnosesStrip disabled={disabled} />
+            <DiagnosisRowsList disabled={disabled} hideHeading />
+          </>
+        );
       case "known_conditions":
         return <OngoingProblemsZone disabled={disabled} hideHeading />;
       case "assessment_notes":
         return (
           <div>
+            <LastVisitAssessmentNotesStrip disabled={disabled} />
             <label htmlFor="assessmentNote" className="sr-only">
               Additional notes (private)
             </label>
@@ -817,7 +872,7 @@ function AssessmentSectionChrome({
   };
 
   const sectionMeta = (
-    sectionId: StaticAssessmentSectionId,
+    sectionId: StaticAssessmentSectionId
   ): {
     title: string;
     testId: string;
@@ -833,7 +888,10 @@ function AssessmentSectionChrome({
           count: diagnosisCount > 0 ? diagnosisCount : null,
           icon: Stethoscope,
           actions: !disabled ? (
-            <AssessmentSectionTemplateButton scope="diagnoses" disabled={disabled} />
+            <AssessmentSectionTemplateButton
+              scope="diagnoses"
+              disabled={disabled}
+            />
           ) : undefined,
         };
       case "known_conditions":
@@ -868,10 +926,12 @@ function AssessmentSectionChrome({
 
   const renderCustomBlockInner = (
     sectionId: AssessmentSectionId,
-    leadingActions: ReactNode,
+    leadingActions: ReactNode
   ): ReactNode => {
     const blockId = customBlockIdFromSectionId(sectionId);
-    const blockIndex = customSections.findIndex((section) => section.id === blockId);
+    const blockIndex = customSections.findIndex(
+      (section) => section.id === blockId
+    );
     const block = customSections[blockIndex];
     if (!block) return null;
 
@@ -879,6 +939,7 @@ function AssessmentSectionChrome({
       <CustomSubsectionBlock
         section={block}
         sectionId={sectionId}
+        lastVisitScope="assessment"
         disabled={disabled}
         scrollSelector={ASSESSMENT_SCROLL_TOP_SELECTOR}
         leadingActions={leadingActions}
@@ -886,8 +947,13 @@ function AssessmentSectionChrome({
         pendingChildFocusId={focusChildIdRef.current}
         onUpdate={(patch) => {
           if (disabled) return;
-          if (focusBlockIdRef.current === block.id) focusBlockIdRef.current = null;
-          dispatch({ type: "UPDATE_ASSESSMENT_CUSTOM_SECTION", index: blockIndex, patch });
+          if (focusBlockIdRef.current === block.id)
+            focusBlockIdRef.current = null;
+          dispatch({
+            type: "UPDATE_ASSESSMENT_CUSTOM_SECTION",
+            index: blockIndex,
+            patch,
+          });
         }}
         onRemove={() => handleRemoveCustomSection(sectionId)}
         onAddChild={() => {
@@ -984,7 +1050,9 @@ function AssessmentSectionChrome({
               : undefined
           }
           defaultOpen={
-            collapseControlled ? undefined : ASSESSMENT_COLLAPSE_DEFAULTS[sectionId]
+            collapseControlled
+              ? undefined
+              : ASSESSMENT_COLLAPSE_DEFAULTS[sectionId]
           }
         >
           {sectionBody(sectionId)}
@@ -1017,7 +1085,7 @@ function AssessmentSectionChrome({
           dragSectionIdRef.current = sourceId;
           const intent = resolveSectionDropIntent(
             e.clientY,
-            e.currentTarget.getBoundingClientRect(),
+            e.currentTarget.getBoundingClientRect()
           );
           handleDropOnTarget(index, intent);
         }}
@@ -1032,14 +1100,14 @@ function AssessmentSectionChrome({
       <section
         id="rx-diagnosis"
         aria-label="Assessment"
-        className="space-y-3"
+        className="space-y-4"
         data-testid="assessment-scroll-top"
       >
         {heading !== null ? (
           <h3
             className={soapTabHeadingClassName(
               "assessment",
-              RX_SECTION_HEADING_CLASS,
+              RX_SECTION_HEADING_CLASS
             )}
           >
             <AssessmentTabIcon
@@ -1051,49 +1119,54 @@ function AssessmentSectionChrome({
         ) : null}
 
         {!disabled ? (
-          <div className="flex min-h-9 flex-nowrap items-center gap-0.5">
-            <div className="mr-auto flex min-w-0 items-center">
-              <SoapTabLayoutSaveStatus
-                saved={
-                  layoutSaveStatus === "saved" ||
-                  collapseSaveStatus === "saved" ||
-                  visibilitySaveStatus === "saved"
-                }
-                error={
-                  layoutSaveStatus === "error" ||
-                  collapseSaveStatus === "error" ||
-                  visibilitySaveStatus === "error"
-                }
+          <SoapPaneChromePortal>
+            <div
+              className="flex min-h-9 flex-nowrap items-center gap-0.5"
+              data-testid="soap-tab-chrome"
+            >
+              <div className="mr-auto flex min-w-0 items-center">
+                <SoapTabLayoutSaveStatus
+                  saved={
+                    layoutSaveStatus === "saved" ||
+                    collapseSaveStatus === "saved" ||
+                    visibilitySaveStatus === "saved"
+                  }
+                  error={
+                    layoutSaveStatus === "error" ||
+                    collapseSaveStatus === "error" ||
+                    visibilitySaveStatus === "error"
+                  }
+                />
+              </div>
+              <SoapTabExpandCollapseClearButtons
+                expandTestId="assessment-expand-all"
+                collapseTestId="assessment-collapse-all"
+                clearTestId="assessment-clear-all"
+                onExpandAll={expandAllSections}
+                onCollapseAll={collapseAllSections}
+                onClearAll={() => setClearConfirmOpen(true)}
+                clearDisabled={!hasClearableAssessment}
+              />
+              <AssessmentWholeTemplateButton
+                disabled={disabled}
+                knownConditionsBridge={knownConditionsBridge}
+              />
+              <ManageAssessmentSectionsMenu
+                disabled={disabled}
+                open={sectionManagerOpen}
+                onOpenChange={setSectionManagerOpen}
+                sectionOrder={sectionOrder}
+                mountableIds={mountableIds}
+                hiddenIds={hiddenIds}
+                fields={state.fields}
+                customSections={customSections}
+                onToggleHidden={handleToggleSectionHidden}
+                onMoveSection={handleMoveSectionById}
+                onAddCustomSection={handleAddCustomSection}
+                onRemoveCustomSection={handleRemoveCustomSection}
               />
             </div>
-            <SoapTabExpandCollapseClearButtons
-              expandTestId="assessment-expand-all"
-              collapseTestId="assessment-collapse-all"
-              clearTestId="assessment-clear-all"
-              onExpandAll={expandAllSections}
-              onCollapseAll={collapseAllSections}
-              onClearAll={() => setClearConfirmOpen(true)}
-              clearDisabled={!hasClearableAssessment}
-            />
-            <AssessmentWholeTemplateButton
-              disabled={disabled}
-              knownConditionsBridge={knownConditionsBridge}
-            />
-            <ManageAssessmentSectionsMenu
-              disabled={disabled}
-              open={sectionManagerOpen}
-              onOpenChange={setSectionManagerOpen}
-              sectionOrder={sectionOrder}
-              mountableIds={mountableIds}
-              hiddenIds={hiddenIds}
-              fields={state.fields}
-              customSections={customSections}
-              onToggleHidden={handleToggleSectionHidden}
-              onMoveSection={handleMoveSectionById}
-              onAddCustomSection={handleAddCustomSection}
-              onRemoveCustomSection={handleRemoveCustomSection}
-            />
-          </div>
+          </SoapPaneChromePortal>
         ) : null}
 
         {showAllHiddenEmptyState ? (
@@ -1111,10 +1184,17 @@ function AssessmentSectionChrome({
             </button>
           </div>
         ) : !layoutHydrated ? (
-          <SoapSectionListSkeleton testId="assessment-layout-skeleton" rows={3} />
+          <SoapSectionListSkeleton
+            testId="assessment-layout-skeleton"
+            rows={3}
+          />
         ) : (
           <>
             {visibleSectionOrder.map((sectionId) => renderSection(sectionId))}
+            <LastVisitUnmatchedCustomSectionsStrip
+              scope="assessment"
+              disabled={disabled}
+            />
             {!disabled ? (
               <SoapTabCustomSectionsAddChrome
                 disabled={disabled}

@@ -82,7 +82,7 @@ export interface CollapsibleContainerProps {
    */
   nestedSticky?: boolean;
   /**
-   * `section` — top-level SOAP containers (muted panel, always-on sticky chrome).
+   * `section` — top-level SOAP containers (card on the pane well).
    * `subsection` — nested rows inside a section (flat `bg-card`, exam-card parity:
    * shadow only when open, inline collapsed preview, body separated by `border-t`).
    */
@@ -271,17 +271,18 @@ export function CollapsibleContainer({
       aria-label={ariaLabel}
       className={cn(
         // Named container so header stacking follows *pane* width, not viewport.
-        "@container/collapsible min-w-0 rounded-md",
+        "@container/collapsible min-w-0",
+        isSubsection ? "rounded-md" : "rounded-lg",
         // Flat surfaces (depth tone off).
         !tone.active &&
           cn(
-            "border border-border",
-            isSubsection ? "bg-card" : "bg-muted/20",
+            "border border-border bg-card",
+            !isSubsection && "shadow-cockpit-section",
             l1FamilyAccent,
           ),
-        // L1 section well — container, not a card; family accent strip only here.
+        // L1 section card — white on the pane well; family accent strip only here.
         depthToneSectionWell &&
-          cn("border border-border/30", tone.surface, l1FamilyAccent),
+          cn("border border-border/30 shadow-cockpit-section", tone.surface, l1FamilyAccent),
         // L2+ raised inset card — shadow + white surface, no accent rail.
         depthToneRaisedCard && cn("border border-border/60 shadow-sm", tone.surface),
         // L3+ nested recessed row inside a raised card.
@@ -291,7 +292,7 @@ export function CollapsibleContainer({
           !depthToneSectionWell &&
           !depthToneRaisedCard &&
           !depthToneNestedWell &&
-          cn("border border-border", tone.surface, l1FamilyAccent),
+          cn("border border-border shadow-cockpit-section", tone.surface, l1FamilyAccent),
         pinned && "scroll-mt-[var(--sticky-stack,0px)]",
         className,
       )}
@@ -308,7 +309,7 @@ export function CollapsibleContainer({
           isSubsection && !tone.active ? "rounded-t-md bg-card" : "rounded-md",
           // Raised-card header fill only while unpinned — pinned always paints
           // opaque `bg-background` below so body content cannot bleed through
-          // translucent depth-tone wells (`bg-muted/30`).
+          // the section card (`bg-card`).
           depthToneRaisedCard &&
             cn("rounded-t-md", !pinned && "bg-card", open && "border-b border-border/60"),
           pinned &&

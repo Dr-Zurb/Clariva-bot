@@ -2,8 +2,10 @@ import Link from "next/link";
 import { getAppointmentById } from "@/lib/api";
 import { redirect } from "next/navigation";
 import { cn } from "@/lib/utils";
-import PatientProfilePage from "@/components/patient-profile/PatientProfilePage";
+import { ConsultVitalsHydrated } from "@/components/patient-profile/streaming/ConsultVitalsHydrated";
 import { requireDashboardAuth } from "@/lib/auth/server-user";
+import { getQueryClient } from "@/lib/query/client";
+import { prefetchConsultVitalsQueries } from "@/lib/query/prefetch/consult-vitals";
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -16,6 +18,8 @@ interface PageProps {
  * Kill-switch removed cvd-02 (2026-05-24).
  *
  * Fetches by ID; 404/403 handling; no PHI in logs.
+ * np-08: overlaps consult-vitals prefetch with the appointment fetch so the
+ * cockpit strip + Objective grid hydrate from cache on first paint.
  * @see e-task-4; FRONTEND_RECIPES F4
  */
 
@@ -24,6 +28,7 @@ export default async function AppointmentDetailPage({
 }: PageProps) {
   const { id } = await params;
   const { token } = await requireDashboardAuth();
+  void prefetchConsultVitalsQueries(getQueryClient(), token, id);
 
   let appointment:
     | Awaited<ReturnType<typeof getAppointmentById>>["data"]["appointment"]
@@ -78,6 +83,6 @@ export default async function AppointmentDetailPage({
   if (!appointment) return null;
 
   return (
-    <PatientProfilePage appointment={appointment} token={token} />
+    <ConsultVitalsHydrated appointment={appointment} token={token} />
   );
 }

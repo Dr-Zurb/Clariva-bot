@@ -60,6 +60,18 @@
 
     /* Radius */
     --radius: 0.5rem;
+
+    /* Cockpit density (ckd-05) — header hidden on appointment-detail */
+    --app-header-h: 3.5rem;
+    --cockpit-header-h: 2.5rem;
+    /* Desk → pane well → card. Warm paper, not cool slate — large fields
+       at 90–94% L read as gray slabs. Keep saturation low so it stays paper. */
+    --cockpit-canvas: 36 10% 96%;
+    --cockpit-pane: 36 8% 98.5%;
+  }
+
+  [data-cockpit-focus="true"] {
+    --app-header-h: 0px;
   }
 
   .dark {
@@ -92,6 +104,9 @@
     --warning-foreground: 24 10% 10%;
     --info: 199 89% 55%;
     --info-foreground: 222 47% 7%;
+
+    --cockpit-canvas: 222 40% 5%;
+    --cockpit-pane: 222 40% 8%;
   }
 }
 

@@ -19,6 +19,7 @@ export interface RxFormActionsRegistration {
   finishSending: boolean;
   openTemplates?: () => void;
   openPreview?: () => void;
+  prewarmPreview?: () => void;
   canSend?: boolean;
 }
 

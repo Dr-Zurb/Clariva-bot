@@ -6,10 +6,10 @@
  */
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type RefObject } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { RX_FIELD_INPUT_CLASS } from "@/components/cockpit/rx/sections/field-styles";
 import { queryKeys } from "@/lib/query/keys";
-import { STALE } from "@/lib/query/stale";
+import { usePatientMedicalBackgroundQuery } from "@/hooks/queries/usePatientMedicalBackgroundQuery";
 import {
   invalidatePatientConditions,
   type InvalidatePatientConditionsOptions,
@@ -61,7 +61,6 @@ import {
   archivePatientMedication,
   createPatientCondition,
   createPatientMedication,
-  getPatientMedicalBackground,
   updatePatientCondition,
   updatePatientMedicalBackgroundNotes,
   updatePatientMedication,
@@ -279,23 +278,8 @@ export default function ProblemOrientedMedicalSection({
   const registerPmhBridge = useRegisterPmhTemplateBridge();
   const { notifyDuplicate, noticePortal } = useChartMedDuplicateNotice();
 
-  // PMH conditions + meds live in the shared query cache, so a chronic-condition
-  // write here and a write in the Assessment "Known conditions" zone (which reads
-  // the same conditions) refresh each other with no manual page reload.
-  const backgroundQuery = useQuery({
-    queryKey: bgKey,
-    queryFn: async (): Promise<MedicalBackgroundGrouped> => {
-      const res = await getPatientMedicalBackground(token, patientId);
-      const data = res.data.medicalBackground;
-      return {
-        ...data,
-        conditions: data.conditions.map((c) => normalizeCondition(c)),
-        notes: data.notes ?? null,
-      };
-    },
-    enabled: Boolean(token) && Boolean(patientId),
-    staleTime: STALE.CLINICAL,
-  });
+  // Shared medical-background query — ribbon + Assessment stay in sync.
+  const backgroundQuery = usePatientMedicalBackgroundQuery(token, patientId);
 
   const background = backgroundQuery.data ?? null;
   const loadError =

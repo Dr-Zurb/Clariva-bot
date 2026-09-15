@@ -3,42 +3,51 @@
 /**
  * Mid-consult leave guard for the appointment cockpit.
  *
- * When active (live / wrap_up):
- * - Same-origin link clicks (header ← back, queue-rail patient tabs, sidebar)
- *   hold navigation and notify the shell (`onLeaveIntent`) so the Done
- *   preview can open with Stay / Leave — resume later.
- * - Browser Back/Forward is intercepted via a guard history entry.
- * - Tab close / refresh: native beforeunload only.
+ * When active (live / wrap_up), every same-origin leave — header ←,
+ * queue-rail tabs, sidebar, browser Back — is leave-and-resume-later:
+ * flush the draft, mark Incomplete, navigate. A prescription is issued
+ * only when Done marks it done.
  *
- * Finish / send live on the preview. This guard only owns stay, resume
- * later, and continuing the pending navigation after a successful wrap-up.
+ * Tab close / refresh: native beforeunload plus the Incomplete marker.
  */
 
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState, type MutableRefObject } from "react";
-import {
-  clearConsultSteppedAway,
-  markConsultSteppedAway,
-} from "@/lib/cockpit/consult-stepped-away";
-
-export type CockpitLeaveExit = {
-  stay: () => void;
-  resumeLater: () => void;
-  continueAfterFinish: () => void;
-};
+import { useEffect, useRef, type MutableRefObject } from "react";
+import { markConsultSteppedAway } from "@/lib/cockpit/consult-stepped-away";
 
 export type CockpitLeaveGuardProps = {
   appointmentId: string;
-  /** True while the doctor should be prompted before leaving. */
+  /** True while leaving a live / wrap-up consult should resume later. */
   active: boolean;
-  /** Non-null while a leave is held — shell opens the Done preview. */
-  onLeaveIntent?: (exit: CockpitLeaveExit | null) => void;
+  /** Persist the in-progress draft before the route changes. */
+  beforeLeave?: () => void | Promise<void>;
 };
 
 const GUARD_KEY = "__cockpitLeave" as const;
+/** Don't stall header Back / prev / next if draft flush hangs. */
+const FLUSH_BUDGET_MS = 1500;
 
 function isGuardState(state: unknown): boolean {
   return typeof state === "object" && state !== null && GUARD_KEY in state;
+}
+
+/** Drop the dummy guard entry in place. `history.go(-1)` races with `router.push`. */
+function stripDummyGuard(): void {
+  if (!isGuardState(window.history.state)) return;
+  const current = window.history.state;
+  const rest =
+    current && typeof current === "object"
+      ? Object.fromEntries(
+          Object.entries(current as Record<string, unknown>).filter(
+            ([key]) => key !== GUARD_KEY
+          )
+        )
+      : null;
+  window.history.replaceState(
+    rest && Object.keys(rest).length > 0 ? rest : null,
+    "",
+    window.location.href
+  );
 }
 
 type PendingLeave = { kind: "href"; href: string } | { kind: "history" };
@@ -62,40 +71,53 @@ function continueLeave(
   ignoreNextPopRef: MutableRefObject<boolean>
 ) {
   if (pending.kind === "href") {
-    if (isGuardState(window.history.state)) {
-      ignoreNextPopRef.current = true;
-      window.history.go(-1);
-    }
-    setTimeout(() => navigateClient(router, pending.href), 0);
+    stripDummyGuard();
+    navigateClient(router, pending.href);
     return;
   }
   ignoreNextPopRef.current = true;
   window.history.back();
 }
 
+function flushWithBudget(
+  flush: (() => void | Promise<void>) | undefined
+): Promise<void> {
+  const work = Promise.resolve(flush?.()).catch(() => undefined);
+  const budget = new Promise<void>((resolve) => {
+    window.setTimeout(resolve, FLUSH_BUDGET_MS);
+  });
+  return Promise.race([work, budget]);
+}
+
 export function CockpitLeaveGuard({
   appointmentId,
   active,
-  onLeaveIntent,
+  beforeLeave,
 }: CockpitLeaveGuardProps): null {
   const router = useRouter();
-  const [pendingLeave, setPendingLeave] = useState<PendingLeave | null>(null);
 
   const activeRef = useRef(active);
   activeRef.current = active;
 
   const ignoreNextPopRef = useRef(false);
-  const allowNextNavRef = useRef(false);
-  const pendingRef = useRef<PendingLeave | null>(null);
-  pendingRef.current = pendingLeave;
-  const onLeaveIntentRef = useRef(onLeaveIntent);
-  onLeaveIntentRef.current = onLeaveIntent;
+  const leavingRef = useRef(false);
+  const beforeLeaveRef = useRef(beforeLeave);
+  beforeLeaveRef.current = beforeLeave;
+  const appointmentIdRef = useRef(appointmentId);
+  appointmentIdRef.current = appointmentId;
+  const routerRef = useRef(router);
+  routerRef.current = router;
 
-  useEffect(() => {
-    if (!active) {
-      setPendingLeave(null);
-    }
-  }, [active]);
+  const beginLeaveRef = useRef<(pending: PendingLeave) => void>(() => {});
+  beginLeaveRef.current = (pending: PendingLeave) => {
+    if (leavingRef.current) return;
+    leavingRef.current = true;
+    void flushWithBudget(beforeLeaveRef.current).then(() => {
+      markConsultSteppedAway(appointmentIdRef.current);
+      continueLeave(routerRef.current, pending, ignoreNextPopRef);
+      leavingRef.current = false;
+    });
+  };
 
   useEffect(() => {
     if (!active) return;
@@ -106,13 +128,15 @@ export function CockpitLeaveGuard({
   useEffect(() => {
     if (active) return;
     if (!isGuardState(window.history.state)) return;
-    ignoreNextPopRef.current = true;
-    window.history.go(-1);
+    // history.go(-1) races with post-finish router.push (AdvanceToNextPatient)
+    // and pops back to this visit — toast says Next, URL never changes.
+    stripDummyGuard();
   }, [active]);
 
   useEffect(() => {
     if (!active) return;
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      markConsultSteppedAway(appointmentIdRef.current);
       e.preventDefault();
       e.returnValue = "";
     };
@@ -127,12 +151,8 @@ export function CockpitLeaveGuard({
         ignoreNextPopRef.current = false;
         return;
       }
-      if (allowNextNavRef.current) {
-        allowNextNavRef.current = false;
-        return;
-      }
       if (!activeRef.current) return;
-      setPendingLeave({ kind: "history" });
+      beginLeaveRef.current({ kind: "history" });
     };
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
@@ -141,10 +161,6 @@ export function CockpitLeaveGuard({
   useEffect(() => {
     if (!active) return;
     const onClickCapture = (e: MouseEvent) => {
-      if (allowNextNavRef.current) {
-        allowNextNavRef.current = false;
-        return;
-      }
       if (e.defaultPrevented) return;
       const target = e.target;
       if (!(target instanceof Element)) return;
@@ -167,53 +183,11 @@ export function CockpitLeaveGuard({
       if (nextPath === currentPath) return;
       e.preventDefault();
       e.stopPropagation();
-      setPendingLeave({ kind: "href", href: nextPath });
+      beginLeaveRef.current({ kind: "href", href: nextPath });
     };
     document.addEventListener("click", onClickCapture, true);
     return () => document.removeEventListener("click", onClickCapture, true);
   }, [active]);
-
-  useEffect(() => {
-    if (!pendingLeave) {
-      onLeaveIntentRef.current?.(null);
-      return;
-    }
-
-    const stay = () => {
-      setPendingLeave((prev) => {
-        if (prev?.kind === "history") {
-          if (!isGuardState(window.history.state)) {
-            window.history.pushState(
-              { [GUARD_KEY]: 1 },
-              "",
-              window.location.href
-            );
-          }
-        }
-        return null;
-      });
-    };
-
-    const resumeLater = () => {
-      const p = pendingRef.current;
-      if (!p) return;
-      markConsultSteppedAway(appointmentId);
-      setPendingLeave(null);
-      allowNextNavRef.current = true;
-      continueLeave(router, p, ignoreNextPopRef);
-    };
-
-    const continueAfterFinish = () => {
-      const p = pendingRef.current;
-      if (!p) return;
-      clearConsultSteppedAway(appointmentId);
-      setPendingLeave(null);
-      allowNextNavRef.current = true;
-      continueLeave(router, p, ignoreNextPopRef);
-    };
-
-    onLeaveIntentRef.current?.({ stay, resumeLater, continueAfterFinish });
-  }, [appointmentId, pendingLeave, router]);
 
   return null;
 }

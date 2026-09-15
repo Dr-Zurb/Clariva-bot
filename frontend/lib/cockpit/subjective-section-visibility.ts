@@ -1,11 +1,25 @@
 import {
   isCustomBlockSectionId,
   SUBJECTIVE_SECTION_LABELS,
+  type StaticSubjectiveSectionId,
   type SubjectiveSectionId,
 } from "@/lib/cockpit/subjective-section-order";
 
-/** Per-doctor hidden section ids (delta set — absent ⇒ visible). */
+/** Per-doctor hidden section ids. Empty stored set ⇒ factory lean default. */
 export type SubjectiveSectionHiddenSet = SubjectiveSectionId[];
+
+/**
+ * Visible at factory default. Surgical / family / social history stay one tap
+ * away in the manage-sections menu (same contract as CORE_CLASSIC_VITAL_KEYS).
+ */
+export const CORE_SUBJECTIVE_DEFAULT_VISIBLE_IDS = [
+  "chief_complaints",
+  "patient_background",
+  "allergies",
+  "free_text_notes",
+] as const;
+
+const CORE_VISIBLE_SET = new Set<string>(CORE_SUBJECTIVE_DEFAULT_VISIBLE_IDS);
 
 const STATIC_SECTION_ID_SET = new Set<string>(Object.keys(SUBJECTIVE_SECTION_LABELS));
 
@@ -23,6 +37,42 @@ function toMountableSet(mountableIds: readonly SubjectiveSectionId[]): ReadonlyS
 
 function toHiddenSet(hiddenIds: readonly string[]): ReadonlySet<string> {
   return new Set(hiddenIds);
+}
+
+export interface DefaultSubjectiveLayout {
+  defaultHidden: SubjectiveSectionId[];
+}
+
+/** Factory default: complaints, background, allergies, notes on; history hidden. */
+export function resolveDefaultSubjectiveLayout(): DefaultSubjectiveLayout {
+  const defaultHidden = (Object.keys(SUBJECTIVE_SECTION_LABELS) as StaticSubjectiveSectionId[]).filter(
+    (id) => id !== "custom_subsections" && !CORE_VISIBLE_SET.has(id),
+  );
+  return { defaultHidden };
+}
+
+/**
+ * Layer the doctor override over the factory default. Stored set wins wholesale
+ * when present; otherwise the lean default applies (vitals / V3-D3 analogue).
+ */
+export function resolveEffectiveSubjectiveHidden({
+  storedHidden,
+}: {
+  storedHidden: readonly string[];
+}): { hidden: SubjectiveSectionId[] } {
+  const seed = resolveDefaultSubjectiveLayout();
+  const source = storedHidden.length > 0 ? storedHidden : seed.defaultHidden;
+  const seen = new Set<SubjectiveSectionId>();
+  const hidden: SubjectiveSectionId[] = [];
+
+  for (const id of source) {
+    if (!isKnownSubjectiveSectionId(id)) continue;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    hidden.push(id);
+  }
+
+  return { hidden };
 }
 
 /**
@@ -97,7 +147,7 @@ export function serializeHiddenIds(ids: readonly string[]): string {
   return JSON.stringify([...ids].sort());
 }
 
-/** Load the doctor's stored hidden section set (empty = nothing hidden). */
+/** Load the doctor's stored hidden section set (empty = factory lean default). */
 export async function fetchSubjectiveSectionHidden(
   token: string,
 ): Promise<SubjectiveSectionHiddenSet> {

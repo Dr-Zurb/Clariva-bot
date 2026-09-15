@@ -224,6 +224,8 @@ export interface ConsultTimelineArtifacts {
   hasSnapshots: boolean;
 }
 
+export type ConsultTranscriptStatus = "completed" | "processing" | "queued" | "failed";
+
 export interface ConsultTimelineEntry {
   sessionId: string;
   appointmentId: string;
@@ -231,6 +233,8 @@ export interface ConsultTimelineEntry {
   modality: "text" | "voice" | "video";
   durationSeconds: number | null;
   artifacts: ConsultTimelineArtifacts;
+  /** From consultation_transcripts — the review offer gates on this, not hasTranscript. */
+  transcriptStatus: ConsultTranscriptStatus | null;
 }
 
 export interface ConsultTimelineData {

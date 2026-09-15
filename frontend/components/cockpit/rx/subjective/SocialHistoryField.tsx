@@ -9,6 +9,7 @@ import {
 import { SUBJECTIVE_SCROLL_TOP_SELECTOR } from "@/lib/cockpit/exam-card-scroll";
 import { useAccordionOpenState } from "@/lib/cockpit/accordion-open-state";
 import { SectionReorderLeadingAction } from "@/components/cockpit/rx/subjective/SortableSectionShell";
+import { LastVisitSocialHistoryStrip } from "@/components/cockpit/rx/last-visit/LastVisitParchiStrips";
 import { historyFieldInputId } from "@/lib/cockpit/history-field-chips";
 import {
   auditCClinicalHint,
@@ -1123,6 +1124,7 @@ export function SocialHistoryField({
       leadingActions={<SectionReorderLeadingAction sectionId="social_history" />}
       actions={!disabled ? <SubjectiveSectionTemplateButton scope="social_history" /> : undefined}
     >
+        <LastVisitSocialHistoryStrip disabled={disabled} />
         <CollapsibleContainer
           title="Tobacco, alcohol & drugs"
           toggleLabel="Toggle tobacco, alcohol and drugs cluster"

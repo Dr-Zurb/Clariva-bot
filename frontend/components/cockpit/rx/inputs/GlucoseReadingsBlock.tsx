@@ -2,7 +2,11 @@
 
 import { useCallback, useState } from "react";
 import { ChevronDown } from "lucide-react";
-import { useRxForm, type GlucoseContext, type GlucoseReading } from "@/components/cockpit/rx/RxFormContext";
+import {
+  useRxForm,
+  type GlucoseContext,
+  type GlucoseReading,
+} from "@/components/cockpit/rx/RxFormContext";
 import {
   RangeFlagIcon,
   type GhostVitals,
@@ -22,7 +26,11 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import {
   BP_MEASURED_BY_OPTIONS,
@@ -51,7 +59,13 @@ import {
 } from "@/lib/cockpit/measurement-context";
 import { LastVisitVitalGhost } from "@/components/cockpit/rx/inputs/LastVisitVitalGhost";
 import { ReadingNoteField } from "@/components/cockpit/rx/inputs/VitalNoteField";
+import {
+  useVitalExtrasOpen,
+  VitalExtrasPanel,
+  VitalExtrasToggle,
+} from "@/components/cockpit/rx/inputs/VitalExtrasCollapse";
 import { VitalRangeHelp } from "@/components/cockpit/rx/inputs/VitalRangeHelp";
+import { glucoseReadingExtrasHaveData } from "@/lib/cockpit/vital-extras";
 import { RemoveIconButton } from "@/components/cockpit/rx/subjective/RemoveIconButton";
 import {
   glucoseReadingsGridSpanClass,
@@ -82,7 +96,9 @@ const GLUCOSE_PRESET_LABELS: Record<GlucosePresetKind, string> = {
 };
 
 function resolveGlucosePreset(kind: GlucosePresetKind): GlucoseReading[] {
-  return kind === "fasting_2h_pp" ? glucosePresetFastingAnd2hPp() : glucosePresetOgtt3Point();
+  return kind === "fasting_2h_pp"
+    ? glucosePresetFastingAnd2hPp()
+    : glucosePresetOgtt3Point();
 }
 
 function roundForUnit(value: number, precision: number): number {
@@ -149,7 +165,10 @@ function GlucoseInlineSelect<T extends string>({
 }) {
   return (
     <div className="flex min-w-0 max-w-full items-center gap-1">
-      <label htmlFor={id} className="shrink-0 text-[11px] text-muted-foreground">
+      <label
+        htmlFor={id}
+        className="shrink-0 text-[11px] text-muted-foreground"
+      >
         {label}
       </label>
       <select
@@ -158,7 +177,7 @@ function GlucoseInlineSelect<T extends string>({
         onChange={(e) => onChange((e.target.value || null) as T | null)}
         className={cn(
           RX_FIELD_INPUT_CLASS,
-          "mt-0 h-7 min-w-0 max-w-full flex-1 py-1 text-xs",
+          "mt-0 h-7 min-w-0 max-w-full flex-1 py-1 text-xs"
         )}
         style={{ maxWidth: "100%", width: `min(100%, ${minWidthCh}ch)` }}
         aria-label={ariaLabel}
@@ -190,7 +209,9 @@ function GlucoseOverrideSelect<T extends string>({
   ariaLabel: string;
 }) {
   const displayValue = value == null || value === defaultValue ? "" : value;
-  const overrideOptions = options.filter((option) => option.value !== defaultValue);
+  const overrideOptions = options.filter(
+    (option) => option.value !== defaultValue
+  );
 
   return (
     <select
@@ -236,12 +257,14 @@ function GlucoseReadingContextFields({
   const visit = hydrateMeasurementContextFromPrescription({
     measurementContext: state.fields.vitalsMeasurementContext,
   });
-  const visitOverride = state.fields.vitalsProvenanceOverrides[GLUCOSE_VITAL_KEY];
+  const visitOverride =
+    state.fields.vitalsProvenanceOverrides[GLUCOSE_VITAL_KEY];
   const measuredByDefault = visit.measuredBy as BpMeasuredBy;
   const settingDefault = visit.setting as BpSetting;
 
   const updateVisitOverride = (patch: Partial<MeasurementContext>) => {
-    const current = state.fields.vitalsProvenanceOverrides[GLUCOSE_VITAL_KEY] ?? {};
+    const current =
+      state.fields.vitalsProvenanceOverrides[GLUCOSE_VITAL_KEY] ?? {};
     const next: MeasurementContext = { ...current };
 
     if ("measuredBy" in patch) {
@@ -254,7 +277,9 @@ function GlucoseReadingContextFields({
     }
 
     const nextMap = { ...state.fields.vitalsProvenanceOverrides };
-    if (!hasVitalProvenanceOverride(next, state.fields.vitalsMeasurementContext)) {
+    if (
+      !hasVitalProvenanceOverride(next, state.fields.vitalsMeasurementContext)
+    ) {
       delete nextMap[GLUCOSE_VITAL_KEY];
     } else {
       nextMap[GLUCOSE_VITAL_KEY] = next;
@@ -266,13 +291,17 @@ function GlucoseReadingContextFields({
     <div
       className={cn(
         "grid gap-2",
-        variant === "popover" ? "grid-cols-1" : "grid-cols-1 @[18rem]/vitals:grid-cols-2",
+        variant === "popover"
+          ? "grid-cols-1"
+          : "grid-cols-1 @[18rem]/vitals:grid-cols-2"
       )}
       data-testid="glucose-reading-context-override"
     >
       {sections === "all" || sections === "device" ? (
         <div className="flex flex-col gap-1">
-          <span className="text-[11px] font-medium text-muted-foreground">Device</span>
+          <span className="text-[11px] font-medium text-muted-foreground">
+            Device
+          </span>
           <GlucoseOverrideSelect
             value={reading.device}
             defaultValue={blockDevice}
@@ -286,18 +315,24 @@ function GlucoseReadingContextFields({
       {sections === "all" || sections === "visit" ? (
         <>
           <div className="flex flex-col gap-1">
-            <span className="text-[11px] font-medium text-muted-foreground">Measured by</span>
+            <span className="text-[11px] font-medium text-muted-foreground">
+              Measured by
+            </span>
             <GlucoseOverrideSelect
               value={visitOverride?.measuredBy}
               defaultValue={measuredByDefault}
-              defaultLabel={bpMeasuredByLabel(measuredByDefault) ?? measuredByDefault}
+              defaultLabel={
+                bpMeasuredByLabel(measuredByDefault) ?? measuredByDefault
+              }
               onChange={(measuredBy) => updateVisitOverride({ measuredBy })}
               options={BP_MEASURED_BY_OPTIONS}
               ariaLabel="Glucose measured by override"
             />
           </div>
           <div className="flex flex-col gap-1">
-            <span className="text-[11px] font-medium text-muted-foreground">Setting</span>
+            <span className="text-[11px] font-medium text-muted-foreground">
+              Setting
+            </span>
             <GlucoseOverrideSelect
               value={visitOverride?.setting}
               defaultValue={settingDefault}
@@ -330,12 +365,14 @@ function GlucoseReadingProvenanceControl({
 }) {
   const { state, setField } = useRxForm();
   const hasDeviceOverride = readingHasGlucoseDeviceOverride(reading);
-  const visitOverride = state.fields.vitalsProvenanceOverrides[GLUCOSE_VITAL_KEY];
+  const visitOverride =
+    state.fields.vitalsProvenanceOverrides[GLUCOSE_VITAL_KEY];
   const hasVisitOverride = hasVitalProvenanceOverride(
     visitOverride,
-    state.fields.vitalsMeasurementContext,
+    state.fields.vitalsMeasurementContext
   );
-  const showExpandedPanel = hasDeviceOverride || (isPrimary && hasVisitOverride);
+  const showExpandedPanel =
+    hasDeviceOverride || (isPrimary && hasVisitOverride);
   const showTrigger = !hasDeviceOverride && !hasVisitOverride;
 
   const clearDeviceOverride = () => {
@@ -382,9 +419,15 @@ function GlucoseReadingProvenanceControl({
           </div>
         ) : null}
         {isPrimary && hasVisitOverride ? (
-          <div className={cn(hasDeviceOverride && "border-t border-border/40 pt-2")}>
+          <div
+            className={cn(
+              hasDeviceOverride && "border-t border-border/40 pt-2"
+            )}
+          >
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <span className="text-[11px] text-muted-foreground">Differs from visit default</span>
+              <span className="text-[11px] text-muted-foreground">
+                Differs from visit default
+              </span>
               <Button
                 type="button"
                 variant="ghost"
@@ -466,24 +509,44 @@ function GlucoseReadingRow({
   const def = resolveVital("vitalsGlucoseMgDl");
   const activeUnit =
     def.displayUnits.find((u) => u.unit === unitSymbol) ?? def.displayUnits[0]!;
-  const glucoseCategory = categorizeVital("vitalsGlucoseMgDl", reading.valueMgDl, {
-    ...rangeCtx,
-    glucoseTiming: reading.timing,
-  });
+  const glucoseCategory = categorizeVital(
+    "vitalsGlucoseMgDl",
+    reading.valueMgDl,
+    {
+      ...rangeCtx,
+      glucoseTiming: reading.timing,
+    }
+  );
   const isPrimary = index === 0;
   const timingMinCh = vitalSelectMinWidthCh(GLUCOSE_TIMING_OPTIONS, "Timing");
+  const { state } = useRxForm();
+  const extras = useVitalExtrasOpen(
+    glucoseReadingExtrasHaveData(reading, state.fields, isPrimary)
+  );
 
   const displayValue: number | "" =
     reading.valueMgDl == null
       ? ""
-      : roundForUnit(activeUnit.fromCanonical(reading.valueMgDl), activeUnit.precision);
+      : roundForUnit(
+          activeUnit.fromCanonical(reading.valueMgDl),
+          activeUnit.precision
+        );
   const ghostDisplay =
     ghost?.vitalsGlucoseMgDl == null
       ? null
-      : roundForUnit(activeUnit.fromCanonical(ghost.vitalsGlucoseMgDl), activeUnit.precision);
+      : roundForUnit(
+          activeUnit.fromCanonical(ghost.vitalsGlucoseMgDl),
+          activeUnit.precision
+        );
 
-  const min = roundForUnit(activeUnit.fromCanonical(def.hardMin), activeUnit.precision);
-  const max = roundForUnit(activeUnit.fromCanonical(def.hardMax), activeUnit.precision);
+  const min = roundForUnit(
+    activeUnit.fromCanonical(def.hardMin),
+    activeUnit.precision
+  );
+  const max = roundForUnit(
+    activeUnit.fromCanonical(def.hardMax),
+    activeUnit.precision
+  );
 
   return (
     <div
@@ -517,10 +580,14 @@ function GlucoseReadingRow({
             }
             className={cn(RX_FIELD_INPUT_CLASS, "mt-0 w-20 shrink-0 sm:w-24")}
             aria-label={
-              isPrimary ? "Blood glucose value" : `Reading ${index + 1} blood glucose value`
+              isPrimary
+                ? "Blood glucose value"
+                : `Reading ${index + 1} blood glucose value`
             }
           />
-          <span className="whitespace-nowrap text-xs text-muted-foreground">{activeUnit.unit}</span>
+          <span className="whitespace-nowrap text-xs text-muted-foreground">
+            {activeUnit.unit}
+          </span>
           <RangeFlagIcon label="Blood Glucose" category={glucoseCategory} />
         </div>
 
@@ -531,6 +598,14 @@ function GlucoseReadingRow({
             testId={`glucose-remove-reading-${index}`}
           />
         ) : null}
+        <VitalExtrasToggle
+          open={extras.open}
+          onToggle={extras.toggle}
+          label={
+            isPrimary ? "blood glucose" : `blood glucose reading ${index + 1}`
+          }
+          testId={`glucose-reading-extras-toggle-${index}`}
+        />
       </div>
 
       {isPrimary &&
@@ -539,83 +614,96 @@ function GlucoseReadingRow({
         <LastVisitVitalGhost
           label="Blood glucose"
           displayText={`${ghostDisplay} ${activeUnit.unit}`}
-          onApply={() => onChange({ ...reading, valueMgDl: ghost.vitalsGlucoseMgDl! })}
+          onApply={() =>
+            onChange({ ...reading, valueMgDl: ghost.vitalsGlucoseMgDl! })
+          }
           testId="glucose-primary-last-visit"
         />
       ) : null}
 
-      <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-        {showSequenceLabel ? (
-          <div className="flex shrink-0 items-center gap-1">
-            <label
-              htmlFor={`glucose-reading-label-${index}`}
-              className="shrink-0 text-[11px] text-muted-foreground"
-            >
-              Label
-            </label>
-            <input
-              id={`glucose-reading-label-${index}`}
-              type="text"
-              value={reading.sequenceLabel ?? ""}
-              onChange={(e) =>
-                onChange({
-                  ...reading,
-                  sequenceLabel: e.target.value.length > 0 ? e.target.value : null,
-                })
-              }
-              placeholder="e.g. 2h PP"
-              maxLength={24}
-              className={cn(
-                RX_FIELD_INPUT_CLASS,
-                "mt-0 h-7 w-24 max-w-full py-1 text-xs placeholder:text-muted-foreground",
-              )}
-              aria-label={
-                isPrimary ? "Primary glucose reading label" : `Reading ${index + 1} label`
-              }
-              data-testid={`glucose-reading-label-${index}`}
-            />
-          </div>
-        ) : null}
-        <GlucoseInlineSelect
-          id={`glucose-reading-timing-${index}`}
-          label="Timing"
-          value={reading.timing}
-          onChange={(timing) => onChange({ ...reading, timing })}
-          options={GLUCOSE_TIMING_OPTIONS}
-          placeholder="—"
-          ariaLabel={isPrimary ? "Glucose measurement timing" : `Reading ${index + 1} timing`}
-          minWidthCh={Math.min(timingMinCh, 12)}
-        />
-        <ReadingNoteField
-          id={`glucose-reading-note-${index}`}
-          value={reading.note ?? ""}
-          onChange={(next) =>
-            onChange({
-              ...reading,
-              note: next.length > 0 ? next : null,
-            })
-          }
-          label={isPrimary ? "Primary glucose reading" : `Reading ${index + 1}`}
-          testId={`glucose-reading-note-${index}`}
-        />
+      <VitalExtrasPanel open={extras.open}>
+        <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+          {showSequenceLabel ? (
+            <div className="flex shrink-0 items-center gap-1">
+              <label
+                htmlFor={`glucose-reading-label-${index}`}
+                className="shrink-0 text-[11px] text-muted-foreground"
+              >
+                Label
+              </label>
+              <input
+                id={`glucose-reading-label-${index}`}
+                type="text"
+                value={reading.sequenceLabel ?? ""}
+                onChange={(e) =>
+                  onChange({
+                    ...reading,
+                    sequenceLabel:
+                      e.target.value.length > 0 ? e.target.value : null,
+                  })
+                }
+                placeholder="e.g. 2h PP"
+                maxLength={24}
+                className={cn(
+                  RX_FIELD_INPUT_CLASS,
+                  "mt-0 h-7 w-24 max-w-full py-1 text-xs placeholder:text-muted-foreground"
+                )}
+                aria-label={
+                  isPrimary
+                    ? "Primary glucose reading label"
+                    : `Reading ${index + 1} label`
+                }
+                data-testid={`glucose-reading-label-${index}`}
+              />
+            </div>
+          ) : null}
+          <GlucoseInlineSelect
+            id={`glucose-reading-timing-${index}`}
+            label="Timing"
+            value={reading.timing}
+            onChange={(timing) => onChange({ ...reading, timing })}
+            options={GLUCOSE_TIMING_OPTIONS}
+            placeholder="—"
+            ariaLabel={
+              isPrimary
+                ? "Glucose measurement timing"
+                : `Reading ${index + 1} timing`
+            }
+            minWidthCh={Math.min(timingMinCh, 12)}
+          />
+          <ReadingNoteField
+            id={`glucose-reading-note-${index}`}
+            value={reading.note ?? ""}
+            onChange={(next) =>
+              onChange({
+                ...reading,
+                note: next.length > 0 ? next : null,
+              })
+            }
+            label={
+              isPrimary ? "Primary glucose reading" : `Reading ${index + 1}`
+            }
+            testId={`glucose-reading-note-${index}`}
+          />
+          <GlucoseReadingProvenanceControl
+            reading={reading}
+            index={index}
+            isPrimary={isPrimary}
+            blockContext={blockContext}
+            onChange={onChange}
+            placement="inline-trigger"
+          />
+        </div>
+
         <GlucoseReadingProvenanceControl
           reading={reading}
           index={index}
           isPrimary={isPrimary}
           blockContext={blockContext}
           onChange={onChange}
-          placement="inline-trigger"
+          placement="expanded-panel"
         />
-      </div>
-
-      <GlucoseReadingProvenanceControl
-        reading={reading}
-        index={index}
-        isPrimary={isPrimary}
-        blockContext={blockContext}
-        onChange={onChange}
-        placement="expanded-panel"
-      />
+      </VitalExtrasPanel>
     </div>
   );
 }
@@ -629,8 +717,11 @@ export function GlucoseReadingsBlock({
   const readings = state.fields.vitalsGlucoseReadings;
   const glucoseContext = state.fields.vitalsGlucoseContext;
   const def = resolveVital("vitalsGlucoseMgDl");
-  const [unitSymbol, setUnitSymbol] = useState<string>(def.displayUnits[0].unit);
-  const [pendingPresetKind, setPendingPresetKind] = useState<GlucosePresetKind | null>(null);
+  const [unitSymbol, setUnitSymbol] = useState<string>(
+    def.displayUnits[0].unit
+  );
+  const [pendingPresetKind, setPendingPresetKind] =
+    useState<GlucosePresetKind | null>(null);
 
   const blockDevice = glucoseContext.device ?? "glucometer";
   const deviceMinCh = vitalSelectMinWidthCh(GLUCOSE_DEVICE_OPTIONS, "Device");
@@ -639,21 +730,21 @@ export function GlucoseReadingsBlock({
     (next: GlucoseReading[]) => {
       setField("vitalsGlucoseReadings", next);
     },
-    [setField],
+    [setField]
   );
 
   const updateContext = useCallback(
     (next: GlucoseContext) => {
       setField("vitalsGlucoseContext", next);
     },
-    [setField],
+    [setField]
   );
 
   const updateRow = useCallback(
     (index: number, next: GlucoseReading) => {
       updateReadings(readings.map((row, i) => (i === index ? next : row)));
     },
-    [readings, updateReadings],
+    [readings, updateReadings]
   );
 
   const addReading = useCallback(() => {
@@ -666,14 +757,14 @@ export function GlucoseReadingsBlock({
       if (readings.length <= 1) return;
       updateReadings(readings.filter((_, i) => i !== index));
     },
-    [readings, updateReadings],
+    [readings, updateReadings]
   );
 
   const applyPreset = useCallback(
     (preset: GlucoseReading[]) => {
       updateReadings(mergeGlucoseReadingsWithPreset(readings, preset));
     },
-    [readings, updateReadings],
+    [readings, updateReadings]
   );
 
   const requestPreset = useCallback(
@@ -685,7 +776,7 @@ export function GlucoseReadingsBlock({
       }
       applyPreset(preset);
     },
-    [applyPreset, readings],
+    [applyPreset, readings]
   );
 
   const confirmPendingPreset = useCallback(() => {
@@ -694,7 +785,9 @@ export function GlucoseReadingsBlock({
     setPendingPresetKind(null);
   }, [applyPreset, pendingPresetKind]);
 
-  const pendingPresetLabel = pendingPresetKind ? GLUCOSE_PRESET_LABELS[pendingPresetKind] : "";
+  const pendingPresetLabel = pendingPresetKind
+    ? GLUCOSE_PRESET_LABELS[pendingPresetKind]
+    : "";
   const gridSpanClass = glucoseReadingsGridSpanClass(readings.length);
   const primaryReading = readings[0];
   const primaryGlucoseCategory =
@@ -731,7 +824,10 @@ export function GlucoseReadingsBlock({
             label="Device"
             value={blockDevice}
             onChange={(device) =>
-              updateContext({ ...glucoseContext, device: device ?? blockDevice })
+              updateContext({
+                ...glucoseContext,
+                device: device ?? blockDevice,
+              })
             }
             options={GLUCOSE_DEVICE_OPTIONS}
             placeholder="Device"
@@ -751,7 +847,8 @@ export function GlucoseReadingsBlock({
               canRemove={readings.length > 1}
               showSequenceLabel={
                 readings.length > 1 ||
-                (reading.sequenceLabel != null && reading.sequenceLabel.length > 0)
+                (reading.sequenceLabel != null &&
+                  reading.sequenceLabel.length > 0)
               }
               unitSymbol={unitSymbol}
               rangeCtx={rangeCtx}
@@ -800,15 +897,19 @@ export function GlucoseReadingsBlock({
         >
           <AlertDialogContent data-testid="glucose-preset-drop-dialog">
             <AlertDialogHeader>
-              <AlertDialogTitle>Reformat to {pendingPresetLabel}?</AlertDialogTitle>
+              <AlertDialogTitle>
+                Reformat to {pendingPresetLabel}?
+              </AlertDialogTitle>
               <AlertDialogDescription>
-                This shapes your glucose readings into the {pendingPresetLabel} layout. Extra
-                readings with data will be removed.
+                This shapes your glucose readings into the {pendingPresetLabel}{" "}
+                layout. Extra readings with data will be removed.
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
               <AlertDialogCancel>Cancel</AlertDialogCancel>
-              <AlertDialogAction onClick={confirmPendingPreset}>Reformat</AlertDialogAction>
+              <AlertDialogAction onClick={confirmPendingPreset}>
+                Reformat
+              </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>

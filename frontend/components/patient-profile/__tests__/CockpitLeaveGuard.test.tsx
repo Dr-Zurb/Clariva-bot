@@ -1,5 +1,5 @@
 /**
- * CockpitLeaveGuard — intercept leave; Stay / resume later / continue after finish.
+ * CockpitLeaveGuard — every in-app leave is resume-later (no Stay / preview).
  */
 
 import React from "react";
@@ -13,10 +13,7 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ push, replace: vi.fn(), back: vi.fn() }),
 }));
 
-import {
-  CockpitLeaveGuard,
-  type CockpitLeaveExit,
-} from "@/components/patient-profile/CockpitLeaveGuard";
+import { CockpitLeaveGuard } from "@/components/patient-profile/CockpitLeaveGuard";
 import {
   clearConsultSteppedAway,
   isConsultSteppedAway,
@@ -35,101 +32,73 @@ describe("CockpitLeaveGuard", () => {
 
   afterEach(() => {
     clearConsultSteppedAway("appt-1");
+    vi.useRealTimers();
     vi.restoreAllMocks();
   });
 
   it("does not intercept when inactive", () => {
-    const onLeaveIntent = vi.fn();
-    render(
-      <CockpitLeaveGuard
-        appointmentId="appt-1"
-        active={false}
-        onLeaveIntent={onLeaveIntent}
-      />
-    );
-    expect(onLeaveIntent).not.toHaveBeenCalledWith(
-      expect.objectContaining({
-        stay: expect.any(Function),
-      })
-    );
-  });
-
-  it("holds a same-origin click and notifies the shell", async () => {
-    const onLeaveIntent = vi.fn();
     render(
       <>
         <a href="/dashboard/opd-today">Back to OPD</a>
-        <CockpitLeaveGuard
-          appointmentId="appt-1"
-          active
-          onLeaveIntent={onLeaveIntent}
-        />
+        <CockpitLeaveGuard appointmentId="appt-1" active={false} />
       </>
     );
 
     fireEvent.click(screen.getByRole("link", { name: "Back to OPD" }));
 
-    await waitFor(() => {
-      expect(onLeaveIntent).toHaveBeenCalledWith(
-        expect.objectContaining({
-          stay: expect.any(Function),
-          resumeLater: expect.any(Function),
-          continueAfterFinish: expect.any(Function),
-        })
-      );
-    });
-    expect(screen.queryByText("Leave this consult?")).not.toBeInTheDocument();
-    expect(push).not.toHaveBeenCalled();
-  });
-
-  it("Stay clears the intent without navigating", async () => {
-    let exit: CockpitLeaveExit | null = null;
-    render(
-      <>
-        <a href="/dashboard/opd-today">Back to OPD</a>
-        <CockpitLeaveGuard
-          appointmentId="appt-1"
-          active
-          onLeaveIntent={(next) => {
-            exit = next;
-          }}
-        />
-      </>
-    );
-
-    fireEvent.click(screen.getByRole("link", { name: "Back to OPD" }));
-    await waitFor(() => {
-      expect(exit).not.toBeNull();
-    });
-    exit!.stay();
-
-    await waitFor(() => {
-      expect(exit).toBeNull();
-    });
     expect(push).not.toHaveBeenCalled();
     expect(isConsultSteppedAway("appt-1")).toBe(false);
   });
 
-  it("Leave — resume later marks incomplete and navigates without finishing", async () => {
-    let exit: CockpitLeaveExit | null = null;
+  it("same-origin click leaves immediately as resume later", async () => {
+    render(
+      <>
+        <a href="/dashboard/opd-today">Back to OPD</a>
+        <CockpitLeaveGuard appointmentId="appt-1" active />
+      </>
+    );
+
+    fireEvent.click(screen.getByRole("link", { name: "Back to OPD" }));
+
+    await waitFor(() => {
+      expect(push).toHaveBeenCalledWith("/dashboard/opd-today");
+    });
+    expect(isConsultSteppedAway("appt-1")).toBe(true);
+    expect(screen.queryByText("Leave this consult?")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /leave — resume later/i })
+    ).not.toBeInTheDocument();
+  });
+
+  it("flushes the draft before navigating", async () => {
+    let resolveFlush: (() => void) | undefined;
+    const beforeLeave = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveFlush = resolve;
+        })
+    );
+
     render(
       <>
         <a href="/dashboard/opd-today">Back to OPD</a>
         <CockpitLeaveGuard
           appointmentId="appt-1"
           active
-          onLeaveIntent={(next) => {
-            exit = next;
-          }}
+          beforeLeave={beforeLeave}
         />
       </>
     );
 
     fireEvent.click(screen.getByRole("link", { name: "Back to OPD" }));
+
     await waitFor(() => {
-      expect(exit).not.toBeNull();
+      expect(beforeLeave).toHaveBeenCalledTimes(1);
     });
-    exit!.resumeLater();
+    expect(push).not.toHaveBeenCalled();
+    expect(isConsultSteppedAway("appt-1")).toBe(false);
+
+    resolveFlush?.();
 
     await waitFor(() => {
       expect(push).toHaveBeenCalledWith("/dashboard/opd-today");
@@ -137,32 +106,110 @@ describe("CockpitLeaveGuard", () => {
     expect(isConsultSteppedAway("appt-1")).toBe(true);
   });
 
-  it("continueAfterFinish navigates and clears stepped-away", async () => {
-    let exit: CockpitLeaveExit | null = null;
+  it("still leaves when the draft flush rejects", async () => {
+    const beforeLeave = vi.fn(() => Promise.reject(new Error("save failed")));
+
     render(
       <>
         <a href="/dashboard/appointments/appt-2?from=opd-today">Next patient</a>
         <CockpitLeaveGuard
           appointmentId="appt-1"
           active
-          onLeaveIntent={(next) => {
-            exit = next;
-          }}
+          beforeLeave={beforeLeave}
         />
       </>
     );
 
     fireEvent.click(screen.getByRole("link", { name: "Next patient" }));
-    await waitFor(() => {
-      expect(exit).not.toBeNull();
-    });
-    exit!.continueAfterFinish();
 
     await waitFor(() => {
       expect(push).toHaveBeenCalledWith(
         "/dashboard/appointments/appt-2?from=opd-today"
       );
     });
-    expect(isConsultSteppedAway("appt-1")).toBe(false);
+    expect(isConsultSteppedAway("appt-1")).toBe(true);
+  });
+
+  it("browser Back leaves immediately as resume later", async () => {
+    const back = vi.spyOn(window.history, "back");
+
+    render(<CockpitLeaveGuard appointmentId="appt-1" active />);
+
+    fireEvent.popState(window);
+
+    await waitFor(() => {
+      expect(back).toHaveBeenCalled();
+    });
+    expect(isConsultSteppedAway("appt-1")).toBe(true);
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it("marks Incomplete on tab close", () => {
+    render(<CockpitLeaveGuard appointmentId="appt-1" active />);
+
+    window.dispatchEvent(new Event("beforeunload"));
+
+    expect(isConsultSteppedAway("appt-1")).toBe(true);
+  });
+
+  it("href leave strips the dummy guard with replaceState, not go(-1)", async () => {
+    const go = vi.spyOn(window.history, "go");
+
+    render(
+      <>
+        <a href="/dashboard/opd-today">Back to OPD</a>
+        <CockpitLeaveGuard appointmentId="appt-1" active />
+      </>
+    );
+    expect(isGuardState(window.history.state)).toBe(true);
+
+    fireEvent.click(screen.getByRole("link", { name: "Back to OPD" }));
+
+    await waitFor(() => {
+      expect(push).toHaveBeenCalledWith("/dashboard/opd-today");
+    });
+    expect(go).not.toHaveBeenCalled();
+  });
+
+  it("leaves even if draft flush hangs", async () => {
+    vi.useFakeTimers();
+    const beforeLeave = vi.fn(() => new Promise<void>(() => {}));
+
+    render(
+      <>
+        <a href="/dashboard/appointments/appt-2">Next patient</a>
+        <CockpitLeaveGuard
+          appointmentId="appt-1"
+          active
+          beforeLeave={beforeLeave}
+        />
+      </>
+    );
+
+    fireEvent.click(screen.getByRole("link", { name: "Next patient" }));
+    expect(push).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(1500);
+
+    expect(push).toHaveBeenCalledWith("/dashboard/appointments/appt-2");
+    expect(isConsultSteppedAway("appt-1")).toBe(true);
+    vi.useRealTimers();
+  });
+
+  it("clears the guard with replaceState, not go(-1), when the visit ends", () => {
+    const go = vi.spyOn(window.history, "go");
+    const { rerender } = render(
+      <CockpitLeaveGuard appointmentId="appt-1" active />
+    );
+    expect(isGuardState(window.history.state)).toBe(true);
+
+    rerender(<CockpitLeaveGuard appointmentId="appt-1" active={false} />);
+
+    expect(go).not.toHaveBeenCalled();
+    expect(isGuardState(window.history.state)).toBe(false);
   });
 });
+
+function isGuardState(state: unknown): boolean {
+  return typeof state === "object" && state !== null && "__cockpitLeave" in state;
+}

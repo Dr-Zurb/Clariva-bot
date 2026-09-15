@@ -38,6 +38,13 @@ interface ChartMedAiProposalProps {
    * Absent on the explicit "✨ Refine" path (dismiss via ✕ / Esc).
    */
   onKeepAsTyped?: () => void;
+  /**
+   * Card-refine: merge this suggestion into the existing row (empty fields +
+   * rename). When set, the first row shows Apply instead of Add.
+   */
+  onApply?: (index: number) => void;
+  renameTo?: string | null;
+  onRename?: () => void;
 }
 
 /** One-line sig summary for an AI-detected medicine. */
@@ -95,6 +102,9 @@ export function ChartMedAiProposal({
   onAddAll,
   onDismiss,
   onKeepAsTyped,
+  onApply,
+  renameTo,
+  onRename,
 }: ChartMedAiProposalProps) {
   const hasSuggestions = status === "ready" && medicines.length > 0;
   const showKeep = Boolean(onKeepAsTyped);
@@ -121,7 +131,8 @@ export function ChartMedAiProposal({
 
   function activateActiveRow() {
     if (hasSuggestions && activeIdx < medicines.length) {
-      onAdd(activeIdx);
+      if (activeIdx === 0 && onApply) onApply(0);
+      else onAdd(activeIdx);
       return;
     }
     if (showKeep) {
@@ -198,7 +209,7 @@ export function ChartMedAiProposal({
             onClick={onAddAll}
             className="rounded-sm border border-primary/40 px-2 py-0.5 text-xs font-medium text-primary hover:bg-primary/10"
           >
-            Add all
+            {onApply ? "Apply all" : "Add all"}
           </button>
         ) : null}
         {!showKeep ? (
@@ -234,7 +245,9 @@ export function ChartMedAiProposal({
                       role="option"
                       aria-selected={active}
                       tabIndex={active ? 0 : -1}
-                      onClick={() => onAdd(index)}
+                      onClick={() =>
+                        index === 0 && onApply ? onApply(index) : onAdd(index)
+                      }
                       onMouseEnter={() => setActiveIdx(index)}
                       className={cn(
                         "flex w-full items-start gap-1.5 rounded-sm px-1.5 py-1.5 text-left transition-colors",
@@ -242,7 +255,11 @@ export function ChartMedAiProposal({
                           ? "bg-primary/15 font-medium text-foreground ring-1 ring-primary/30"
                           : "bg-background/60 text-foreground hover:bg-muted/50",
                       )}
-                      aria-label={`Add ${med.name}`}
+                      aria-label={
+                        index === 0 && onApply
+                          ? `Apply ${med.name} to this medicine`
+                          : `Add ${med.name}`
+                      }
                       data-testid={`chart-med-ai-accept-${index}`}
                     >
                       <div className="min-w-0 flex-1">
@@ -255,9 +272,30 @@ export function ChartMedAiProposal({
                           </span>
                         ) : null}
                       </div>
-                      <span className="flex shrink-0 items-center gap-0.5 rounded-sm border border-primary/40 px-1.5 py-0.5 text-xs font-medium text-primary">
-                        <Plus className="h-3 w-3" aria-hidden />
-                        Add
+                      <span className="flex shrink-0 flex-wrap items-center justify-end gap-1">
+                        {index === 0 && renameTo && onRename ? (
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              onRename();
+                            }}
+                            className="rounded-sm border border-border px-1.5 py-0.5 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
+                            aria-label={`Use name ${renameTo}`}
+                          >
+                            Use “{renameTo}”
+                          </button>
+                        ) : null}
+                        {index === 0 && onApply ? (
+                          <span className="rounded-sm border border-primary/40 px-1.5 py-0.5 text-xs font-medium text-primary">
+                            Apply
+                          </span>
+                        ) : (
+                          <span className="flex items-center gap-0.5 rounded-sm border border-primary/40 px-1.5 py-0.5 text-xs font-medium text-primary">
+                            <Plus className="h-3 w-3" aria-hidden />
+                            Add
+                          </span>
+                        )}
                       </span>
                     </button>
                   </li>

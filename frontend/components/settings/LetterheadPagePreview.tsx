@@ -10,7 +10,11 @@ import {
   type ReactNode,
 } from "react";
 import { PatientRxIdentityBlock } from "@/components/ehr/PatientRxIdentityBlock";
-import { layoutInvestigationsForRx } from "@/lib/cockpit/investigations-rx-layout";
+import {
+  layoutInvestigationsForRx,
+  rowsFromInvestigationItems,
+  type InvestigationsRxRow,
+} from "@/lib/cockpit/investigations-rx-layout";
 import {
   letterheadBuiltinBackgroundUrl,
   letterheadHeading,
@@ -69,6 +73,8 @@ export interface LetterheadPagePreviewModel {
   patientTextSize?: LetterheadTextSize;
   bodyTextSize?: LetterheadTextSize;
   registrationNumber?: string | null;
+  /** Date shown in the Halo Aid generation credit for a live prescription. */
+  generatedAtLabel?: string | null;
   /** When set, the page shows this visit instead of the settings sample. */
   rx?: LetterheadPreviewRx;
 }
@@ -92,8 +98,11 @@ export interface LetterheadPreviewRx {
   guardianRelation?: string | null;
   address?: string | null;
   medicalRecordNumber?: string | null;
+  allergies?: string | null;
   cc?: string | null;
   hopi?: string | null;
+  vitals?: string | null;
+  examinationFindings?: string | null;
   socialHistory?: string | null;
   diagnosis?: string | null;
   investigations?: string | null;
@@ -202,7 +211,11 @@ const SAMPLE = {
   guardianRelation: "father",
   address: "Buter Kalan, Amritsar",
   medicalRecordNumber: "P-00042",
+  allergies: "Penicillin (severe — rash)",
   cc: "Fever and cough for 3 days.",
+  hopi: "Fever highest in the evenings. No breathlessness.",
+  vitals: "BP 118/76 · HR 92 · Temp 38.2 °C · SpO₂ 98%",
+  examinationFindings: "Throat congested. Chest clear.",
   diagnosis: "Viral upper respiratory infection",
   medicine: {
     name: "Paracetamol 500 mg",
@@ -371,7 +384,11 @@ function previewFields(model: LetterheadPagePreviewModel) {
       guardianRelation: SAMPLE.guardianRelation,
       address: SAMPLE.address,
       medicalRecordNumber: SAMPLE.medicalRecordNumber,
+      allergies: SAMPLE.allergies,
       cc: SAMPLE.cc,
+      hopi: SAMPLE.hopi,
+      vitals: SAMPLE.vitals,
+      examinationFindings: SAMPLE.examinationFindings,
       diagnosis: SAMPLE.diagnosis,
       advice: SAMPLE.advice,
       followUp: SAMPLE.followUp,
@@ -478,16 +495,51 @@ function investigationTick(
   item: string,
   i: number,
   bodyStyle: { fontSize: number; lineHeight?: number },
+  variant: "major" | "member" = "major",
 ) {
   return (
     <div key={`${i}-${item}`} className="flex items-start gap-1.5">
       <span
         aria-hidden
-        className="mt-[3px] h-2.5 w-2.5 shrink-0 border border-[#0F172A]"
+        className={
+          variant === "member"
+            ? "mt-[4px] h-2 w-2 shrink-0 rounded-full border border-[#0F172A]"
+            : "mt-[3px] h-2.5 w-2.5 shrink-0 border border-[#0F172A]"
+        }
       />
       <span className="text-[#0F172A]" style={bodyStyle}>
         {item}
       </span>
+    </div>
+  );
+}
+
+function investigationRow(
+  row: InvestigationsRxRow,
+  key: string,
+  bodyStyle: { fontSize: number; lineHeight?: number },
+  tightTop?: boolean,
+) {
+  if (row.kind === "pair") {
+    return (
+      <div
+        key={key}
+        className={`grid grid-cols-2 gap-x-3 gap-y-0.5${tightTop ? "" : " mt-0.5"}`}
+      >
+        {row.labels.map((item, i) => investigationTick(item, i, bodyStyle))}
+      </div>
+    );
+  }
+  return (
+    <div key={key} className={tightTop ? "mt-1.5" : "mt-1"}>
+      {investigationTick(row.label, 0, bodyStyle)}
+      {row.members.length > 0 ? (
+        <div className="ml-4 grid grid-cols-2 gap-x-3 gap-y-0.5">
+          {row.members.map((item, i) =>
+            investigationTick(item, i, bodyStyle, "member"),
+          )}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -511,33 +563,18 @@ function investigationsBlocks(
       </section>,
     ];
   }
-  const rows: string[][] = [];
-  for (let i = 0; i < layout.items.length; i += 2) {
-    rows.push(layout.items.slice(i, i + 2));
-  }
+  const rows = rowsFromInvestigationItems(layout.items);
+  const first = rows[0];
   const nodes: ReactNode[] = [
     <section key="inv-start" data-inv-start className="mb-3">
       <h3 className="font-semibold uppercase tracking-wide" style={labelStyle}>
         Investigations
       </h3>
-      {rows[0] ? (
-        <div className="mt-0.5 grid grid-cols-2 gap-x-3 gap-y-0.5">
-          {rows[0].map((item, i) => investigationTick(item, i, bodyStyle))}
-        </div>
-      ) : null}
+      {first ? investigationRow(first, "inv-row-0", bodyStyle) : null}
     </section>,
   ];
   rows.slice(1).forEach((row, i) => {
-    nodes.push(
-      <div
-        key={`inv-row-${i + 1}`}
-        className="grid grid-cols-2 gap-x-3 gap-y-0.5"
-      >
-        {row.map((item, j) =>
-          investigationTick(item, (i + 1) * 2 + j, bodyStyle),
-        )}
-      </div>,
-    );
+    nodes.push(investigationRow(row, `inv-row-${i + 1}`, bodyStyle, true));
   });
   if (layout.note) {
     nodes.push(
@@ -669,8 +706,32 @@ function buildPreviewBlocks(
     if (node) blocks.push(node);
   };
 
+  if (model.preset === "preprinted") {
+    const issuer = [
+      model.doctorName.trim() && model.doctorName.trim() !== "Doctor"
+        ? model.doctorName.trim()
+        : null,
+      model.qualifications.trim() || null,
+      model.specialty?.trim() || null,
+      model.registrationNumber?.trim()
+        ? `Reg. No.: ${model.registrationNumber.trim()}`
+        : null,
+    ]
+      .filter(Boolean)
+      .join(" · ");
+    pushSection("Doctor", issuer || null);
+  }
+  pushSection("Allergies", live ? rx?.allergies : fields.allergies);
   pushSection("Chief complaint", fields.cc);
-  pushSection("History of present illness", live ? rx?.hopi : null);
+  pushSection(
+    "History of present illness",
+    live ? rx?.hopi : fields.hopi,
+  );
+  pushSection("Vitals", live ? rx?.vitals : fields.vitals);
+  pushSection(
+    "Examination",
+    live ? rx?.examinationFindings : fields.examinationFindings,
+  );
   pushSection("Social history", live ? rx?.socialHistory : null);
   blocks.push(...customSectionBlocks(live ? rx?.customSubsections : undefined, labelStyle, bodyStyle));
   pushSection("Provisional diagnosis", fields.diagnosis);
@@ -707,17 +768,9 @@ function buildPreviewBlocks(
           Rx
         </h3>
         <RxTableHead labelPx={labelPx} bodyStyle={bodyStyle} />
-        <RxMedicineRows
-          medicines={medicines}
-          start={0}
-          end={1}
-          labelPx={labelPx}
-          bodyStyle={bodyStyle}
-        />
       </div>,
     );
-    medicines.slice(1).forEach((_, offset) => {
-      const i = offset + 1;
+    medicines.forEach((_, i) => {
       blocks.push(
         <RxMedicineRows
           key={`rx-row-${i}`}
@@ -782,7 +835,7 @@ function Footer({
         <span>
           {model.hideHaloCredit
             ? "Rx-ID …PREVIEW"
-            : "Generated by Halo Aid on 24 Aug 2026 · Rx-ID …PREVIEW"}
+            : `Generated by Halo Aid on ${model.generatedAtLabel?.trim() || SAMPLE.visitDateLabel} · Rx-ID …PREVIEW`}
         </span>
         <span>
           Page {pageNumber} of {pageCount}

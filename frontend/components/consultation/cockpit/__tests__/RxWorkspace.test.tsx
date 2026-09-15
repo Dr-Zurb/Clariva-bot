@@ -17,6 +17,10 @@ import {
   RxFormProvider,
   createEmptyRxFormFields,
 } from "@/components/cockpit/rx/RxFormContext";
+import { RxLockProvider } from "@/components/cockpit/rx/useRxLock";
+import { PrescriptionFormShellProvider } from "@/components/cockpit/rx/PrescriptionFormShellContext";
+import type { RxFormProviderSetup } from "@/components/cockpit/rx/useRxFormProviderSetup";
+import type { PrescriptionWithRelations } from "@/types/prescription";
 
 const prescriptionIdRef = { current: null as string | null };
 
@@ -118,6 +122,187 @@ describe("RxWorkspace cockpitMode prop", () => {
   it("keeps its own scrollport when cockpitMode is off", () => {
     const { container } = renderWithProvider({ cockpitMode: false });
     expect(container.querySelector(".overflow-y-auto")).toBeTruthy();
+  });
+});
+
+describe("RxWorkspace read-only notice (rxl-02)", () => {
+  it("states that an ended visit is read-only", () => {
+    renderWithProvider({ state: "ended" });
+    const notice = screen.getByTestId("rx-readonly-notice");
+    expect(notice).toHaveTextContent(
+      "This prescription is read-only. The consultation has ended.",
+    );
+    expect(notice).not.toHaveTextContent(/15|amend/i);
+    expect(
+      screen.queryByLabelText(
+        "Prescription is read-only — the consultation has ended",
+      ),
+    ).not.toBeInTheDocument();
+  });
+
+  it("does not show the notice on an open visit", () => {
+    renderWithProvider({ state: "live" });
+    expect(screen.queryByTestId("rx-readonly-notice")).not.toBeInTheDocument();
+  });
+
+  it("hides the notice on an ended visit when the current note is open (rxl-19)", () => {
+    render(
+      <RxFormProvider
+        appointmentId="appt-1"
+        patientId="pat-1"
+        token="test-token"
+        entryMode="structured"
+        initialFields={createEmptyRxFormFields()}
+        autosaveEnabled={false}
+        prescriptionIdRef={prescriptionIdRef}
+        onPrescriptionCreated={() => {}}
+      >
+        <RxLockProvider cockpitState="ended" noteClosed={false}>
+          <SideSheetHost>
+            <RxWorkspace
+              appointmentId="appt-1"
+              patientId="pat-1"
+              token="test-token"
+              state="ended"
+            />
+          </SideSheetHost>
+        </RxLockProvider>
+      </RxFormProvider>,
+    );
+    expect(screen.queryByTestId("rx-readonly-notice")).not.toBeInTheDocument();
+  });
+
+  it("does not leave a full-bleed pointer-events-none overlay on an ended visit", () => {
+    const { container } = renderWithProvider({ state: "ended" });
+    expect(
+      container.querySelector(".pointer-events-none.absolute.inset-0"),
+    ).toBeNull();
+  });
+});
+
+describe("RxWorkspace revise strip (rxl-25)", () => {
+  function issuedShell(
+    rx: Partial<PrescriptionWithRelations>,
+  ): RxFormProviderSetup {
+    return {
+      loading: false,
+      initialFields: createEmptyRxFormFields(),
+      entryMode: "structured",
+      setEntryMode: vi.fn(),
+      prescription: {
+        id: "rx-1",
+        attested_at: "2026-09-10T04:45:00.000Z",
+        version: 1,
+        ...rx,
+      } as PrescriptionWithRelations,
+      setPrescription: vi.fn(),
+      prescriptionIdRef: { current: "rx-1" },
+      attachments: [],
+      setAttachments: vi.fn(),
+      setInitialFields: vi.fn(),
+      generateInstanceIds: () => [],
+      instanceIdSeqRef: { current: 0 },
+      medicineInstanceIds: [],
+      setMedicineInstanceIds: vi.fn(),
+      subjectiveSectionOrder: null,
+      setSubjectiveSectionOrder: vi.fn(),
+      subjectiveSectionCollapsed: null,
+      setSubjectiveSectionCollapsed: vi.fn(),
+      subjectiveSectionHidden: null,
+      setSubjectiveSectionHidden: vi.fn(),
+      objectiveDefaults: null,
+      setObjectiveDefaults: vi.fn(),
+      planDefaults: null,
+      setPlanDefaults: vi.fn(),
+      assessmentDefaults: null,
+      setAssessmentDefaults: vi.fn(),
+      providerProps: {
+        key: "appt-1",
+        appointmentId: "appt-1",
+        patientId: "pat-1",
+        token: "test-token",
+        entryMode: "structured",
+        initialFields: createEmptyRxFormFields(),
+        autosaveEnabled: false,
+        prescriptionIdRef: { current: "rx-1" },
+        onPrescriptionCreated: vi.fn(),
+      },
+    };
+  }
+
+  it("shows the revise strip on a same-day issued note", () => {
+    vi.useFakeTimers({
+      now: new Date("2026-09-10T06:30:00.000Z"),
+      toFake: ["Date"],
+    });
+    render(
+      <RxFormProvider
+        appointmentId="appt-1"
+        patientId="pat-1"
+        token="test-token"
+        entryMode="structured"
+        initialFields={createEmptyRxFormFields()}
+        autosaveEnabled={false}
+        prescriptionIdRef={prescriptionIdRef}
+        onPrescriptionCreated={() => {}}
+      >
+        <RxLockProvider cockpitState="ended" noteClosed={false}>
+          <PrescriptionFormShellProvider value={issuedShell({})}>
+            <SideSheetHost>
+              <RxWorkspace
+                appointmentId="appt-1"
+                patientId="pat-1"
+                token="test-token"
+                state="ended"
+              />
+            </SideSheetHost>
+          </PrescriptionFormShellProvider>
+        </RxLockProvider>
+      </RxFormProvider>,
+    );
+    expect(screen.getByTestId("rx-revise-strip")).toHaveTextContent(
+      /Issued .*The next print or send replaces that slip/,
+    );
+    expect(screen.queryByTestId("rx-readonly-notice")).not.toBeInTheDocument();
+    vi.useRealTimers();
+  });
+
+  it("does not show the strip on a draft", () => {
+    renderWithProvider({ state: "live" });
+    expect(screen.queryByTestId("rx-revise-strip")).not.toBeInTheDocument();
+  });
+
+  it("marks a superseded note read-only", () => {
+    render(
+      <RxFormProvider
+        appointmentId="appt-1"
+        patientId="pat-1"
+        token="test-token"
+        entryMode="structured"
+        initialFields={createEmptyRxFormFields()}
+        autosaveEnabled={false}
+        prescriptionIdRef={prescriptionIdRef}
+        onPrescriptionCreated={() => {}}
+      >
+        <RxLockProvider cockpitState="ended" noteClosed={true}>
+          <PrescriptionFormShellProvider
+            value={issuedShell({ superseded_by_id: "rx-2" })}
+          >
+            <SideSheetHost>
+              <RxWorkspace
+                appointmentId="appt-1"
+                patientId="pat-1"
+                token="test-token"
+                state="ended"
+              />
+            </SideSheetHost>
+          </PrescriptionFormShellProvider>
+        </RxLockProvider>
+      </RxFormProvider>,
+    );
+    expect(screen.getByTestId("rx-superseded-notice")).toBeInTheDocument();
+    expect(screen.queryByTestId("rx-revise-strip")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("rx-readonly-notice")).not.toBeInTheDocument();
   });
 });
 

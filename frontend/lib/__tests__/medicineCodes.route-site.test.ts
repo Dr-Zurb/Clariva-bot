@@ -5,6 +5,7 @@ import {
   formatMedicineSigLine,
   resolveRouteSiteInput,
   routeCodeSupportsSite,
+  toRxFrequencyCode,
 } from "@/lib/medicineCodes";
 
 describe("route site helpers", () => {
@@ -33,6 +34,17 @@ describe("route site helpers", () => {
     expect(resolveRouteSiteInput("IM", "left flank")).toBe("left flank");
   });
 
+  it("appends a 1-0-1 schedule after the frequency code", () => {
+    expect(
+      formatMedicineSigLine({
+        doseQty: 1,
+        doseUnit: "tab",
+        frequencyCode: "BID",
+        doseSchedule: "1-0-1",
+      })
+    ).toBe("1 tab · BID · 1-0-1");
+  });
+
   it("includes site-encoded route on the sig line", () => {
     const sig = formatMedicineSigLine({
       doseQty: 1,
@@ -41,5 +53,15 @@ describe("route site helpers", () => {
       route: "IM · Deltoid",
     });
     expect(sig).toContain("IM · Deltoid");
+  });
+});
+
+describe("toRxFrequencyCode", () => {
+  it("keeps Rx codes and maps labels / interval codes", () => {
+    expect(toRxFrequencyCode("OD")).toBe("OD");
+    expect(toRxFrequencyCode("Once daily")).toBe("OD");
+    expect(toRxFrequencyCode("At bedtime")).toBe("QHS");
+    expect(toRxFrequencyCode("Q6H")).toBe("CUSTOM");
+    expect(toRxFrequencyCode(null)).toBeNull();
   });
 });

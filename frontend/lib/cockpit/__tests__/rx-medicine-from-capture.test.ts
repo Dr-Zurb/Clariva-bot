@@ -1,17 +1,21 @@
 import { describe, expect, it } from "vitest";
 import { EMPTY_RX_MEDICINE } from "@/components/cockpit/rx/RxFormContext";
 import {
+  mergeAiParsedIntoMedicine,
   mergeCatalogDrugIntoRxMedicine,
   nameWorthCatalogLookup,
   pickUnambiguousCatalogDrug,
   rxMedicineFromAiMedicine,
+  rxMedicineFromCombo,
   rxMedicineFromDrugMaster,
   rxMedicineFromParsed,
 } from "@/lib/cockpit/rx-medicine-from-capture";
 import type { ParsedMedicineLine } from "@/lib/cockpit/medicine-line-parse";
 import type { DrugMasterRow } from "@/types/drug-master";
 
-function drug(partial: Partial<DrugMasterRow> & Pick<DrugMasterRow, "id" | "generic_name">): DrugMasterRow {
+function drug(
+  partial: Partial<DrugMasterRow> & Pick<DrugMasterRow, "id" | "generic_name">
+): DrugMasterRow {
   return {
     brand_name: null,
     form: "tablet",
@@ -21,7 +25,9 @@ function drug(partial: Partial<DrugMasterRow> & Pick<DrugMasterRow, "id" | "gene
   } as DrugMasterRow;
 }
 
-function parsed(overrides: Partial<ParsedMedicineLine> = {}): ParsedMedicineLine {
+function parsed(
+  overrides: Partial<ParsedMedicineLine> = {}
+): ParsedMedicineLine {
   return {
     medicineName: "Amlodipine",
     dosage: "5 mg",
@@ -54,8 +60,8 @@ describe("rx-medicine-from-capture", () => {
   it("maps drug_master onto RxMedicine with route defaults", () => {
     expect(
       rxMedicineFromDrugMaster(
-        drug({ id: "d1", generic_name: "Amlodipine", strength: "5 mg" }),
-      ),
+        drug({ id: "d1", generic_name: "Amlodipine", strength: "5 mg" })
+      )
     ).toEqual(
       expect.objectContaining({
         medicineName: "Amlodipine",
@@ -63,7 +69,7 @@ describe("rx-medicine-from-capture", () => {
         dosage: "5 mg",
         form: "tablet",
         doseUnit: "tab",
-      }),
+      })
     );
   });
 
@@ -77,8 +83,60 @@ describe("rx-medicine-from-capture", () => {
         duration: "30 days",
         routeCode: "PO",
         frequencyCode: "OD",
-      }),
+        doseSchedule: null,
+      })
     );
+  });
+
+  it("maps a parsed 1-0-1 schedule onto the Rx row", () => {
+    expect(
+      rxMedicineFromParsed(
+        parsed({
+          frequencyCode: "BID",
+          frequency: "Twice daily",
+          doseSchedule: "1-0-1",
+        })
+      )
+    ).toEqual(
+      expect.objectContaining({
+        frequencyCode: "BID",
+        doseSchedule: "1-0-1",
+        frequency: "1-0-1",
+      })
+    );
+  });
+
+  it("auto-fills 1-1-1 when the parsed line is TID", () => {
+    expect(
+      rxMedicineFromParsed(
+        parsed({ frequencyCode: "TID", frequency: "Three times daily" })
+      )
+    ).toEqual(
+      expect.objectContaining({
+        frequencyCode: "TID",
+        doseSchedule: "1-1-1",
+        frequency: "1-1-1",
+      })
+    );
+  });
+
+  it("merges AI fields into an existing row and suggests a rename", () => {
+    const existing = {
+      ...EMPTY_RX_MEDICINE,
+      medicineName: "pcm 500 bd",
+      dosage: "500 mg",
+    };
+    const merged = mergeAiParsedIntoMedicine(existing, {
+      name: "Paracetamol",
+      strengthValue: 650,
+      strengthUnit: "mg",
+      frequencyCode: "BID",
+    });
+    expect(merged.suggestedName).toBe("Paracetamol");
+    expect(merged.fieldPatch).toEqual(
+      expect.objectContaining({ frequencyCode: "BID" })
+    );
+    expect(merged.fieldPatch.dosage).toBeUndefined();
   });
 
   it("maps AI medicine without PMH-only fields", () => {
@@ -107,7 +165,7 @@ describe("rx-medicine-from-capture", () => {
         instructions: "with meals",
         durationValue: null,
         drugMasterId: null,
-      }),
+      })
     );
     expect(row).toEqual(
       expect.objectContaining({
@@ -121,7 +179,7 @@ describe("rx-medicine-from-capture", () => {
         foodTiming: "after_food",
         instructions: "with meals",
         form: "tablet",
-      }),
+      })
     );
   });
 
@@ -143,7 +201,7 @@ describe("rx-medicine-from-capture", () => {
         durationUnit: "days",
         duration: "5 days",
         form: "injection",
-      }),
+      })
     );
   });
 
@@ -155,7 +213,7 @@ describe("rx-medicine-from-capture", () => {
           { value: 40, unit: "mg" },
           { value: 5, unit: "mg" },
         ],
-      }).dosage,
+      }).dosage
     ).toMatch(/40/);
   });
 
@@ -169,11 +227,42 @@ describe("rx-medicine-from-capture", () => {
     };
     const merged = mergeCatalogDrugIntoRxMedicine(
       base,
-      drug({ id: "d2", generic_name: "Amlodipine", strength: "5 mg" }),
+      drug({ id: "d2", generic_name: "Amlodipine", strength: "5 mg" })
     );
     expect(merged.medicineName).toBe("Amlodipine");
     expect(merged.drugMasterId).toBe("d2");
     expect(merged.dosage).toBe("10 mg");
+  });
+
+  it("maps a habit combo onto a finished Rx row", () => {
+    const med = rxMedicineFromCombo({
+      medicineName: "Multivitamin",
+      nameKey: "multivitamin",
+      dosage: "",
+      doseQty: 1,
+      doseUnit: "tab",
+      frequencyCode: "OD",
+      frequency: "",
+      durationValue: 10,
+      durationUnit: "days",
+      duration: "10 days",
+      foodTiming: "after_food",
+      routeCode: "oral",
+      route: "Oral",
+      form: "tablet",
+      drugMasterId: null,
+      useCount: 24,
+      lastUsedAt: "2026-09-01T00:00:00Z",
+    });
+    expect(med).toMatchObject({
+      medicineName: "Multivitamin",
+      doseQty: 1,
+      doseUnit: "tab",
+      frequencyCode: "OD",
+      durationValue: 10,
+      durationUnit: "days",
+      foodTiming: "after_food",
+    });
   });
 
   it("gates short names for catalog lookup", () => {
@@ -187,13 +276,13 @@ describe("rx-medicine-from-capture", () => {
       pickUnambiguousCatalogDrug("amlo", [
         drug({ id: "1", generic_name: "Amlodipine" }),
         drug({ id: "2", generic_name: "Atenolol" }),
-      ])?.generic_name,
+      ])?.generic_name
     ).toBe("Amlodipine");
     expect(
       pickUnambiguousCatalogDrug("met", [
         drug({ id: "1", generic_name: "Metformin" }),
         drug({ id: "2", generic_name: "Metoprolol" }),
-      ]),
+      ])
     ).toBeNull();
   });
 });

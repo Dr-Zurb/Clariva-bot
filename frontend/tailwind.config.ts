@@ -91,6 +91,8 @@ const config: Config = {
           DEFAULT: "hsl(var(--info))",
           foreground: "hsl(var(--info-foreground))",
         },
+        "cockpit-canvas": "hsl(var(--cockpit-canvas))",
+        "cockpit-pane": "hsl(var(--cockpit-pane))",
       },
       borderRadius: {
         lg: "var(--radius)",
@@ -101,6 +103,9 @@ const config: Config = {
         soft: "0 1px 2px 0 hsl(var(--foreground) / 0.04), 0 1px 3px 0 hsl(var(--foreground) / 0.06)",
         elevated:
           "0 4px 6px -1px hsl(var(--foreground) / 0.06), 0 2px 4px -2px hsl(var(--foreground) / 0.04)",
+        /* L1 SOAP section cards — soft contact + larger cast so they float on the pane well. */
+        "cockpit-section":
+          "0 1px 2px hsl(var(--foreground) / 0.05), 0 8px 20px -6px hsl(var(--foreground) / 0.14)",
       },
       keyframes: {
         "accordion-down": {

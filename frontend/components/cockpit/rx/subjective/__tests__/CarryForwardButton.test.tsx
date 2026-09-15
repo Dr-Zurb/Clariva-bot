@@ -1,5 +1,5 @@
 import type { ReactElement } from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import {
   RxFormProvider,
@@ -7,7 +7,9 @@ import {
   rxFormReducer,
 } from "@/components/cockpit/rx/RxFormContext";
 import { CarryForwardButton } from "../CarryForwardButton";
+import { LastVisitSummaryProvider } from "@/hooks/useLastVisitSummary";
 import { getLastSubjectiveForPatient } from "@/lib/api/last-subjective";
+import type { LastVisitSummary } from "@/lib/api/last-visit-summary";
 
 vi.mock("@/lib/api/last-subjective", () => ({
   getLastSubjectiveForPatient: vi.fn(),
@@ -15,7 +17,52 @@ vi.mock("@/lib/api/last-subjective", () => ({
 
 const prescriptionIdRef = { current: null as string | null };
 
-function renderWithRxForm(ui: ReactElement) {
+const SUBJECTIVE_SUMMARY: LastVisitSummary = {
+  sourcePrescriptionId: "rx-prev",
+  sourceCreatedAt: "2026-05-01T00:00:00.000Z",
+  complaints: [{ id: "c-1", name: "Headache", category: "pain" }],
+  diagnoses: [],
+  provisionalDiagnosis: null,
+  medicines: [],
+  investigationsOrders: null,
+  advice: null,
+  followUp: null,
+  followUpValue: null,
+  followUpUnit: null,
+  familyHistory: "Father — HTN",
+  socialHistory: null,
+  pastSurgicalHistory: null,
+};
+
+const MEDICINES_ONLY_SUMMARY: LastVisitSummary = {
+  ...SUBJECTIVE_SUMMARY,
+  complaints: [],
+  familyHistory: null,
+  medicines: [
+    {
+      medicineName: "Dextromethorphan",
+      dosage: "1 tds",
+      route: "",
+      frequency: "tds",
+      duration: "5 days",
+      instructions: "",
+      drugMasterId: null,
+      frequencyCode: null,
+      durationValue: 5,
+      durationUnit: "days",
+      routeCode: null,
+      doseQty: 1,
+      doseUnit: "spoon",
+      form: "syrup",
+      foodTiming: null,
+    },
+  ],
+};
+
+function renderWithRxForm(
+  ui: ReactElement,
+  summary?: LastVisitSummary | null,
+) {
   return render(
     <RxFormProvider
       appointmentId="appt-current"
@@ -27,53 +74,41 @@ function renderWithRxForm(ui: ReactElement) {
       prescriptionIdRef={prescriptionIdRef}
       onPrescriptionCreated={() => {}}
     >
-      {ui}
+      {summary === undefined ? (
+        ui
+      ) : (
+        <LastVisitSummaryProvider value={summary}>{ui}</LastVisitSummaryProvider>
+      )}
     </RxFormProvider>,
   );
 }
 
 describe("CarryForwardButton", () => {
   beforeEach(() => {
-    vi.mocked(getLastSubjectiveForPatient).mockResolvedValue({
-      success: true,
-      data: {
-        subjective: {
-          sourcePrescriptionId: "rx-prev",
-          sourceCreatedAt: "2026-05-01T00:00:00.000Z",
-          complaints: [{ id: "c-1", name: "Headache", category: "pain" }],
-          familyHistory: "Father — HTN",
-          socialHistory: null,
-          pastSurgicalHistory: null,
-        },
-      },
-      meta: { timestamp: "", requestId: "" },
-    });
+    vi.mocked(getLastSubjectiveForPatient).mockClear();
   });
 
-  it("hides when no prior subjective exists", async () => {
-    vi.mocked(getLastSubjectiveForPatient).mockResolvedValue({
-      success: true,
-      data: { subjective: null },
-      meta: { timestamp: "", requestId: "" },
-    });
-
-    renderWithRxForm(<CarryForwardButton />);
-    await waitFor(() => {
-      expect(screen.queryByTestId("carry-forward-trigger")).not.toBeInTheDocument();
-    });
+  it("hides when no last-visit summary is provided", () => {
+    renderWithRxForm(<CarryForwardButton />, null);
+    expect(screen.queryByTestId("carry-forward-trigger")).not.toBeInTheDocument();
+    expect(getLastSubjectiveForPatient).not.toHaveBeenCalled();
   });
 
-  it("copy all dispatches carry-forward actions", async () => {
-    renderWithRxForm(<CarryForwardButton />);
+  it("hides when last visit has no carryable subjective fields", () => {
+    renderWithRxForm(<CarryForwardButton />, MEDICINES_ONLY_SUMMARY);
+    expect(screen.queryByTestId("carry-forward-trigger")).not.toBeInTheDocument();
+    expect(getLastSubjectiveForPatient).not.toHaveBeenCalled();
+  });
 
-    await waitFor(() => {
-      expect(screen.getByTestId("carry-forward-trigger")).toBeInTheDocument();
-    });
+  it("copy all uses the shared last-visit summary and does not fetch last-subjective", () => {
+    renderWithRxForm(<CarryForwardButton />, SUBJECTIVE_SUMMARY);
+
+    expect(getLastSubjectiveForPatient).not.toHaveBeenCalled();
+    expect(screen.getByTestId("carry-forward-trigger")).toBeInTheDocument();
 
     fireEvent.click(screen.getByTestId("carry-forward-trigger"));
     fireEvent.click(screen.getByTestId("carry-forward-copy-all"));
 
-    // Reducer integration: SET_COMPLAINTS + SET_FIELD should hydrate state
     const initial = {
       fields: createEmptyRxFormFields(),
       isDirty: false,

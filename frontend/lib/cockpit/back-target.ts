@@ -13,6 +13,8 @@ export type CockpitOrigin = "opd-today" | "today" | "patients-v2";
 export const COCKPIT_ORIGIN_PARAM = "from";
 export const COCKPIT_PATIENT_ID_PARAM = "pid";
 export const COCKPIT_DATE_PARAM = "date";
+/** Opens the visit-narrative amendment context on this consult (vnt-04). */
+export const AMEND_TRANSCRIPT_PARAM = "amendTranscript";
 
 export interface BackTarget {
   label: string;
@@ -92,11 +94,18 @@ function appendOriginParams(
 export function buildCockpitAppointmentPath(
   appointmentId: string,
   origin: CockpitOrigin,
-  options?: { patientId?: string | null; opdDate?: string | null },
+  options?: {
+    patientId?: string | null;
+    opdDate?: string | null;
+    amendTranscriptSessionId?: string | null;
+  },
 ): string {
   const params = new URLSearchParams();
   params.set(COCKPIT_ORIGIN_PARAM, origin);
   appendOriginParams(params, options);
+  if (options?.amendTranscriptSessionId) {
+    params.set(AMEND_TRANSCRIPT_PARAM, options.amendTranscriptSessionId);
+  }
   return `/dashboard/appointments/${appointmentId}?${params.toString()}`;
 }
 

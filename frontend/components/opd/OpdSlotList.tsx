@@ -2,7 +2,6 @@
 
 import React, { useCallback, useMemo, useState } from "react";
 import Link from "next/link";
-import { ChevronDown } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useNowMs } from "@/hooks/useNowMs";
 import { cn } from "@/lib/utils";
@@ -13,22 +12,7 @@ import {
   OPD_SLOT_HEADER_COLS,
 } from "./OpdQueueGrid";
 import { filterSlotSessionRows } from "./shared/opdSlotSessionListModel";
-import {
-  partitionSlotRowsForList,
-  rowsForChipSection,
-  sectionDefaultOpen,
-  shouldRenderChipSection,
-  SLOT_CHIP_SECTION_HINT,
-  SLOT_CHIP_SECTION_LABEL,
-  SLOT_CHIP_SECTION_ORDER,
-  type SlotChipSectionKey,
-} from "./opdSlotSectioning";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
+import { orderSlotRowsByTokenDesc } from "./opdSlotSectioning";
 import {
   deriveSlotEmptyState,
   slotFilterEmptyLabel,
@@ -118,78 +102,6 @@ export function SlotListEmptyStateView(props: {
     default:
       return null;
   }
-}
-
-function Disclosure({
-  label,
-  hint,
-  count,
-  defaultOpen,
-  children,
-}: {
-  label: string;
-  hint: string;
-  count: number;
-  defaultOpen: boolean;
-  children: React.ReactNode;
-}) {
-  const [open, setOpen] = useState(defaultOpen);
-
-  return (
-    <div>
-      <TooltipProvider delayDuration={400}>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <div
-              className="grid cursor-pointer items-center border-b border-border/30 bg-muted/15 px-2 py-1 transition-colors hover:bg-muted/30"
-              style={{ gridTemplateColumns: OPD_SLOT_GRID_TEMPLATE }}
-              role="button"
-              tabIndex={0}
-              aria-expanded={open}
-              aria-description={hint}
-              onClick={() => setOpen((v) => !v)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") {
-                  e.preventDefault();
-                  setOpen((v) => !v);
-                }
-              }}
-            >
-              <div
-                className="col-span-full flex items-center gap-1.5"
-                style={{ gridColumn: "1 / -1" }}
-              >
-                <ChevronDown
-                  className={cn(
-                    "h-3 w-3 shrink-0 text-muted-foreground transition-transform duration-150",
-                    open && "rotate-180"
-                  )}
-                />
-                <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  {label}
-                </span>
-                <span className="tabular-nums text-xs text-muted-foreground">
-                  ({count})
-                </span>
-              </div>
-            </div>
-          </TooltipTrigger>
-          <TooltipContent side="bottom" className="max-w-xs text-left">
-            {hint}
-          </TooltipContent>
-        </Tooltip>
-      </TooltipProvider>
-
-      <div
-        className={cn(
-          "grid transition-all duration-150 ease-in-out",
-          open ? "grid-rows-[1fr]" : "grid-rows-[0fr]"
-        )}
-      >
-        <div className="overflow-hidden">{children}</div>
-      </div>
-    </div>
-  );
 }
 
 function SlotTableHeader() {
@@ -309,8 +221,8 @@ export function OpdSlotList({
     [entries, filtered.length, statusFilter, searchQuery]
   );
 
-  const partitions = useMemo(
-    () => partitionSlotRowsForList(filtered),
+  const ordered = useMemo(
+    () => orderSlotRowsByTokenDesc(filtered),
     [filtered]
   );
 
@@ -399,39 +311,7 @@ export function OpdSlotList({
         style={{ maxHeight: "calc(100vh - 340px)" }}
         role="rowgroup"
       >
-        {statusFilter !== "all"
-          ? SLOT_CHIP_SECTION_ORDER.flatMap((section: SlotChipSectionKey) => {
-              const rows = rowsForChipSection(partitions, section);
-              if (!shouldRenderChipSection(statusFilter, section, rows.length)) {
-                return [];
-              }
-              // Chip already names the bucket — skip the redundant collapse bar.
-              return rows.map((row) => renderRow(row));
-            })
-          : SLOT_CHIP_SECTION_ORDER.map((section: SlotChipSectionKey) => {
-              const rows = rowsForChipSection(partitions, section);
-              if (!shouldRenderChipSection(statusFilter, section, rows.length)) {
-                return null;
-              }
-
-              return (
-                <Disclosure
-                  key={`${section}-${statusFilter}`}
-                  label={SLOT_CHIP_SECTION_LABEL[section]}
-                  hint={SLOT_CHIP_SECTION_HINT[section]}
-                  count={rows.length}
-                  defaultOpen={sectionDefaultOpen(statusFilter, section)}
-                >
-                  {rows.length === 0 ? (
-                    <div className="px-4 py-3 text-sm text-muted-foreground">
-                      None
-                    </div>
-                  ) : (
-                    rows.map((row) => renderRow(row))
-                  )}
-                </Disclosure>
-              );
-            })}
+        {ordered.map((row) => renderRow(row))}
       </div>
     </div>
   );

@@ -14,10 +14,6 @@ vi.mock("@/components/consultation/cockpit/RxWorkspace", () => ({
   default: () => <div data-testid="rx-workspace" />,
 }));
 
-vi.mock("@/components/consultation/cockpit/PreviousRxPopover", () => ({
-  default: () => null,
-}));
-
 vi.mock("@/lib/patient-profile/telemetry", () => ({
   trackCockpitPolishPlanPaneDedupLanded: vi.fn(),
 }));
@@ -49,5 +45,14 @@ describe("RxPane — hideHeader scroll shell", () => {
     const scroll = shell?.firstElementChild;
     expect(scroll).toHaveClass("overflow-y-auto");
     expect(scroll).toHaveClass("touch-pan-y");
+  });
+
+  it("does not mount the retired Previous Rx header chip (lvc-12)", () => {
+    const { queryByText, queryByLabelText } = render(
+      <RxPane appointment={appointment} token="t" state="ready" />,
+    );
+
+    expect(queryByText(/Previous/)).not.toBeInTheDocument();
+    expect(queryByLabelText(/previous prescriptions/i)).not.toBeInTheDocument();
   });
 });
