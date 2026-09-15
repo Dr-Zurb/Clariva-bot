@@ -16,14 +16,14 @@
 
 /**
  * Instagram send message request payload
- * Used for POST /{page-id}/messages endpoint
- * messaging_type RESPONSE is required for replies (Meta Send API)
+ * Used for POST /me/messages
+ *
+ * User-id sends must use messaging_type RESPONSE (24h window).
+ * Comment private replies use recipient.comment_id and omit messaging_type.
  */
 export interface InstagramSendMessageRequest {
-  recipient: {
-    id: string; // Instagram user ID (recipient = customer who sent the message)
-  };
-  messaging_type: 'RESPONSE'; // Required: reply to received message
+  recipient: { id: string } | { comment_id: string };
+  messaging_type?: 'RESPONSE';
   message: {
     text: string; // Message text (may contain PHI)
   };

@@ -1,13 +1,13 @@
 /**
  * Instagram comment webhook branch (RBH-05).
- * entry[].changes[] field "comments" / "live_comments" - lead, optional DM + public reply.
+ * entry[].changes[] field "comments" / "live_comments" - lead, optional private reply + public reply.
  */
 
 import { logger } from '../config/logger';
 import { logAuditEvent } from '../utils/audit-logger';
 import { markWebhookProcessed } from '../services/webhook-idempotency-service';
 import {
-  sendInstagramMessage,
+  sendInstagramPrivateReply,
   replyToInstagramComment,
   COMMENT_PUBLIC_REPLY_TEXT,
   fetchCommentAuthorUsername,
@@ -20,7 +20,7 @@ import { getDoctorSettings } from '../services/doctor-settings-service';
 import { classifyCommentIntent, isPossiblyMedicalComment } from '../services/ai-service';
 import { parseInstagramCommentPayload } from '../utils/webhook-event-id';
 import { resolveDoctorIdFromComment } from '../services/comment-media-service';
-import { createCommentLead } from '../services/comment-lead-service';
+import { canSendCommentPrivateReply, createCommentLead } from '../services/comment-lead-service';
 import { resolveCommentOutreachLanguage } from '../services/comment-outreach-language';
 import { sendCommentLeadToDoctor } from '../services/notification-service';
 import { logWebhookCommentPipeline } from '../services/webhook-metrics';
@@ -71,8 +71,7 @@ export async function processInstagramCommentWebhook(
     return;
   }
 
-  const { commentId, commenterIgId, commentText, mediaId, entryId, commenterUsername } =
-    parsed;
+  const { commentId, commenterIgId, commentText, mediaId, entryId, commenterUsername } = parsed;
   let resolvedUsername = commenterUsername;
   const doctorId = entryId
     ? await resolveDoctorIdFromComment(entryId, mediaId, correlationId)
@@ -168,16 +167,9 @@ export async function processInstagramCommentWebhook(
   let commentDoctorTokenPresent = false;
 
   // Resolve @username before/with outreach token (webhook often already has it).
-  const doctorTokenEarly = await getInstagramAccessTokenForDoctor(
-    doctorId,
-    correlationId
-  );
+  const doctorTokenEarly = await getInstagramAccessTokenForDoctor(doctorId, correlationId);
   if (!resolvedUsername && doctorTokenEarly) {
-    resolvedUsername = await fetchCommentAuthorUsername(
-      commentId,
-      doctorTokenEarly,
-      correlationId
-    );
+    resolvedUsername = await fetchCommentAuthorUsername(commentId, doctorTokenEarly, correlationId);
   }
 
   await createCommentLead(
@@ -197,11 +189,20 @@ export async function processInstagramCommentWebhook(
   );
 
   const receptionistPaused = settings?.instagram_receptionist_paused === true;
+  const underDailyCap =
+    isHighIntent && !receptionistPaused
+      ? await canSendCommentPrivateReply(doctorId, correlationId)
+      : true;
+  if (isHighIntent && !receptionistPaused && !underDailyCap) {
+    logger.info(
+      { eventId, provider, correlationId },
+      'Comment: daily private-reply cap reached, skipping outreach'
+    );
+  }
 
-  if (isHighIntent && !receptionistPaused) {
+  if (isHighIntent && !receptionistPaused && underDailyCap) {
     const doctorToken =
-      doctorTokenEarly ??
-      (await getInstagramAccessTokenForDoctor(doctorId, correlationId));
+      doctorTokenEarly ?? (await getInstagramAccessTokenForDoctor(doctorId, correlationId));
     commentDoctorTokenPresent = !!doctorToken;
     if (doctorToken) {
       // LANG5-D6: language from linked conversation only — never from comment text.
@@ -219,7 +220,7 @@ export async function processInstagramCommentWebhook(
         addressSummary: settings?.address_summary ?? undefined,
       });
       try {
-        await sendInstagramMessage(commenterIgId, dmMessage, correlationId, doctorToken);
+        await sendInstagramPrivateReply(commentId, dmMessage, correlationId, doctorToken);
         dmSent = true;
       } catch (dmErr) {
         logger.warn(
@@ -228,7 +229,7 @@ export async function processInstagramCommentWebhook(
             commentId,
             error: dmErr instanceof Error ? dmErr.message : String(dmErr),
           },
-          'Comment: proactive DM failed (user may have blocked)'
+          'Comment: private reply failed'
         );
       }
 
@@ -271,12 +272,14 @@ export async function processInstagramCommentWebhook(
     }
   }
 
-  sendCommentLeadToDoctor(doctorId, { intent, commentPreview: commentText }, correlationId).catch((err) => {
-    logger.warn(
-      { correlationId, doctorId, error: err instanceof Error ? err.message : String(err) },
-      'Comment lead email failed (non-blocking)'
-    );
-  });
+  sendCommentLeadToDoctor(doctorId, { intent, commentPreview: commentText }, correlationId).catch(
+    (err) => {
+      logger.warn(
+        { correlationId, doctorId, error: err instanceof Error ? err.message : String(err) },
+        'Comment lead email failed (non-blocking)'
+      );
+    }
+  );
 
   logWebhookCommentPipeline({
     correlationId,
@@ -287,8 +290,14 @@ export async function processInstagramCommentWebhook(
     highIntent: isHighIntent,
     dmSent,
     publicReplySent,
-    doctorTokenPresent: isHighIntent && !receptionistPaused ? commentDoctorTokenPresent : undefined,
-    automationSkipped: isHighIntent && receptionistPaused ? 'receptionist_paused' : undefined,
+    doctorTokenPresent:
+      isHighIntent && !receptionistPaused && underDailyCap ? commentDoctorTokenPresent : undefined,
+    automationSkipped:
+      isHighIntent && receptionistPaused
+        ? 'receptionist_paused'
+        : isHighIntent && !underDailyCap
+          ? 'daily_cap'
+          : undefined,
   });
 
   await markWebhookProcessed(eventId, provider);

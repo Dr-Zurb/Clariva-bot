@@ -236,6 +236,8 @@ export const createAppointment = asyncHandler(async (req, res) => {
 - Use platform-specific ID extraction for idempotency
 - Handle rate limits (Meta has strict limits)
 - Queue webhook processing (async)
+- Comment outreach is a Send API **private reply** (`recipient.comment_id`), never a user-id `RESPONSE` DM to someone who only commented
+- Cap comment private replies at **40 per doctor per UTC day** (`comment_leads.dm_sent`); fail closed if the count is unavailable. Public reply is also skipped when the cap is hit (copy would otherwise say “check your DM”)
 
 **Error Handling:**
 - 401 → Invalid signature (log and reject)

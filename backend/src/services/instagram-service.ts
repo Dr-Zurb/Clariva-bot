@@ -150,10 +150,47 @@ export async function sendInstagramMessage(
 
   const token = accessToken ?? env.INSTAGRAM_ACCESS_TOKEN ?? null;
   if (!token) {
-    throw new InternalError('Instagram access token not configured (no token passed and INSTAGRAM_ACCESS_TOKEN unset)');
+    throw new InternalError(
+      'Instagram access token not configured (no token passed and INSTAGRAM_ACCESS_TOKEN unset)'
+    );
   }
 
-  return sendWithRetry(recipientId, message, correlationId, token);
+  return sendWithRetry({ id: recipientId }, message, correlationId, token);
+}
+
+/**
+ * Private reply to an Instagram or Facebook comment via Send API.
+ * POST /me/messages with recipient.comment_id — Meta's sanctioned path
+ * when the person has not opened a messaging window.
+ * One private reply per comment, within 7 days (enforced by Meta).
+ *
+ * Do not use sendInstagramMessage(commenterUserId) for this: that is a
+ * user-id RESPONSE send with no inbound DM, which is the unsolicited-DM shape.
+ */
+export async function sendInstagramPrivateReply(
+  commentId: string,
+  message: string,
+  correlationId: string,
+  accessToken: string
+): Promise<InstagramSendMessageResponse> {
+  if (!commentId || typeof commentId !== 'string') {
+    throw new AppError('Comment ID is required', 400);
+  }
+
+  if (!message || typeof message !== 'string') {
+    throw new AppError('Message is required', 400);
+  }
+
+  if (message.length > 2000) {
+    throw new AppError('Message too long (max 2000 characters)', 400);
+  }
+
+  const token = accessToken.trim();
+  if (!token) {
+    throw new InternalError('Instagram access token not configured');
+  }
+
+  return sendWithRetry({ comment_id: commentId }, message, correlationId, token);
 }
 
 /**
@@ -193,7 +230,9 @@ export async function getInstagramMessageSender(
   } catch (err) {
     if (axios.isAxiosError(err)) {
       const status = err.response?.status;
-      const errorBody = err.response?.data as { error?: { message?: string; code?: number; type?: string } } | undefined;
+      const errorBody = err.response?.data as
+        | { error?: { message?: string; code?: number; type?: string } }
+        | undefined;
       const metaError = errorBody?.error?.message ?? err.message;
       if (status === 404) {
         logger.debug({ correlationId, messageId }, 'Instagram message not found (may be too old)');
@@ -212,7 +251,11 @@ export async function getInstagramMessageSender(
       );
     } else {
       logger.debug(
-        { correlationId, messageId, message: err instanceof Error ? err.message : 'Request failed' },
+        {
+          correlationId,
+          messageId,
+          message: err instanceof Error ? err.message : 'Request failed',
+        },
         'Could not fetch Instagram message sender'
       );
     }
@@ -249,7 +292,11 @@ export async function getSenderFromMostRecentConversation(
     return res.data?.data ?? [];
   };
 
-  const tryGetMessages = async (base: string, convId: string, ourId: string): Promise<string | null> => {
+  const tryGetMessages = async (
+    base: string,
+    convId: string,
+    ourId: string
+  ): Promise<string | null> => {
     const msgRes = await axios.get<{
       data?: Array<{ from?: { id?: string }; id?: string }>;
     }>(`${base}/${convId}/messages`, {
@@ -277,16 +324,22 @@ export async function getSenderFromMostRecentConversation(
           const convId = convList[0]?.id;
           if (!convId) continue;
 
-          const meRes = await axios.get<{ data?: Array<{ id?: string }>; id?: string }>(`${base}/me`, {
-            params: { fields: 'id', access_token: token },
-            timeout: 8000,
-          });
+          const meRes = await axios.get<{ data?: Array<{ id?: string }>; id?: string }>(
+            `${base}/me`,
+            {
+              params: { fields: 'id', access_token: token },
+              timeout: 8000,
+            }
+          );
           const ourId = meRes.data?.data?.[0]?.id ?? meRes.data?.id;
           if (!ourId) continue;
 
           const senderId = await tryGetMessages(base, convId, ourId);
           if (senderId) {
-            logger.info({ correlationId, base: base.includes('facebook') ? 'fb' : 'ig' }, 'Conversation fallback: resolved sender');
+            logger.info(
+              { correlationId, base: base.includes('facebook') ? 'fb' : 'ig' },
+              'Conversation fallback: resolved sender'
+            );
             return senderId;
           }
         } catch (err) {
@@ -310,8 +363,7 @@ export async function getSenderFromMostRecentConversation(
 }
 
 /** Public reply text for comment outreach — English forever (lang-23 exception list). */
-export const COMMENT_PUBLIC_REPLY_TEXT =
-  DM_COPY_ENGLISH_ONLY_EXCEPTIONS.COMMENT_PUBLIC_REPLY.text;
+export const COMMENT_PUBLIC_REPLY_TEXT = DM_COPY_ENGLISH_ONLY_EXCEPTIONS.COMMENT_PUBLIC_REPLY.text;
 
 /**
  * Resolve public username / display name for a comment author (Inbox identity).
@@ -403,8 +455,7 @@ export async function fetchMessengerUserProfile(
       params: { fields: 'username,name,profile_pic', access_token: token },
       timeout: 10000,
     });
-    const username =
-      res.data?.username?.trim() || res.data?.name?.trim() || null;
+    const username = res.data?.username?.trim() || res.data?.name?.trim() || null;
     const profilePic = res.data?.profile_pic?.trim() || null;
     return { username, profilePic };
   };
@@ -471,7 +522,9 @@ export async function replyToInstagramComment(
       timeout: 15000,
     });
 
-  const metaErrorFrom = (err: unknown): { status?: number; metaCode?: number; metaMessage?: string } => {
+  const metaErrorFrom = (
+    err: unknown
+  ): { status?: number; metaCode?: number; metaMessage?: string } => {
     if (!axios.isAxiosError(err)) return {};
     const data = err.response?.data as { error?: { code?: number; message?: string } } | undefined;
     return {
@@ -491,13 +544,19 @@ export async function replyToInstagramComment(
     } catch (primaryErr) {
       const { status, metaCode } = metaErrorFrom(primaryErr);
       // Wrong-host tokens fail with 400/401/190; retry the other Graph host.
-      const tryAlternate =
-        status === 400 || status === 401 || metaCode === 190;
+      const tryAlternate = status === 400 || status === 401 || metaCode === 190;
       if (!tryAlternate) {
         throw primaryErr;
       }
       logger.debug(
-        { correlationId, commentId, status, metaCode, primaryHost: primary, fallbackHost: secondary },
+        {
+          correlationId,
+          commentId,
+          status,
+          metaCode,
+          primaryHost: primary,
+          fallbackHost: secondary,
+        },
         'Comment reply: preferred Graph host failed; trying alternate'
       );
       res = await postReply(graphBaseForHost(secondary));
@@ -637,7 +696,7 @@ export async function sendInstagramFile(
   recipientId: string,
   fileUrl: string,
   correlationId: string,
-  accessToken?: string,
+  accessToken?: string
 ): Promise<InstagramSendMessageResponse> {
   if (!recipientId || !fileUrl?.startsWith('https://')) {
     throw new AppError('Invalid recipient or file URL', 400);
@@ -657,7 +716,7 @@ export async function sendInstagramFile(
     const res = await axios.post<InstagramSendMessageResponse>(
       `${FACEBOOK_GRAPH_BASE}/me/messages`,
       payload,
-      { headers: { Authorization: `Bearer ${token.trim()}` }, timeout: 15000 },
+      { headers: { Authorization: `Bearer ${token.trim()}` }, timeout: 15000 }
     );
     if (res.data) {
       await logAuditEvent({
@@ -698,17 +757,26 @@ export async function sendInstagramFile(
  *
  * @param token - Access token for the Instagram account (never logged)
  */
+type MessageRecipient = { id: string } | { comment_id: string };
+
+function recipientAuditMeta(recipient: MessageRecipient): Record<string, string> {
+  return 'comment_id' in recipient
+    ? { recipient_kind: 'comment_id', comment_id: recipient.comment_id }
+    : { recipient_kind: 'user_id', recipient_id: recipient.id };
+}
+
 async function sendWithRetry(
-  recipientId: string,
+  recipient: MessageRecipient,
   message: string,
   correlationId: string,
   token: string
 ): Promise<InstagramSendMessageResponse> {
   let lastError: Error | null = null;
+  const recipientMeta = recipientAuditMeta(recipient);
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     try {
-      const response = await sendMessageAPI(recipientId, message, correlationId, token);
+      const response = await sendMessageAPI(recipient, message, correlationId, token);
 
       // Log success (metadata only - NEVER log message content)
       // resourceId omitted: Instagram message_id is not UUID, audit_logs.resource_id expects UUID
@@ -719,7 +787,7 @@ async function sendWithRetry(
         resourceType: 'instagram_message',
         status: 'success',
         metadata: {
-          recipient_id: recipientId,
+          ...recipientMeta,
           message_length: message.length,
           message_id: response.message_id,
         },
@@ -730,9 +798,7 @@ async function sendWithRetry(
       lastError = error as Error;
 
       // Map error (if already AppError, use it; otherwise map from AxiosError)
-      const appError = error instanceof AppError
-        ? error
-        : mapInstagramError(error, correlationId);
+      const appError = error instanceof AppError ? error : mapInstagramError(error, correlationId);
 
       // Don't retry on client errors (except 429)
       if (
@@ -749,7 +815,7 @@ async function sendWithRetry(
           status: 'failure',
           errorMessage: appError.message,
           metadata: {
-            recipient_id: recipientId,
+            ...recipientMeta,
             message_length: message.length,
             error_type: appError.constructor.name,
           },
@@ -786,7 +852,7 @@ async function sendWithRetry(
             status: 'failure',
             errorMessage: appError.message,
             metadata: {
-              recipient_id: recipientId,
+              ...recipientMeta,
               message_length: message.length,
               error_type: 'TooManyRequestsError',
               retry_attempts: attempt + 1,
@@ -802,7 +868,7 @@ async function sendWithRetry(
             maxRetries: MAX_RETRIES,
             delay,
             correlationId,
-            recipient_id: recipientId,
+            ...recipientMeta,
             message_length: message.length,
           },
           'Instagram API rate limit exceeded, retrying after delay'
@@ -819,10 +885,7 @@ async function sendWithRetry(
       }
 
       // Calculate backoff delay for server errors
-      const delay = Math.min(
-        INITIAL_RETRY_DELAY * Math.pow(2, attempt),
-        MAX_RETRY_DELAY
-      );
+      const delay = Math.min(INITIAL_RETRY_DELAY * Math.pow(2, attempt), MAX_RETRY_DELAY);
 
       logger.warn(
         {
@@ -830,7 +893,7 @@ async function sendWithRetry(
           maxRetries: MAX_RETRIES,
           delay,
           correlationId,
-          recipient_id: recipientId,
+          ...recipientMeta,
           message_length: message.length,
           error_type: appError.constructor.name,
         },
@@ -845,9 +908,8 @@ async function sendWithRetry(
   // All retries exhausted - log failure
   const finalError = lastError || new InternalError('Failed to send message after retries');
   // If error is already an AppError, use it; otherwise map it
-  const appError = finalError instanceof AppError 
-    ? finalError 
-    : mapInstagramError(finalError, correlationId);
+  const appError =
+    finalError instanceof AppError ? finalError : mapInstagramError(finalError, correlationId);
 
   await logAuditEvent({
     correlationId,
@@ -857,7 +919,7 @@ async function sendWithRetry(
     status: 'failure',
     errorMessage: appError.message,
     metadata: {
-      recipient_id: recipientId,
+      ...recipientMeta,
       message_length: message.length,
       error_type: appError.constructor.name,
       retry_attempts: MAX_RETRIES + 1,
@@ -879,16 +941,22 @@ async function sendWithRetry(
  * @param token - Access token (never logged)
  */
 async function sendMessageAPI(
-  recipientId: string,
+  recipient: MessageRecipient,
   message: string,
   correlationId: string,
   token: string
 ): Promise<InstagramSendMessageResponse> {
-  const payload: InstagramSendMessageRequest = {
-    recipient: { id: recipientId },
-    messaging_type: 'RESPONSE',
-    message: { text: message },
-  };
+  const payload: InstagramSendMessageRequest =
+    'comment_id' in recipient
+      ? {
+          recipient: { comment_id: recipient.comment_id },
+          message: { text: message },
+        }
+      : {
+          recipient: { id: recipient.id },
+          messaging_type: 'RESPONSE',
+          message: { text: message },
+        };
   const trimmed = token.trim();
   const opts = {
     headers: { Authorization: `Bearer ${trimmed}` },
@@ -956,28 +1024,18 @@ export function mapInstagramError(error: unknown, correlationId: string): AppErr
     // Map by HTTP status code
     switch (statusCode) {
       case 401:
-        return new UnauthorizedError(
-          errorData?.message || 'Instagram API authentication failed'
-        );
+        return new UnauthorizedError(errorData?.message || 'Instagram API authentication failed');
       case 403:
-        return new ForbiddenError(
-          errorData?.message || 'Instagram API permission denied'
-        );
+        return new ForbiddenError(errorData?.message || 'Instagram API permission denied');
       case 404:
-        return new NotFoundError(
-          errorData?.message || 'Instagram recipient not found'
-        );
+        return new NotFoundError(errorData?.message || 'Instagram recipient not found');
       case 429:
-        return new TooManyRequestsError(
-          errorData?.message || 'Instagram API rate limit exceeded'
-        );
+        return new TooManyRequestsError(errorData?.message || 'Instagram API rate limit exceeded');
       case 500:
       case 502:
       case 503:
       case 504:
-        return new InternalError(
-          errorData?.message || 'Instagram API server error'
-        );
+        return new InternalError(errorData?.message || 'Instagram API server error');
     }
 
     // Network errors
@@ -1021,7 +1079,9 @@ export function mapInstagramError(error: unknown, correlationId: string): AppErr
 
   // Unknown error - log full Meta response for 400 debugging
   if (axios.isAxiosError(error) && error.response?.status === 400) {
-    const errData = error.response?.data as { error?: { message?: string; code?: number; error_subcode?: number; type?: string } } | undefined;
+    const errData = error.response?.data as
+      | { error?: { message?: string; code?: number; error_subcode?: number; type?: string } }
+      | undefined;
     logger.error(
       {
         correlationId,
