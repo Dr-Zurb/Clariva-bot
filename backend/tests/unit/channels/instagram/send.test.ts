@@ -68,7 +68,8 @@ describe('sendInstagramOutbound (rcp-11)', () => {
       SENDER_ID,
       'Hello',
       'corr-1',
-      'tok'
+      'tok',
+      'doctor-1'
     );
   });
 
@@ -117,7 +118,8 @@ describe('sendInstagramOutbound (rcp-11)', () => {
       'resolved-ig',
       'Hello',
       'corr-1',
-      'tok'
+      'tok',
+      'doctor-1'
     );
   });
 

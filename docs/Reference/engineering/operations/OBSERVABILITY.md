@@ -378,6 +378,8 @@ Emitted as structured **INFO** / **WARN** logs with `context: 'webhook_metric'` 
 - **Healthy ranges:** Compare to a **rolling baseline** (same doctor cohort, same week-of-year if seasonal). Absolute percentages vary with specialty, teleconsult share, and catalog complexity.
 - Conflict recovery: filter `branch = conflict_recovery_ai`.
 - DM failure rate: count lines where `msg ~ webhook_metric_webhook_instagram_dm_delivery_total` and `outcome = failure`, group by `reason`.
+- **Outside-window (`reason = window_expired`):** Meta refused the send; the patient did not receive it. Spike on one doctor after a reminder/prescription job = silent delivery failure, not a ban. Do not retry those sends.
+- **Outbound spike cron:** `outbound-spike: doctor over threshold` (WARN) then `outbound-spike: tick complete` (INFO: `scanned`, `doctorsOverThreshold`, `paused`, `emailed`). Counts only attributed `send_message` failures. Window-expired / kill-switch / not-found are excluded.
 - Comment outreach: count `webhook_comment_pipeline_total` with `highIntent = true`, compare `dmSent` / `publicReplySent`.
 - Worker duration: percentile on `durationMs` for `webhook_job_worker_success` by `provider`.
 - DM perceived latency: percentile on `intentMs`, `generateMs`, `igSendMs`, `handlerPreSendMs` for `webhook_instagram_dm_pipeline_timing` (filter `greetingFastPath = true` to validate fast-path).

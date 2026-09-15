@@ -26,6 +26,7 @@ const baseParams = {
   senderId: 'sender-1',
   replyText: 'Hello',
   doctorToken: 'tok',
+  doctorId: 'doc-1',
   correlationId: 'corr-1',
   eventId: 'evt-1',
   provider: 'instagram' as const,
@@ -66,7 +67,8 @@ describe('sendInstagramDmWithLocksAndFallback (RBH-04)', () => {
       'sender-1',
       'Hello',
       'corr-1',
-      'tok'
+      'tok',
+      'doc-1'
     );
   });
 
@@ -93,7 +95,8 @@ describe('sendInstagramDmWithLocksAndFallback (RBH-04)', () => {
       'resolved-ig',
       'Hello',
       'corr-1',
-      'tok'
+      'tok',
+      'doc-1'
     );
   });
 

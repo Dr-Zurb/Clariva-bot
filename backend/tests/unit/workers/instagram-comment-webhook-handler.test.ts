@@ -98,7 +98,8 @@ describe('processInstagramCommentWebhook private reply', () => {
       COMMENT_ID,
       expect.any(String),
       'c1',
-      'ig-tok'
+      'ig-tok',
+      DOCTOR_ID
     );
     expect(instagramService.sendInstagramMessage).not.toHaveBeenCalled();
     expect(instagramService.replyToInstagramComment).toHaveBeenCalled();

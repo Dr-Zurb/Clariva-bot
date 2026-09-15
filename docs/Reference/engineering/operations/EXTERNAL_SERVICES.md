@@ -238,6 +238,8 @@ export const createAppointment = asyncHandler(async (req, res) => {
 - Queue webhook processing (async)
 - Comment outreach is a Send API **private reply** (`recipient.comment_id`), never a user-id `RESPONSE` DM to someone who only commented
 - Cap comment private replies at **40 per doctor per UTC day** (`comment_leads.dm_sent`); fail closed if the count is unavailable. Public reply is also skipped when the cap is hit (copy would otherwise say “check your DM”)
+- Incident kill switch: `OUTBOUND_MESSAGING_DISABLED=true` on the backend (Render env + redeploy). Throws `ServiceUnavailableError` before any Graph send. Inbound processing continues.
+- Failure spike: `POST /cron/outbound-spike` every 10 minutes. Counts `send_message` audit failures with `metadata.doctor_id` (DM replies + comment private replies). Ignores window-expired / kill-switch / not-found. Threshold 8 / 15 min → email + optional auto-pause (`instagram_receptionist_paused`).
 
 **Error Handling:**
 - 401 → Invalid signature (log and reject)

@@ -22,6 +22,7 @@ import {
   UnauthorizedError,
   ServiceUnavailableError,
   InternalError,
+  MessageWindowExpiredError,
 } from '../../../src/utils/errors';
 
 describe('webhook-metrics classifyInstagramDmFailureReason', () => {
@@ -30,6 +31,7 @@ describe('webhook-metrics classifyInstagramDmFailureReason', () => {
     expect(classifyInstagramDmFailureReason(new ForbiddenError())).toBe('forbidden');
     expect(classifyInstagramDmFailureReason(new NotFoundError())).toBe('not_found');
     expect(classifyInstagramDmFailureReason(new TooManyRequestsError())).toBe('rate_limit');
+    expect(classifyInstagramDmFailureReason(new MessageWindowExpiredError())).toBe('window_expired');
     expect(classifyInstagramDmFailureReason(new ServiceUnavailableError())).toBe(
       'service_unavailable'
     );

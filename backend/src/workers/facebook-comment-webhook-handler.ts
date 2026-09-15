@@ -227,7 +227,7 @@ export async function processFacebookCommentWebhook(
         addressSummary: settings?.address_summary ?? undefined,
       });
       try {
-        await sendInstagramPrivateReply(commentId, dmMessage, correlationId, pageToken);
+        await sendInstagramPrivateReply(commentId, dmMessage, correlationId, pageToken, doctorId);
         dmSent = true;
       } catch (dmErr) {
         logger.warn(

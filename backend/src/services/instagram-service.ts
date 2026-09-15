@@ -28,6 +28,7 @@ import {
   TooManyRequestsError,
   InternalError,
   ServiceUnavailableError,
+  MessageWindowExpiredError,
 } from '../utils/errors';
 import type {
   InstagramSendMessageRequest,
@@ -92,6 +93,16 @@ const MAX_RETRIES = 3;
 const INITIAL_RETRY_DELAY = 1000; // 1 second
 const MAX_RETRY_DELAY = 4000; // 4 seconds
 
+/**
+ * Incident kill switch. Call before any outbound Meta send or public reply.
+ * Inbound webhook processing must keep running when this throws.
+ */
+export function assertOutboundMessagingEnabled(correlationId: string, kind: string): void {
+  if (!env.OUTBOUND_MESSAGING_DISABLED) return;
+  logger.info({ correlationId, kind }, 'outbound_disabled_skip');
+  throw new ServiceUnavailableError('Outbound messaging is disabled');
+}
+
 // ============================================================================
 // Core Service Functions
 // ============================================================================
@@ -132,8 +143,10 @@ export async function sendInstagramMessage(
   recipientId: string,
   message: string,
   correlationId: string,
-  accessToken?: string
+  accessToken?: string,
+  doctorId?: string
 ): Promise<InstagramSendMessageResponse> {
+  assertOutboundMessagingEnabled(correlationId, 'instagram_dm');
   // Validate input
   if (!recipientId || typeof recipientId !== 'string') {
     throw new AppError('Recipient ID is required', 400);
@@ -155,7 +168,7 @@ export async function sendInstagramMessage(
     );
   }
 
-  return sendWithRetry({ id: recipientId }, message, correlationId, token);
+  return sendWithRetry({ id: recipientId }, message, correlationId, token, doctorId);
 }
 
 /**
@@ -171,8 +184,10 @@ export async function sendInstagramPrivateReply(
   commentId: string,
   message: string,
   correlationId: string,
-  accessToken: string
+  accessToken: string,
+  doctorId?: string
 ): Promise<InstagramSendMessageResponse> {
+  assertOutboundMessagingEnabled(correlationId, 'comment_private_reply');
   if (!commentId || typeof commentId !== 'string') {
     throw new AppError('Comment ID is required', 400);
   }
@@ -190,7 +205,7 @@ export async function sendInstagramPrivateReply(
     throw new InternalError('Instagram access token not configured');
   }
 
-  return sendWithRetry({ comment_id: commentId }, message, correlationId, token);
+  return sendWithRetry({ comment_id: commentId }, message, correlationId, token, doctorId);
 }
 
 /**
@@ -508,6 +523,7 @@ export async function replyToInstagramComment(
   accessToken: string,
   correlationId: string
 ): Promise<{ replyId: string } | null> {
+  assertOutboundMessagingEnabled(correlationId, 'instagram_comment_reply');
   if (!commentId || !message?.trim() || !accessToken) {
     return null;
   }
@@ -631,6 +647,7 @@ export async function sendInstagramImage(
   correlationId: string,
   accessToken?: string
 ): Promise<InstagramSendMessageResponse> {
+  assertOutboundMessagingEnabled(correlationId, 'instagram_image');
   if (!recipientId || !imageUrl?.startsWith('https://')) {
     throw new AppError('Invalid recipient or image URL', 400);
   }
@@ -698,6 +715,7 @@ export async function sendInstagramFile(
   correlationId: string,
   accessToken?: string
 ): Promise<InstagramSendMessageResponse> {
+  assertOutboundMessagingEnabled(correlationId, 'instagram_file');
   if (!recipientId || !fileUrl?.startsWith('https://')) {
     throw new AppError('Invalid recipient or file URL', 400);
   }
@@ -765,11 +783,24 @@ function recipientAuditMeta(recipient: MessageRecipient): Record<string, string>
     : { recipient_kind: 'user_id', recipient_id: recipient.id };
 }
 
+function sendAuditMetadata(
+  recipientMeta: Record<string, string>,
+  extra: Record<string, unknown>,
+  doctorId?: string
+): Record<string, unknown> {
+  return {
+    ...recipientMeta,
+    ...extra,
+    ...(doctorId ? { doctor_id: doctorId } : {}),
+  };
+}
+
 async function sendWithRetry(
   recipient: MessageRecipient,
   message: string,
   correlationId: string,
-  token: string
+  token: string,
+  doctorId?: string
 ): Promise<InstagramSendMessageResponse> {
   let lastError: Error | null = null;
   const recipientMeta = recipientAuditMeta(recipient);
@@ -786,11 +817,11 @@ async function sendWithRetry(
         action: 'send_message',
         resourceType: 'instagram_message',
         status: 'success',
-        metadata: {
-          ...recipientMeta,
-          message_length: message.length,
-          message_id: response.message_id,
-        },
+        metadata: sendAuditMetadata(
+          recipientMeta,
+          { message_length: message.length, message_id: response.message_id },
+          doctorId
+        ),
       });
 
       return response;
@@ -804,7 +835,8 @@ async function sendWithRetry(
       if (
         appError instanceof UnauthorizedError ||
         appError instanceof ForbiddenError ||
-        appError instanceof NotFoundError
+        appError instanceof NotFoundError ||
+        appError instanceof MessageWindowExpiredError
       ) {
         // Log failure (sanitized error message)
         await logAuditEvent({
@@ -814,11 +846,11 @@ async function sendWithRetry(
           resourceType: 'instagram_message',
           status: 'failure',
           errorMessage: appError.message,
-          metadata: {
-            ...recipientMeta,
-            message_length: message.length,
-            error_type: appError.constructor.name,
-          },
+          metadata: sendAuditMetadata(
+            recipientMeta,
+            { message_length: message.length, error_type: appError.constructor.name },
+            doctorId
+          ),
         });
 
         throw appError;
@@ -851,12 +883,15 @@ async function sendWithRetry(
             resourceType: 'instagram_message',
             status: 'failure',
             errorMessage: appError.message,
-            metadata: {
-              ...recipientMeta,
-              message_length: message.length,
-              error_type: 'TooManyRequestsError',
-              retry_attempts: attempt + 1,
-            },
+            metadata: sendAuditMetadata(
+              recipientMeta,
+              {
+                message_length: message.length,
+                error_type: 'TooManyRequestsError',
+                retry_attempts: attempt + 1,
+              },
+              doctorId
+            ),
           });
 
           throw appError;
@@ -918,12 +953,15 @@ async function sendWithRetry(
     resourceType: 'instagram_message',
     status: 'failure',
     errorMessage: appError.message,
-    metadata: {
-      ...recipientMeta,
-      message_length: message.length,
-      error_type: appError.constructor.name,
-      retry_attempts: MAX_RETRIES + 1,
-    },
+    metadata: sendAuditMetadata(
+      recipientMeta,
+      {
+        message_length: message.length,
+        error_type: appError.constructor.name,
+        retry_attempts: MAX_RETRIES + 1,
+      },
+      doctorId
+    ),
   });
 
   throw appError;
@@ -1011,10 +1049,34 @@ async function sendMessageAPI(
  * @returns AppError instance
  */
 /** Exported for unit testing error mapping. */
+/** Meta Graph: message sent outside the 24-hour customer window. */
+const MESSAGING_WINDOW_EXPIRED_SUBCODES = new Set([2534022, 2018278, 2018065]);
+
+function isMessagingWindowExpiredError(error: unknown): boolean {
+  if (!axios.isAxiosError(error)) return false;
+  const ig = error.response?.data?.error as InstagramApiError['error'] | undefined;
+  if (!ig) return false;
+  if (
+    ig.code === 10 &&
+    ig.error_subcode != null &&
+    MESSAGING_WINDOW_EXPIRED_SUBCODES.has(ig.error_subcode)
+  ) {
+    return true;
+  }
+  return (
+    ig.code === 10 &&
+    typeof ig.message === 'string' &&
+    /outside of allowed window/i.test(ig.message)
+  );
+}
+
 export function mapInstagramError(error: unknown, correlationId: string): AppError {
   // If already an AppError, return as-is
   if (error instanceof AppError) {
     return error;
+  }
+  if (isMessagingWindowExpiredError(error)) {
+    return new MessageWindowExpiredError('Instagram messaging window has expired');
   }
   // Handle axios errors
   if (axios.isAxiosError(error)) {

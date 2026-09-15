@@ -222,6 +222,25 @@ if (appointment.status === 'booked') {
 
 ---
 
+### MessageWindowExpiredError (409)
+
+**Status Code:** 409 Conflict
+
+**When to Use:**
+- Meta Graph rejected an Instagram/Messenger send because the 24-hour customer window is closed.
+- Graph `code` 10 with `error_subcode` `2534022`, `2018278`, or `2018065` (see Meta Messenger error codes).
+
+**Message Guidelines:**
+- Do not include recipient IDs or message text.
+- The patient was **not** messaged. Do not retry.
+
+**Example:**
+```typescript
+throw new MessageWindowExpiredError('Instagram messaging window has expired');
+```
+
+---
+
 ### TooManyRequestsError (429)
 
 **Status Code:** 429 Too Many Requests
@@ -332,6 +351,10 @@ Is authentication missing/invalid?
 
 Is user authenticated but lacks permission?
   YES → ForbiddenError (403)
+  NO → Continue
+
+Did Meta refuse an Instagram send because the 24h window closed?
+  YES → MessageWindowExpiredError (409)
   NO → Continue
 
 Does resource not exist?

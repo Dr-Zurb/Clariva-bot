@@ -14,6 +14,7 @@ import {
   ServiceUnavailableError,
   TooManyRequestsError,
   UnauthorizedError,
+  MessageWindowExpiredError,
 } from '../utils/errors';
 
 const CONTEXT = 'webhook_metric' as const;
@@ -24,6 +25,7 @@ export type InstagramDmFailureReason =
   | 'forbidden'
   | 'not_found'
   | 'rate_limit'
+  | 'window_expired'
   | 'bad_request'
   | 'server_error'
   | 'service_unavailable'
@@ -37,6 +39,7 @@ export function classifyInstagramDmFailureReason(err: unknown): InstagramDmFailu
   if (err instanceof ForbiddenError) return 'forbidden';
   if (err instanceof NotFoundError) return 'not_found';
   if (err instanceof TooManyRequestsError) return 'rate_limit';
+  if (err instanceof MessageWindowExpiredError) return 'window_expired';
   if (err instanceof ServiceUnavailableError) return 'service_unavailable';
   if (err instanceof AppError) {
     if (err.statusCode >= 500) return 'server_error';

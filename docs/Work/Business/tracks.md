@@ -22,9 +22,10 @@ The single place I look when planning a week. If a thread isn't here, it doesn't
 | L7 | DPIIT Startup India recognition | `NEXT` | Apply after Udyam — needed for the cheaper TM fee |
 | L8 | IP assignment from founders | `NEXT` | Print, sign two sets, scan the PDF |
 | L9 | DPDP Act + health-data posture | `NEXT` | Counsel sitting: attestation vs AI-on-transcript (blocks Phase 2) |
+| L10 | Meta platform-action clause | `NEXT` | Monday: send attorney the clause points (official APIs only; Meta may restrict accounts; no delivery/standing guarantee; liability cap) |
 | M1 | Meta — data deletion callback | `ACTIVE` | Optional Send Request if this Facebook account ever connected Halo Aid |
-| M2 | Meta — business verification | `WAITING` | Wait. Recheck Security Centre Tue 15 Sep. Do not restart while In review. |
-| M3 | Meta — app review submission | `NEXT` | Record one screencast per requested permission |
+| M2 | Meta — business verification | `PARKED` | Later: open WhatsApp “needs more information” |
+| M3 | Meta — app review submission | `ACTIVE` | Record one screencast: Connect → DM reply → comment reply |
 | P1 | Desk / receptionist | `ACTIVE` | Review history-link spec; promote p1; then Opus `hl-01` |
 | P2 | Cockpit / EHR | `PARKED` | — |
 | P3 | Bot / messaging | `PARKED` | — |
@@ -147,6 +148,11 @@ Live URLs are in Meta app settings. Counsel pass (Grievance Officer, collection 
 
 **Next action:** at the counsel sitting, answer whether attestation may cover AI processing of transcript text (unblocks Phase 2 ship). Do not write the extraction route until that answer is yes.
 
+### L10 · Meta platform-action clause — `NEXT`
+A clinic Instagram restriction is a platform decision, not a Halo Aid bug. The pilot / customer agreement does not yet say that. Before a 500k-follower clinic is live, counsel needs language that: Halo Aid uses only official Meta APIs; Meta controls the platform and may restrict or suspend accounts at its discretion; no guarantee of message delivery or account standing; the doctor owns the Instagram account; liability is capped.
+
+**Next action:** Monday — send the attorney those five points. Do not invent the wording here.
+
 ---
 
 ## M — Meta app review
@@ -168,8 +174,8 @@ Callback URL is in Basic Settings. Live POST returns `200` + `{ url, confirmatio
 
 **Next action:** optional — Facebook → Apps and Websites → Remove Halo Aid → Send Request, only if this account ever connected the app. Otherwise M1 is done enough until the Express backend is hosted.
 
-### M2 · Business verification — `WAITING`
-**Try 2 of N — In review** (submitted Sun 13 Sep 2026 ~19:50 IST). Meta UI: ~2 working days. Official outer window still up to 14 working days. Portfolio `1014532090915807` (Halo-Aid). Use case: **App requires access to permissions on Meta for Developers**. Do not start Access verification (Tech Provider). 2FA postponed.
+### M2 · Business verification — `PARKED`
+**Verified** — Meta date **13 Sep 2026** (Try 2, submitted Sun 13 Sep ~19:50 IST). Noticed **Tue 15 Sep**. Portfolio `1014532090915807` (Halo-Aid). Use case: **App requires access to permissions on Meta for Developers**. WhatsApp “needs more information” parked (founder: later). Do **not** start Access verification (Tech Provider) — that is not Instagram App Review. 2FA postponed.
 
 Checked live **Sun 13 Sep**: `https://haloaid.com` and `https://www.haloaid.com` both show the footer `HALO AID PRIVATE LIMITED (CIN U62090PB2026PTC069487)` · `Gali No. 10, Shiv Nagar, Batala, Gurdaspur - 143505, Punjab, India` · `founder@haloaid.com`. Privacy / Terms already had the same line.
 
@@ -188,7 +194,7 @@ Meta does not publish a hard retry cap for this Security Centre flow. Do not sta
 - Public footer shipped (commit `1c74207` on `main`) and confirmed live on apex + `www`.
 - Dropped TAN. Email confirm used domain mail, not Gmail.
 
-#### Try 2 — In review — form values as typed
+#### Try 2 — verified — form values as typed
 | Field | Value |
 |---|---|
 | Business type | Private company (not Corporation / sole prop / partnership / institution) |
@@ -220,23 +226,28 @@ Opened the PDFs **Sun 13 Sep** (after submit). What is actually printed:
 
 Known thin spot on Try 2: two copies of the COI. Allowed, and the COI does carry name + RO. A reviewer can still read it as one document. PAN would not have fixed the address slot. TAN would have — it is the only PDF with name + address + the phone we typed. Try 1 already used COI + TAN and still failed (no public footer / blank Business Info then).
 
-#### If Try 2 fails — change the pack before Try 3
-Do **not** upload PAN for address. Do **not** send COI + COI again.
+#### WhatsApp leftover (parked)
+Same Security Centre screen still shows **WhatsApp needs more information**. Not this sitting. When you open it, paste Meta’s sentence here. Do not start Access verification (Tech Provider) from that banner.
 
-1. Open **View details** / Security Centre. Paste Meta’s sentence into this track before touching the form.
-2. Legal name: COI as **Certificate of incorporation**.
-3. Address/phone: unlocked **TAN** (`TAN-JLDH04909C-unlocked-HA.pdf` or the unlocked TAN in Important Docs) as **Business tax document**. That letter has name + Batala line + `TEL NO. 8264602737`.
-4. Stronger later, do not invent: GST (L4) or company bank letter (L1). No personal utility bill. No e-PAN for the address box.
-5. After a second rejection, open a Meta Business support case and ask which field failed. Do not burn Try 3 blind.
-6. Recheck footer still live on both hosts before any resubmit.
+**Next action:** Later — open WhatsApp “needs more information” / View details.
 
-**Next action:** Wait. Recheck Security Centre **Tue 15 Sep**. Do not restart while In review.
+### M3 · App review submission — `ACTIVE`
+Instagram Login app only (not Facebook Page / `pages_*`). Request **Advanced Access** for these three:
 
-### M3 · App review submission — `NEXT`
-Permissions needed: the `instagram_business_*` scopes and the `pages_*` scopes for messaging, plus Advanced Access. Each requires a screencast that shows a real user completing the flow, and a written justification.
+- `instagram_business_basic`
+- `instagram_business_manage_messages`
+- `instagram_business_manage_comments`
 
-**Next action:** record one screencast per requested permission. Do them in a single sitting.
-**Blocked by:** M1, and helped by M2. Access verification (Tech Provider) starts only after M2 is verified. Policy URLs (L9) are live.
+Each needs a screencast of a real flow + written justification. Frame as **clinic Instagram receptionist / appointment FAQs**, not diagnosis or a medical-records product.
+
+**This sitting:** one screencast covering Connect → Instagram login → dashboard shows connected → test DM reply → comment public reply (and DM if that’s the product path). Testers are fine.
+
+**Then (same week, after the file exists):** App Dashboard → App Review → request Advanced Access for those three only. Paste privacy `https://haloaid.com/privacy`, terms `https://haloaid.com/terms`, data-deletion `https://haloaid.com/data-deletion-callback`. Submit. Clock is weeks.
+
+Do **not** click Security Centre → Access verification (Tech Provider). That is a different program.
+
+**Next action:** Record the one screencast (Connect → DM reply → comment reply).
+**Unblocked by:** M2 verified (13 Sep). M1 callback is live enough. Policy URLs are live.
 
 ---
 

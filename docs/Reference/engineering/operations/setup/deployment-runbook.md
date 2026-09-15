@@ -53,6 +53,8 @@ Set in hosting dashboard or `.env.production` (never commit). See `backend/.env.
 - `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` (production Supabase project)
 - `ENCRYPTION_KEY` (base64 32-byte key)
 - Instagram: `INSTAGRAM_APP_ID`, `INSTAGRAM_APP_SECRET`, `INSTAGRAM_ACCESS_TOKEN`, `INSTAGRAM_WEBHOOK_VERIFY_TOKEN`
+- Incident: `OUTBOUND_MESSAGING_DISABLED=true` stops every outbound Meta send/reply (DMs, private replies, public comment replies, image/file). Inbound webhooks keep running. Set on the backend Render service and redeploy. Unset/false to resume.
+- Spike watch: schedule Render Cron `POST /cron/outbound-spike` every 10 minutes (`CRON_SECRET`). Emails `DEFAULT_DOCTOR_EMAIL` and auto-pauses that doctor's receptionist at 8 attributed send failures / 15 minutes. Set `OUTBOUND_SPIKE_AUTO_PAUSE=false` for email-only.
 - Payment: `RAZORPAY_*`, `PAYPAL_*` (live keys in prod), `PAYPAL_MODE=live`
 - Notifications: `RESEND_API_KEY`, `DEFAULT_DOCTOR_EMAIL`
 - Optional: `REDIS_URL` (webhook queue), `OPENAI_API_KEY`
@@ -67,20 +69,21 @@ Set in hosting dashboard or `.env.production` (never commit). See `backend/.env.
 
 ---
 
-## 4. Frontend Deployment (Vercel)
+## 4. Frontend Deployment (Render)
 
-1. **Connect repo** to Vercel; set root to `frontend`.
-2. **Build:** Next.js auto-detected. Build command: `npm run build` (default). Output: default.
-3. **Environment variables** (in Vercel dashboard):
-   - `NEXT_PUBLIC_API_URL` = production backend URL (e.g. `https://api.yourdomain.com`)
-   - `NEXT_PUBLIC_SUPABASE_URL` = production Supabase project URL
-   - `NEXT_PUBLIC_SUPABASE_ANON_KEY` = production anon key (same project as backend)
-4. **Deploy:** Push to main (or trigger deploy). No `vercel.json` required for basic Next.js.
+Live Halo Aid is **Render-only**: the Next.js app at `haloaid.com` and the API at `backend-77rs.onrender.com`. Do not treat Vercel as production.
+
+1. **Frontend service** (custom domain `haloaid.com`, historically `Clariva-bot-1`): root `frontend`. Build `npm ci && npm run build`, start `npm run start`.
+2. **Backend service** (`backend-77rs`): root `backend`. Build `npm ci && npm run build`, start `node dist/index.js` (or the Docker equivalent in §2).
+3. **Frontend env** (Render → Environment):
+   - `NEXT_PUBLIC_API_URL` = `https://backend-77rs.onrender.com` (no trailing slash)
+   - `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY` = production Supabase
+4. **Deploy:** a git push does not update live until you **Manual Deploy** that service from `main`. Redeploy **both** services when frontend and API must stay in sync (e.g. a new public route the login page already calls).
 
 ### Custom domain & SSL
 
-- Vercel: add domain in project settings; SSL is automatic.
-- Backend: use platform SSL (Render/Railway provide HTTPS) or put behind a reverse proxy (e.g. Cloudflare).
+- Frontend: `haloaid.com` + `www` on the Render frontend service (Cloudflare in front).
+- Backend: Render hostname `backend-77rs.onrender.com` (or a later `api.` custom domain).
 
 ---
 
