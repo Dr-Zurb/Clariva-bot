@@ -87,10 +87,7 @@ import {
   type ServiceCatalogV1,
   type ServiceMatcherHintsV1,
 } from '../utils/service-catalog-schema';
-import {
-  buildSingleFeePersistedJson,
-  SINGLE_FEE_BACKUP_KEY,
-} from '../utils/single-fee-catalog';
+import { buildSingleFeePersistedJson, SINGLE_FEE_BACKUP_KEY } from '../utils/single-fee-catalog';
 import { validateOwnership } from '../utils/db-helpers';
 import { handleSupabaseError } from '../utils/db-helpers';
 import { logDataAccess, logDataModification, logAuditEvent } from '../utils/audit-logger';
@@ -299,6 +296,41 @@ export async function getDoctorSettings(doctorId: string): Promise<DoctorSetting
   return normalizeDoctorSettingsApiRow(materialized);
 }
 
+/**
+ * Incident pause: stop automated IG/FB outreach for one doctor.
+ * Idempotent if already paused. Does not create a settings row.
+ */
+export async function pauseInstagramReceptionistForIncident(
+  doctorId: string,
+  correlationId: string
+): Promise<'paused' | 'already_paused' | 'unavailable'> {
+  const supabase = getSupabaseAdminClient();
+  if (!supabase) return 'unavailable';
+
+  const existing = await getDoctorSettings(doctorId);
+  if (!existing) return 'unavailable';
+  if (existing.instagram_receptionist_paused === true) return 'already_paused';
+
+  const { error } = await supabase
+    .from('doctor_settings')
+    .update({ instagram_receptionist_paused: true })
+    .eq('doctor_id', doctorId);
+
+  if (error) {
+    logger.warn({ correlationId, errCode: error.code }, 'Spike pause: update failed');
+    return 'unavailable';
+  }
+
+  await logAuditEvent({
+    correlationId,
+    action: 'doctor_settings_instagram_receptionist_pause',
+    resourceType: 'doctor_settings',
+    status: 'success',
+    metadata: { instagram_receptionist_paused: true, reason: 'outbound_spike' },
+  });
+  return 'paused';
+}
+
 /** Doctor IANA timezone for OPD policy resolution (pdm-07). */
 export async function getDoctorTimezone(doctorId: string): Promise<string> {
   const settings = await getDoctorSettings(doctorId);
@@ -365,7 +397,8 @@ function normalizeServiceOfferingsInRow(row: DoctorSettingsRow): DoctorSettingsR
 
 /** SFU-14: coerce DB JSON to validated shape or empty list. */
 function normalizeUserTemplatesInRow(row: DoctorSettingsRow): DoctorSettingsRow {
-  const raw = (row as unknown as { service_catalog_templates_json?: unknown }).service_catalog_templates_json;
+  const raw = (row as unknown as { service_catalog_templates_json?: unknown })
+    .service_catalog_templates_json;
   const parsed = parseServiceCatalogTemplatesJson(raw);
   return {
     ...row,
@@ -389,7 +422,7 @@ function normalizeSubjectiveSectionOrderInRow(row: DoctorSettingsRow): DoctorSet
   return {
     ...row,
     subjective_section_order: sanitizeSubjectiveSectionOrder(
-      raw.filter((id): id is string => typeof id === 'string'),
+      raw.filter((id): id is string => typeof id === 'string')
     ),
   };
 }
@@ -402,7 +435,7 @@ function normalizeSubjectiveSectionCollapsedInRow(row: DoctorSettingsRow): Docto
   return {
     ...row,
     subjective_section_collapsed: sanitizeSubjectiveSectionCollapsed(
-      raw as Record<string, unknown>,
+      raw as Record<string, unknown>
     ),
   };
 }
@@ -415,7 +448,7 @@ function normalizeSubjectiveSectionHiddenInRow(row: DoctorSettingsRow): DoctorSe
   return {
     ...row,
     subjective_section_hidden: sanitizeSubjectiveSectionHidden(
-      raw.filter((id): id is string => typeof id === 'string'),
+      raw.filter((id): id is string => typeof id === 'string')
     ),
   };
 }
@@ -428,7 +461,7 @@ function normalizeObjectiveSectionOrderInRow(row: DoctorSettingsRow): DoctorSett
   return {
     ...row,
     objective_section_order: sanitizeObjectiveSectionOrder(
-      raw.filter((id): id is string => typeof id === 'string'),
+      raw.filter((id): id is string => typeof id === 'string')
     ),
   };
 }
@@ -440,9 +473,7 @@ function normalizeObjectiveSectionCollapsedInRow(row: DoctorSettingsRow): Doctor
   }
   return {
     ...row,
-    objective_section_collapsed: sanitizeObjectiveSectionCollapsed(
-      raw as Record<string, unknown>,
-    ),
+    objective_section_collapsed: sanitizeObjectiveSectionCollapsed(raw as Record<string, unknown>),
   };
 }
 
@@ -454,7 +485,7 @@ function normalizeObjectiveSectionHiddenInRow(row: DoctorSettingsRow): DoctorSet
   return {
     ...row,
     objective_section_hidden: sanitizeObjectiveSectionHidden(
-      raw.filter((id): id is string => typeof id === 'string'),
+      raw.filter((id): id is string => typeof id === 'string')
     ),
   };
 }
@@ -467,7 +498,7 @@ function normalizePlanSectionOrderInRow(row: DoctorSettingsRow): DoctorSettingsR
   return {
     ...row,
     plan_section_order: sanitizePlanSectionOrder(
-      raw.filter((id): id is string => typeof id === 'string'),
+      raw.filter((id): id is string => typeof id === 'string')
     ),
   };
 }
@@ -491,7 +522,7 @@ function normalizePlanSectionHiddenInRow(row: DoctorSettingsRow): DoctorSettings
   return {
     ...row,
     plan_section_hidden: sanitizePlanSectionHidden(
-      raw.filter((id): id is string => typeof id === 'string'),
+      raw.filter((id): id is string => typeof id === 'string')
     ),
   };
 }
@@ -504,7 +535,7 @@ function normalizeAssessmentSectionOrderInRow(row: DoctorSettingsRow): DoctorSet
   return {
     ...row,
     assessment_section_order: sanitizeAssessmentSectionOrder(
-      raw.filter((id): id is string => typeof id === 'string'),
+      raw.filter((id): id is string => typeof id === 'string')
     ),
   };
 }
@@ -517,7 +548,7 @@ function normalizeAssessmentSectionCollapsedInRow(row: DoctorSettingsRow): Docto
   return {
     ...row,
     assessment_section_collapsed: sanitizeAssessmentSectionCollapsed(
-      raw as Record<string, unknown>,
+      raw as Record<string, unknown>
     ),
   };
 }
@@ -530,7 +561,7 @@ function normalizeAssessmentSectionHiddenInRow(row: DoctorSettingsRow): DoctorSe
   return {
     ...row,
     assessment_section_hidden: sanitizeAssessmentSectionHidden(
-      raw.filter((id): id is string => typeof id === 'string'),
+      raw.filter((id): id is string => typeof id === 'string')
     ),
   };
 }
@@ -585,9 +616,7 @@ function normalizeVitalsHiddenInRow(row: DoctorSettingsRow): DoctorSettingsRow {
   }
   return {
     ...row,
-    vitals_hidden: sanitizeVitalsHidden(
-      raw.filter((id): id is string => typeof id === 'string'),
-    ),
+    vitals_hidden: sanitizeVitalsHidden(raw.filter((id): id is string => typeof id === 'string')),
   };
 }
 
@@ -598,9 +627,7 @@ async function attachBrandingPreviewUrls(
 ): Promise<DoctorSettingsRow> {
   const { signClinicBrandingPath } = await import('./letterhead-service');
   const [logo, header, footer, background] = await Promise.all([
-    row.logo_path
-      ? signClinicBrandingPath(row.logo_path, correlationId, doctorId, 'logo')
-      : null,
+    row.logo_path ? signClinicBrandingPath(row.logo_path, correlationId, doctorId, 'logo') : null,
     row.header_path
       ? signClinicBrandingPath(row.header_path, correlationId, doctorId, 'header')
       : null,
@@ -625,41 +652,42 @@ function normalizeDoctorSettingsApiRow(row: DoctorSettingsRow): DoctorSettingsRo
         normalizePlanCustomSectionsInRow(
           normalizeAssessmentCustomSectionsInRow(
             normalizeAssessmentSectionHiddenInRow(
-          normalizeAssessmentSectionCollapsedInRow(
-            normalizeAssessmentSectionOrderInRow(
-              normalizePlanSectionHiddenInRow(
-                normalizePlanSectionCollapsedInRow(
-                  normalizePlanSectionOrderInRow(
-                    normalizeObjectiveCustomSectionsInRow(
-                      normalizeObjectiveSectionHiddenInRow(
-                        normalizeObjectiveSectionCollapsedInRow(
-                          normalizeObjectiveSectionOrderInRow(
-                            normalizeSubjectiveSectionHiddenInRow(
-                              normalizeSubjectiveSectionCollapsedInRow(
-                                normalizeSubjectiveSectionOrderInRow(
-                                  normalizeSubjectiveCustomSubsectionsInRow(
-                                    normalizeUserTemplatesInRow(normalizeServiceOfferingsInRow(row)),
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-            ),
-          ),
-        ),
-      ),
-    ),
+              normalizeAssessmentSectionCollapsedInRow(
+                normalizeAssessmentSectionOrderInRow(
+                  normalizePlanSectionHiddenInRow(
+                    normalizePlanSectionCollapsedInRow(
+                      normalizePlanSectionOrderInRow(
+                        normalizeObjectiveCustomSectionsInRow(
+                          normalizeObjectiveSectionHiddenInRow(
+                            normalizeObjectiveSectionCollapsedInRow(
+                              normalizeObjectiveSectionOrderInRow(
+                                normalizeSubjectiveSectionHiddenInRow(
+                                  normalizeSubjectiveSectionCollapsedInRow(
+                                    normalizeSubjectiveSectionOrderInRow(
+                                      normalizeSubjectiveCustomSubsectionsInRow(
+                                        normalizeUserTemplatesInRow(
+                                          normalizeServiceOfferingsInRow(row)
+                                        )
+                                      )
+                                    )
+                                  )
+                                )
+                              )
+                            )
+                          )
+                        )
+                      )
+                    )
+                  )
+                )
+              )
+            )
+          )
+        )
+      )
+    )
   );
 }
-
 
 export type MatcherHintsReplacePayload = {
   keywords: string;
@@ -915,8 +943,7 @@ export async function appendMatcherHintsOnDoctorCatalogOffering(
           { exclude_when: exc }
         ).exclude_when
       : existingHints?.exclude_when;
-    const excludeChanged =
-      (existingHints?.exclude_when ?? '') !== (mergedExclude ?? '');
+    const excludeChanged = (existingHints?.exclude_when ?? '') !== (mergedExclude ?? '');
 
     if (!examplesChanged && !excludeChanged) {
       return false;
@@ -1135,7 +1162,8 @@ export async function updateDoctorSettings(
 
   if (
     payload.slot_interval_minutes !== undefined &&
-    (payload.slot_interval_minutes < SLOT_INTERVAL_MIN || payload.slot_interval_minutes > SLOT_INTERVAL_MAX)
+    (payload.slot_interval_minutes < SLOT_INTERVAL_MIN ||
+      payload.slot_interval_minutes > SLOT_INTERVAL_MAX)
   ) {
     throw new ValidationError('slot_interval_minutes must be between 1 and 60');
   }
@@ -1181,16 +1209,16 @@ export async function updateDoctorSettings(
     payload.instagram_receptionist_pause_message !== null &&
     payload.instagram_receptionist_pause_message.length > 500
   ) {
-    throw new ValidationError('instagram_receptionist_pause_message must be at most 500 characters');
+    throw new ValidationError(
+      'instagram_receptionist_pause_message must be at most 500 characters'
+    );
   }
   if (
     payload.catalog_mode !== undefined &&
     payload.catalog_mode !== null &&
     !(CATALOG_MODES as readonly string[]).includes(payload.catalog_mode)
   ) {
-    throw new ValidationError(
-      `catalog_mode must be one of: ${CATALOG_MODES.join(', ')}`
-    );
+    throw new ValidationError(`catalog_mode must be one of: ${CATALOG_MODES.join(', ')}`);
   }
   if (
     payload.patient_flow_advance !== undefined &&
@@ -1225,7 +1253,7 @@ export async function updateDoctorSettings(
 
   if (payload.subjective_custom_subsections !== undefined) {
     const parsed = subjectiveCustomSubsectionsDefaultSchema.safeParse(
-      payload.subjective_custom_subsections,
+      payload.subjective_custom_subsections
     );
     if (!parsed.success) {
       const first = parsed.error.issues[0];
@@ -1336,9 +1364,7 @@ export async function updateDoctorSettings(
   }
 
   if (payload.assessment_section_collapsed !== undefined) {
-    const parsed = assessmentSectionCollapsedSchema.safeParse(
-      payload.assessment_section_collapsed,
-    );
+    const parsed = assessmentSectionCollapsedSchema.safeParse(payload.assessment_section_collapsed);
     if (!parsed.success) {
       const first = parsed.error.issues[0];
       throw new ValidationError(first?.message ?? 'Invalid assessment_section_collapsed');
@@ -1419,9 +1445,7 @@ export async function updateDoctorSettings(
   }
 
   if (payload.investigations_custom_orders !== undefined) {
-    const parsed = investigationsCustomOrdersSchema.safeParse(
-      payload.investigations_custom_orders,
-    );
+    const parsed = investigationsCustomOrdersSchema.safeParse(payload.investigations_custom_orders);
     if (!parsed.success) {
       const first = parsed.error.issues[0];
       throw new ValidationError(first?.message ?? 'Invalid investigations_custom_orders');
@@ -1599,11 +1623,15 @@ export async function updateDoctorSettings(
     if (payload.service_catalog_templates_json === null) {
       updateData.service_catalog_templates_json = null;
     } else {
-      const tpl = serviceCatalogTemplatesJsonSchema.safeParse(payload.service_catalog_templates_json);
+      const tpl = serviceCatalogTemplatesJsonSchema.safeParse(
+        payload.service_catalog_templates_json
+      );
       if (!tpl.success) {
         const first = tpl.error.issues[0];
         throw new ValidationError(
-          first ? `${first.path.join('.')}: ${first.message}` : 'Invalid service_catalog_templates_json'
+          first
+            ? `${first.path.join('.')}: ${first.message}`
+            : 'Invalid service_catalog_templates_json'
         );
       }
       updateData.service_catalog_templates_json = tpl.data;
@@ -1735,9 +1763,7 @@ export function computeSingleFeeCatalogSyncUpdate(params: {
   }
 
   const prevMode = existingRow?.catalog_mode ?? null;
-  const effectiveMode = 'catalog_mode' in payload
-    ? payload.catalog_mode ?? null
-    : prevMode;
+  const effectiveMode = 'catalog_mode' in payload ? (payload.catalog_mode ?? null) : prevMode;
 
   if (effectiveMode !== 'single_fee') {
     return { didSync: false, newServiceOfferingsJson: null };
@@ -1755,15 +1781,18 @@ export function computeSingleFeeCatalogSyncUpdate(params: {
     return { didSync: false, newServiceOfferingsJson: null };
   }
 
-  const effectiveFee = 'appointment_fee_minor' in payload
-    ? payload.appointment_fee_minor ?? null
-    : existingRow?.appointment_fee_minor ?? null;
-  const effectiveTypes = 'consultation_types' in payload
-    ? payload.consultation_types ?? null
-    : existingRow?.consultation_types ?? null;
-  const effectivePracticeName = 'practice_name' in payload
-    ? payload.practice_name ?? null
-    : existingRow?.practice_name ?? null;
+  const effectiveFee =
+    'appointment_fee_minor' in payload
+      ? (payload.appointment_fee_minor ?? null)
+      : (existingRow?.appointment_fee_minor ?? null);
+  const effectiveTypes =
+    'consultation_types' in payload
+      ? (payload.consultation_types ?? null)
+      : (existingRow?.consultation_types ?? null);
+  const effectivePracticeName =
+    'practice_name' in payload
+      ? (payload.practice_name ?? null)
+      : (existingRow?.practice_name ?? null);
 
   // Backup preservation:
   //   - Mode transition: the pre-transition catalog (whatever it was) becomes
@@ -1840,10 +1869,7 @@ export async function ensureSingleFeeCatalogMaterialized(
         'catalog_mode.single_fee.materialize.failed'
       );
     } else {
-      logger.info(
-        { doctorId: row.doctor_id },
-        'catalog_mode.single_fee.materialized'
-      );
+      logger.info({ doctorId: row.doctor_id }, 'catalog_mode.single_fee.materialized');
     }
   }
 
@@ -1921,7 +1947,7 @@ export async function getCockpitPresetsForUser(userId: string): Promise<CockpitL
  */
 export async function putCockpitPresetsForUser(
   userId: string,
-  presets: unknown,
+  presets: unknown
 ): Promise<CockpitLayoutPreset[]> {
   validatePresetArray(presets);
   const supabase = getSupabaseAdminClient();
@@ -1930,14 +1956,13 @@ export async function putCockpitPresetsForUser(
   }
   const { data, error } = await supabase
     .from('doctor_settings')
-    .upsert(
-      { doctor_id: userId, cockpit_layout_presets: presets },
-      { onConflict: 'doctor_id' },
-    )
+    .upsert({ doctor_id: userId, cockpit_layout_presets: presets }, { onConflict: 'doctor_id' })
     .select('cockpit_layout_presets')
     .single();
   if (error) handleSupabaseError(error, 'putCockpitPresetsForUser');
-  void logDataModification('system', userId, 'update', 'doctor_settings', userId, ['cockpit_layout_presets']);
+  void logDataModification('system', userId, 'update', 'doctor_settings', userId, [
+    'cockpit_layout_presets',
+  ]);
   const raw = ((data as { cockpit_layout_presets?: unknown } | null)?.cockpit_layout_presets ??
     []) as CockpitLayoutPreset[];
   return normalizeCockpitPresetsOnRead(raw);
@@ -1950,7 +1975,7 @@ export async function putCockpitPresetsForUser(
  */
 export async function deleteCockpitPresetForUser(
   userId: string,
-  presetId: string,
+  presetId: string
 ): Promise<CockpitLayoutPreset[]> {
   if (!PRESET_ID_REGEX.test(presetId)) {
     throw new ValidationError(`Invalid preset id: ${presetId}`);
@@ -1997,16 +2022,14 @@ function validatePresetArray(presets: unknown): asserts presets is CockpitLayout
         preset.sourceTemplateId.length > SOURCE_TEMPLATE_ID_MAX_LEN)
     ) {
       throw new ValidationError(
-        `presets[${i}].sourceTemplateId must be 1–${SOURCE_TEMPLATE_ID_MAX_LEN} chars when provided`,
+        `presets[${i}].sourceTemplateId must be 1–${SOURCE_TEMPLATE_ID_MAX_LEN} chars when provided`
       );
     }
     const hasLayout = preset.layout != null;
     const hasLayoutTree = preset.layout_tree != null;
     const hasPaneTreeV3 = preset.pane_tree_v3 != null;
     if (!hasLayout && !hasLayoutTree && !hasPaneTreeV3) {
-      throw new ValidationError(
-        `presets[${i}] must include layout, layout_tree, or pane_tree_v3`,
-      );
+      throw new ValidationError(`presets[${i}] must include layout, layout_tree, or pane_tree_v3`);
     }
     if (hasLayout) {
       validateLayoutShape(preset.layout, `presets[${i}].layout`);

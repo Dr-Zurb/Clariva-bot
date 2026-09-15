@@ -31,6 +31,15 @@ jest.mock('../../../src/services/abandoned-booking-reminder', () => ({
 jest.mock('../../../src/services/consultation-pre-ping-job', () => ({
   runConsultationPrePingJob: jest.fn(),
 }));
+jest.mock('../../../src/services/consultation-checkin-job', () => ({
+  runConsultationCheckinJob: jest.fn(),
+}));
+jest.mock('../../../src/workers/recording-auto-resume-worker', () => ({
+  runRecordingAutoResumeJob: jest.fn(),
+}));
+jest.mock('../../../src/workers/recording-orphan-reconciliation-worker', () => ({
+  runRecordingOrphanReconcileJob: jest.fn(),
+}));
 jest.mock('../../../src/workers/account-deletion-cron', () => ({
   runAccountDeletionFinalizeJob: jest.fn(),
 }));
@@ -42,6 +51,9 @@ jest.mock('../../../src/workers/dashboard-events-retention-cron', () => ({
 }));
 jest.mock('../../../src/workers/instagram-token-health-cron', () => ({
   runInstagramTokenHealthJob: jest.fn(),
+}));
+jest.mock('../../../src/workers/outbound-spike-cron', () => ({
+  runOutboundSpikeJob: jest.fn(),
 }));
 const mockRunJob = jest.fn<
   (...args: unknown[]) => Promise<{

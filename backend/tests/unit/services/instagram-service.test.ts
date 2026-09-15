@@ -29,7 +29,9 @@ import {
   fetchMessengerUserProfile,
   fetchMessengerUserUsername,
   clearGraphHostMemoForTests,
+  assertOutboundMessagingEnabled,
 } from '../../../src/services/instagram-service';
+import { env } from '../../../src/config/env';
 import {
   UnauthorizedError,
   ForbiddenError,
@@ -37,6 +39,7 @@ import {
   TooManyRequestsError,
   InternalError,
   ServiceUnavailableError,
+  MessageWindowExpiredError,
 } from '../../../src/utils/errors';
 import * as auditLogger from '../../../src/utils/audit-logger';
 
@@ -59,6 +62,7 @@ jest.mock('../../../src/config/env', () => ({
     SUPABASE_ANON_KEY: 'test-anon-key',
     SUPABASE_SERVICE_ROLE_KEY: 'test-service-role-key',
     INSTAGRAM_ACCESS_TOKEN: 'test-access-token',
+    OUTBOUND_MESSAGING_DISABLED: false,
   },
 }));
 
@@ -131,6 +135,7 @@ describe('Instagram Service', () => {
 
   beforeEach(() => {
     jest.resetAllMocks();
+    (env as { OUTBOUND_MESSAGING_DISABLED: boolean }).OUTBOUND_MESSAGING_DISABLED = false;
     clearGraphHostMemoForTests();
     // Mock audit logger functions to return resolved promises
     (mockedAuditLogger.logAuditEvent as jest.Mock) = jest.fn().mockImplementation(() => Promise.resolve());
@@ -517,6 +522,22 @@ describe('Instagram Service', () => {
         ).rejects.toThrow(UnauthorizedError);
       });
 
+      it('maps code 10 / subcode 2534022 to MessageWindowExpiredError and does not retry', async () => {
+        const error = createAxiosError('Forbidden', 403, {
+          message: 'This message is sent outside of allowed window.',
+          type: 'OAuthException',
+          code: 10,
+          error_subcode: 2534022,
+        });
+
+        mockedAxiosPost.mockRejectedValueOnce(error);
+
+        await expect(
+          sendInstagramMessage(validRecipientId, validMessage, correlationId)
+        ).rejects.toThrow(MessageWindowExpiredError);
+        expect(mockedAxiosPost).toHaveBeenCalledTimes(1);
+      });
+
       it('should map 403 to ForbiddenError', async () => {
         const error = createAxiosError('Forbidden', 403, {
           message: 'Permission denied',
@@ -827,6 +848,22 @@ describe('Instagram Service', () => {
       await expect(
         fetchMessengerUserProfile(igsid, token, corr)
       ).resolves.toEqual({ username: null, profilePic: null });
+    });
+  });
+
+  describe('outbound kill switch', () => {
+    it('throws ServiceUnavailableError and does not call Graph', async () => {
+      (env as { OUTBOUND_MESSAGING_DISABLED: boolean }).OUTBOUND_MESSAGING_DISABLED = true;
+      expect(() => assertOutboundMessagingEnabled(correlationId, 'instagram_dm')).toThrow(
+        ServiceUnavailableError
+      );
+      await expect(
+        sendInstagramMessage(validRecipientId, validMessage, correlationId)
+      ).rejects.toThrow(ServiceUnavailableError);
+      await expect(
+        sendInstagramPrivateReply('ig-comment-99', validMessage, correlationId, 'doctor-token')
+      ).rejects.toThrow(ServiceUnavailableError);
+      expect(mockedAxiosPost).not.toHaveBeenCalled();
     });
   });
 

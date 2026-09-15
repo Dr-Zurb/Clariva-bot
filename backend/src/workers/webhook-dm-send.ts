@@ -156,7 +156,7 @@ export async function sendInstagramDmWithLocksAndFallback(
   let sendSucceeded = false;
   let usedRecipientFallback = false;
   try {
-    await sendInstagramMessage(senderId, replyText, correlationId, doctorToken);
+    await sendInstagramMessage(senderId, replyText, correlationId, doctorToken, doctorId);
     sendSucceeded = true;
   } catch (sendErr) {
     if (
@@ -179,7 +179,7 @@ export async function sendInstagramDmWithLocksAndFallback(
       }
       if (fallbackId && fallbackId !== senderId && !pageIds.includes(fallbackId)) {
         try {
-          await sendInstagramMessage(fallbackId, replyText, correlationId, doctorToken);
+          await sendInstagramMessage(fallbackId, replyText, correlationId, doctorToken, doctorId);
           logger.info(
             { correlationId, api_resolved_id: fallbackId },
             'DM sent via conversation API fallback (2018001: webhook senderId failed)'

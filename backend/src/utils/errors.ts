@@ -174,6 +174,17 @@ export class TooManyRequestsError extends AppError {
 }
 
 /**
+ * Meta rejected the send because the 24-hour messaging window is closed.
+ * Graph code 10 with subcode 2534022 / 2018278 / 2018065.
+ * The patient is not messaged. Do not retry.
+ */
+export class MessageWindowExpiredError extends AppError {
+  constructor(message: string = 'Instagram messaging window has expired') {
+    super(message, 409);
+  }
+}
+
+/**
  * Internal server error (500)
  * Used for unexpected errors, database failures, etc.
  * This is the default error class for operational errors that don't fit other categories
@@ -202,9 +213,7 @@ export class ServiceUnavailableError extends AppError {
  * configured budget. Callers should surface `Retry-After` to the client.
  */
 export class AdvisoryLockTimeoutError extends AppError {
-  constructor(
-    message: string = 'Another conversion is in progress; please retry shortly.'
-  ) {
+  constructor(message: string = 'Another conversion is in progress; please retry shortly.') {
     super(message, 409);
   }
 }

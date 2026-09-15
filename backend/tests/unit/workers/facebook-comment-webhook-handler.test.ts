@@ -131,7 +131,8 @@ describe('processFacebookCommentWebhook (fbm-09/10)', () => {
       COMMENT_ID,
       expect.any(String),
       'c1',
-      'page-tok'
+      'page-tok',
+      DOCTOR_ID
     );
     expect(instagramService.sendInstagramMessage).not.toHaveBeenCalled();
     expect(facebookConnect.replyToFacebookComment).toHaveBeenCalledWith(

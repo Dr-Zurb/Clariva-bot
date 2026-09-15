@@ -19,6 +19,7 @@ import { runAccountDeletionFinalizeJob } from '../workers/account-deletion-cron'
 import { runRecordingArchivalJob } from '../workers/recording-archival-cron';
 import { runDashboardEventsRetentionJob } from '../workers/dashboard-events-retention-cron';
 import { runInstagramTokenHealthJob } from '../workers/instagram-token-health-cron';
+import { runOutboundSpikeJob } from '../workers/outbound-spike-cron';
 import { runGhostAccountSweepJob } from '../workers/ghost-account-sweep-cron';
 import { runVoiceTranscriptionJob } from '../workers/voice-transcription-worker';
 import { runVideoEscalationTimeoutJob } from '../workers/video-escalation-timeout-worker';
@@ -257,6 +258,36 @@ router.post('/instagram-token-health', async (req: Request, res: Response) => {
     return res.status(500).json({
       success: false,
       error: { code: 'InternalError', message: 'Instagram token health job failed' },
+    });
+  }
+});
+
+/**
+ * POST /cron/outbound-spike
+ *
+ * Count recent Meta send_message failures per doctor. Email founder and
+ * optionally auto-pause that doctor's Instagram receptionist.
+ * Schedule externally **every 10 minutes** with the same CRON_SECRET.
+ */
+router.post('/outbound-spike', async (req: Request, res: Response) => {
+  if (!verifyCronAuth(req)) {
+    return res.status(401).json({
+      success: false,
+      error: { code: 'Unauthorized', message: 'Invalid or missing cron secret' },
+    });
+  }
+
+  const correlationId = `cron-outbound-spike-${Date.now()}`;
+
+  try {
+    const data = await runOutboundSpikeJob(correlationId);
+    return res.status(200).json({ success: true, data });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logger.error({ correlationId, error: msg }, 'Cron outbound spike failed');
+    return res.status(500).json({
+      success: false,
+      error: { code: 'InternalError', message: 'Outbound spike job failed' },
     });
   }
 });

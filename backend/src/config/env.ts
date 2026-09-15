@@ -36,7 +36,10 @@ const envSchema = z.object({
    * but once auth-perf (np-02) and text-consult (Plan 04) ship in production
    * treat this as effectively required.
    */
-  SUPABASE_JWT_SECRET: z.string().min(16, 'SUPABASE_JWT_SECRET must be at least 16 chars when set').optional(),
+  SUPABASE_JWT_SECRET: z
+    .string()
+    .min(16, 'SUPABASE_JWT_SECRET must be at least 16 chars when set')
+    .optional(),
 
   // OpenAI Configuration (optional at startup; required when AI features are invoked)
   // AI routes or worker MUST fail fast if key is missing when calling OpenAI (see config/openai.ts)
@@ -183,6 +186,22 @@ const envSchema = z.object({
   INSTAGRAM_REDIRECT_URI: z.string().url().optional(),
   // After successful connect, redirect browser here (e.g. https://app.example.com/dashboard/settings/instagram); if unset, callback returns JSON
   INSTAGRAM_FRONTEND_REDIRECT_URI: z.string().url().optional(),
+  /**
+   * Incident kill switch. When true, every outbound Meta send/reply is skipped.
+   * Inbound webhooks and lead storage continue. Set on Render and redeploy.
+   */
+  OUTBOUND_MESSAGING_DISABLED: z
+    .string()
+    .optional()
+    .transform((v) => v === 'true' || v === '1'),
+  /**
+   * When true (default), a per-doctor outbound failure spike auto-pauses
+   * that clinic's Instagram receptionist. Set 'false' for alert-only.
+   */
+  OUTBOUND_SPIKE_AUTO_PAUSE: z
+    .string()
+    .optional()
+    .transform((v) => v !== 'false' && v !== '0'),
   // Facebook Page / Messenger connect (fbm-01 / fbm-03) — Halo Aid FB app, NOT Halo Aid-IG
   FACEBOOK_APP_ID: z.string().optional(),
   FACEBOOK_APP_SECRET: z.string().optional(),
@@ -261,7 +280,10 @@ const envSchema = z.object({
   // Default doctor country for MVP (IN = India -> Razorpay; US/UK/EU -> PayPal)
   DEFAULT_DOCTOR_COUNTRY: z.string().default('IN'),
   // Appointment fee fallback when doctor has no settings (optional; doctors should set fee in Booking Rules)
-  APPOINTMENT_FEE_MINOR: z.string().optional().transform((v) => (v ? parseInt(v, 10) : 0)),
+  APPOINTMENT_FEE_MINOR: z
+    .string()
+    .optional()
+    .transform((v) => (v ? parseInt(v, 10) : 0)),
   APPOINTMENT_FEE_CURRENCY: z.string().default('INR'),
 
   // Notifications (e-task-5 - email via Resend)
@@ -916,7 +938,7 @@ function assertProductionEnvSafety(): void {
       'ACCOUNT_DELETION_GRACE_DAYS must be > 0 in production. ' +
         'Zero-day grace means a single accidental tap on "delete my account" ' +
         'finalizes irreversibly before the patient can retract. Set to 7 ' +
-        '(the task default) or higher. See task-33-account-deletion-revocation-list.md.',
+        '(the task default) or higher. See task-33-account-deletion-revocation-list.md.'
     );
   }
 }

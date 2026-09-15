@@ -12,12 +12,8 @@ import axios from 'axios';
 import { getSupabaseAdminClient } from '../config/database';
 import { env } from '../config/env';
 import { logger } from '../config/logger';
-import {
-  ConflictError,
-  InternalError,
-  UnauthorizedError,
-  ValidationError,
-} from '../utils/errors';
+import { ConflictError, InternalError, UnauthorizedError, ValidationError } from '../utils/errors';
+import { assertOutboundMessagingEnabled } from './instagram-service';
 import { handleSupabaseError } from '../utils/db-helpers';
 import type { InsertDoctorFacebook } from '../types/database';
 
@@ -43,8 +39,7 @@ interface FacebookConnectStatePayload {
   d: string;
 }
 
-const UUID_REGEX =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function requireFacebookOAuthConfig(): { appId: string; appSecret: string; redirectUri: string } {
   const appId = env.FACEBOOK_APP_ID;
@@ -75,10 +70,7 @@ export function verifyFacebookState(state: string): string {
     throw new ValidationError('Invalid state format');
   }
   const [payloadB64, sigB64] = parts;
-  const expectedSig = crypto
-    .createHmac('sha256', appSecret)
-    .update(payloadB64)
-    .digest('base64url');
+  const expectedSig = crypto.createHmac('sha256', appSecret).update(payloadB64).digest('base64url');
   const sigBuf = Buffer.from(sigB64, 'base64url');
   const expectedBuf = Buffer.from(expectedSig, 'base64url');
   if (sigBuf.length !== expectedBuf.length || !crypto.timingSafeEqual(sigBuf, expectedBuf)) {
@@ -287,9 +279,7 @@ export async function selectFacebookPageForConnect(
       return {
         pageId: String(first.id),
         pageName:
-          typeof first.name === 'string' && first.name.trim().length > 0
-            ? first.name.trim()
-            : null,
+          typeof first.name === 'string' && first.name.trim().length > 0 ? first.name.trim() : null,
         pageAccessToken: first.access_token,
       };
     }
@@ -346,18 +336,14 @@ export async function subscribeFacebookPageApps(
   correlationId: string
 ): Promise<void> {
   try {
-    await axios.post(
-      `${FACEBOOK_GRAPH_BASE}/${encodeURIComponent(pageId)}/subscribed_apps`,
-      null,
-      {
-        params: {
-          subscribed_fields:
-            'messages,messaging_postbacks,messaging_optins,message_deliveries,message_reads,feed',
-          access_token: pageAccessToken,
-        },
-        timeout: META_HTTP_TIMEOUT_MS,
-      }
-    );
+    await axios.post(`${FACEBOOK_GRAPH_BASE}/${encodeURIComponent(pageId)}/subscribed_apps`, null, {
+      params: {
+        subscribed_fields:
+          'messages,messaging_postbacks,messaging_optins,message_deliveries,message_reads,feed',
+        access_token: pageAccessToken,
+      },
+      timeout: META_HTTP_TIMEOUT_MS,
+    });
     logger.info({ correlationId, pageId }, 'Facebook Page subscribed_apps ok');
   } catch (err: unknown) {
     logger.warn(
@@ -418,10 +404,7 @@ export async function saveDoctorFacebook(
   );
 }
 
-export async function disconnectFacebook(
-  doctorId: string,
-  correlationId?: string
-): Promise<void> {
+export async function disconnectFacebook(doctorId: string, correlationId?: string): Promise<void> {
   const supabase = getSupabaseAdminClient();
   if (!supabase) {
     throw new InternalError('Service role client not available for Facebook disconnect');
@@ -540,7 +523,13 @@ export async function probeFacebookPageToken(
     });
     const data = res.data?.data;
     if (!data) {
-      return { ok: false, requestFailed: true, invalidToken: false, errorCode: null, expiresAtUnix: null };
+      return {
+        ok: false,
+        requestFailed: true,
+        invalidToken: false,
+        errorCode: null,
+        expiresAtUnix: null,
+      };
     }
     const expiresAtUnix =
       typeof data.expires_at === 'number' && !Number.isNaN(data.expires_at)
@@ -569,11 +558,7 @@ export async function probeFacebookPageToken(
       ? (err.response?.data as { error?: { code?: number } } | undefined)?.error?.code
       : undefined;
     const invalidToken =
-      status === 401 ||
-      status === 403 ||
-      status === 400 ||
-      graphCode === 190 ||
-      graphCode === 102;
+      status === 401 || status === 403 || status === 400 || graphCode === 190 || graphCode === 102;
     logger.warn(
       {
         correlationId,
@@ -695,7 +680,12 @@ function facebookSummaryFromCachedRow(row: DoctorFacebookHealthRow): FacebookHea
   const lastDm = row.facebook_last_dm_success_at;
   const levelRaw = row.facebook_health_level;
   let level: FacebookHealthSummary['level'] = 'unknown';
-  if (levelRaw === 'ok' || levelRaw === 'warning' || levelRaw === 'error' || levelRaw === 'unknown') {
+  if (
+    levelRaw === 'ok' ||
+    levelRaw === 'warning' ||
+    levelRaw === 'error' ||
+    levelRaw === 'unknown'
+  ) {
     level = levelRaw;
   }
 
@@ -881,6 +871,7 @@ export async function replyToFacebookComment(
   pageAccessToken: string,
   correlationId: string
 ): Promise<{ replyId: string } | null> {
+  assertOutboundMessagingEnabled(correlationId, 'facebook_comment_reply');
   if (!commentId || !message?.trim() || !pageAccessToken) {
     return null;
   }

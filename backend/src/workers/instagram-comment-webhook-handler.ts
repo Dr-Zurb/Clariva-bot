@@ -220,7 +220,7 @@ export async function processInstagramCommentWebhook(
         addressSummary: settings?.address_summary ?? undefined,
       });
       try {
-        await sendInstagramPrivateReply(commentId, dmMessage, correlationId, doctorToken);
+        await sendInstagramPrivateReply(commentId, dmMessage, correlationId, doctorToken, doctorId);
         dmSent = true;
       } catch (dmErr) {
         logger.warn(
