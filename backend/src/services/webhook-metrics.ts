@@ -139,21 +139,15 @@ export function logWebhookCommentPipeline(fields: {
   eventId: string;
   doctorId?: string;
   outcome: 'processed' | 'skipped';
-  skipReason?:
-    | 'unparseable'
-    | 'no_doctor'
-    | 'own_bot'
-    | 'low_intent'
-    | 'no_token'
-    | 'other';
+  skipReason?: 'unparseable' | 'no_doctor' | 'own_bot' | 'low_intent' | 'no_token' | 'other';
   intent?: string;
   highIntent?: boolean;
   dmSent?: boolean;
   publicReplySent?: boolean;
   /** When highIntent, whether doctor had an Instagram token (outreach possible). */
   doctorTokenPresent?: boolean;
-  /** RBH-09: High-intent comment outreach skipped while receptionist paused. */
-  automationSkipped?: 'receptionist_paused';
+  /** High-intent comment outreach skipped (paused receptionist or daily private-reply cap). */
+  automationSkipped?: 'receptionist_paused' | 'daily_cap';
 }): void {
   logger.info(
     {

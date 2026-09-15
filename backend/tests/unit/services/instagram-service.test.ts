@@ -23,6 +23,7 @@ import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals
 import axios, { AxiosError } from 'axios';
 import {
   sendInstagramMessage,
+  sendInstagramPrivateReply,
   mapInstagramError,
   replyToInstagramComment,
   fetchMessengerUserProfile,
@@ -826,6 +827,51 @@ describe('Instagram Service', () => {
       await expect(
         fetchMessengerUserProfile(igsid, token, corr)
       ).resolves.toEqual({ username: null, profilePic: null });
+    });
+  });
+
+  describe('sendInstagramPrivateReply', () => {
+    it('posts recipient.comment_id and omits messaging_type', async () => {
+      const commentId = 'ig-comment-99';
+      mockedAxiosPost.mockResolvedValueOnce({
+        data: validResponse,
+        status: 200,
+        statusText: 'OK',
+        headers: {},
+        config: {} as any,
+      });
+
+      const result = await sendInstagramPrivateReply(
+        commentId,
+        validMessage,
+        correlationId,
+        'doctor-token'
+      );
+
+      expect(result).toEqual(validResponse);
+      expect(mockedAxiosPost).toHaveBeenCalledWith(
+        'https://graph.instagram.com/v18.0/me/messages',
+        {
+          recipient: { comment_id: commentId },
+          message: { text: validMessage },
+        },
+        expect.objectContaining({
+          headers: { Authorization: 'Bearer doctor-token' },
+        })
+      );
+      const payload = mockedAxiosPost.mock.calls[0][1] as Record<string, unknown>;
+      expect(payload).not.toHaveProperty('messaging_type');
+      expect(mockedAuditLogger.logAuditEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'send_message',
+          status: 'success',
+          metadata: expect.objectContaining({
+            recipient_kind: 'comment_id',
+            comment_id: commentId,
+            message_id: validResponse.message_id,
+          }),
+        })
+      );
     });
   });
 });

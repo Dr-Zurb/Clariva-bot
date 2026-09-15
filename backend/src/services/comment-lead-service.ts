@@ -18,6 +18,9 @@ import type { CommentIntent } from '../types/ai';
 
 export type CommentLeadPlatform = 'instagram' | 'facebook';
 
+/** Per-doctor UTC-day cap on comment private replies. Viral posts must not stampede. */
+export const COMMENT_PRIVATE_REPLY_DAILY_CAP = 40;
+
 export interface CreateCommentLeadInput {
   doctorId: string;
   commentId: string;
@@ -119,7 +122,10 @@ export async function createCommentLead(
 
   if (error) {
     if (error.code === '23505') {
-      logger.info({ correlationId, commentId: input.commentId }, 'Comment lead already exists (idempotent)');
+      logger.info(
+        { correlationId, commentId: input.commentId },
+        'Comment lead already exists (idempotent)'
+      );
       const { data: row } = await supabase
         .from('comment_leads')
         .select()
@@ -177,12 +183,9 @@ export async function linkCommentLeadToConversation(
 
   const count = data?.length ?? 0;
   if (count > 0) {
-    logger.info(
-      { correlationId, platform, count },
-      'Comment lead(s) linked to conversation'
-    );
-    const username = (data as Array<{ commenter_username?: string | null }>).find(
-      (r) => r.commenter_username?.trim()
+    logger.info({ correlationId, platform, count }, 'Comment lead(s) linked to conversation');
+    const username = (data as Array<{ commenter_username?: string | null }>).find((r) =>
+      r.commenter_username?.trim()
     )?.commenter_username;
     if (username) {
       const { data: conv } = await supabase
@@ -198,6 +201,51 @@ export async function linkCommentLeadToConversation(
     }
   }
   return { linked: count > 0, count };
+}
+
+/**
+ * Count comment private replies already sent for this doctor since UTC midnight.
+ * Uses `dm_sent` + `updated_at` (first insert is dm_sent=false; send flips it).
+ * Returns null when the admin client is missing so callers can fail closed.
+ */
+export async function countCommentPrivateRepliesToday(
+  doctorId: string,
+  correlationId: string
+): Promise<number | null> {
+  const supabase = getSupabaseAdminClient();
+  if (!supabase) {
+    logger.warn({ correlationId }, 'Comment private-reply cap: admin client unavailable');
+    return null;
+  }
+
+  const since = new Date();
+  since.setUTCHours(0, 0, 0, 0);
+
+  const { count, error } = await supabase
+    .from('comment_leads')
+    .select('id', { count: 'exact', head: true })
+    .eq('doctor_id', doctorId)
+    .eq('dm_sent', true)
+    .gte('updated_at', since.toISOString());
+
+  if (error) {
+    logger.warn({ correlationId, errCode: error.code }, 'Comment private-reply cap: count failed');
+    return null;
+  }
+
+  return count ?? 0;
+}
+
+/**
+ * Extra-safe: if we cannot count today's sends, do not send another private reply.
+ */
+export async function canSendCommentPrivateReply(
+  doctorId: string,
+  correlationId: string
+): Promise<boolean> {
+  const count = await countCommentPrivateRepliesToday(doctorId, correlationId);
+  if (count === null) return false;
+  return count < COMMENT_PRIVATE_REPLY_DAILY_CAP;
 }
 
 /**

@@ -1,13 +1,13 @@
 /**
  * Facebook Page feed comment webhook (fbm-09 / fbm-10).
- * object=page, field=feed, item=comment — lead + optional public reply + Messenger DM.
+ * object=page, field=feed, item=comment — lead + optional public reply + private reply.
  */
 
 import { logger } from '../config/logger';
 import { logAuditEvent } from '../utils/audit-logger';
 import { markWebhookProcessed } from '../services/webhook-idempotency-service';
 import {
-  sendInstagramMessage,
+  sendInstagramPrivateReply,
   COMMENT_PUBLIC_REPLY_TEXT,
   fetchCommentAuthorUsername,
 } from '../services/instagram-service';
@@ -20,7 +20,7 @@ import {
 import { getDoctorSettings } from '../services/doctor-settings-service';
 import { classifyCommentIntent, isPossiblyMedicalComment } from '../services/ai-service';
 import { parseFacebookPageCommentPayload } from '../utils/webhook-event-id';
-import { createCommentLead } from '../services/comment-lead-service';
+import { canSendCommentPrivateReply, createCommentLead } from '../services/comment-lead-service';
 import { resolveCommentOutreachLanguage } from '../services/comment-outreach-language';
 import { sendCommentLeadToDoctor } from '../services/notification-service';
 import { logWebhookCommentPipeline } from '../services/webhook-metrics';
@@ -69,15 +69,8 @@ export async function processFacebookCommentWebhook(
     return;
   }
 
-  const {
-    commentId,
-    commenterUserId,
-    commentText,
-    postId,
-    pageId,
-    verb,
-    commenterUsername,
-  } = parsed;
+  const { commentId, commenterUserId, commentText, postId, pageId, verb, commenterUsername } =
+    parsed;
   let resolvedUsername = commenterUsername;
 
   if (verb !== 'add') {
@@ -104,9 +97,7 @@ export async function processFacebookCommentWebhook(
     return;
   }
 
-  const doctorId = pageId
-    ? await getDoctorIdByFacebookPageId(pageId, correlationId)
-    : null;
+  const doctorId = pageId ? await getDoctorIdByFacebookPageId(pageId, correlationId) : null;
 
   if (!doctorId) {
     logger.info(
@@ -181,16 +172,9 @@ export async function processFacebookCommentWebhook(
   let publicReplySent = false;
   let commentDoctorTokenPresent = false;
 
-  const pageTokenEarly = await getFacebookPageAccessTokenForDoctor(
-    doctorId,
-    correlationId
-  );
+  const pageTokenEarly = await getFacebookPageAccessTokenForDoctor(doctorId, correlationId);
   if (!resolvedUsername && pageTokenEarly) {
-    resolvedUsername = await fetchCommentAuthorUsername(
-      commentId,
-      pageTokenEarly,
-      correlationId
-    );
+    resolvedUsername = await fetchCommentAuthorUsername(commentId, pageTokenEarly, correlationId);
   }
 
   await createCommentLead(
@@ -212,11 +196,20 @@ export async function processFacebookCommentWebhook(
 
   // Shared pause flag with Instagram receptionist for v1 (FBM2 pause parity).
   const receptionistPaused = settings?.instagram_receptionist_paused === true;
+  const underDailyCap =
+    isHighIntent && !receptionistPaused
+      ? await canSendCommentPrivateReply(doctorId, correlationId)
+      : true;
+  if (isHighIntent && !receptionistPaused && !underDailyCap) {
+    logger.info(
+      { eventId, provider, correlationId },
+      'Facebook comment: daily private-reply cap reached, skipping outreach'
+    );
+  }
 
-  if (isHighIntent && !receptionistPaused) {
+  if (isHighIntent && !receptionistPaused && underDailyCap) {
     const pageToken =
-      pageTokenEarly ??
-      (await getFacebookPageAccessTokenForDoctor(doctorId, correlationId));
+      pageTokenEarly ?? (await getFacebookPageAccessTokenForDoctor(doctorId, correlationId));
     commentDoctorTokenPresent = !!pageToken;
     if (pageToken) {
       // LANG5-D6: language from linked conversation only — never from comment text.
@@ -234,7 +227,7 @@ export async function processFacebookCommentWebhook(
         addressSummary: settings?.address_summary ?? undefined,
       });
       try {
-        await sendInstagramMessage(commenterUserId, dmMessage, correlationId, pageToken);
+        await sendInstagramPrivateReply(commentId, dmMessage, correlationId, pageToken);
         dmSent = true;
       } catch (dmErr) {
         logger.warn(
@@ -243,7 +236,7 @@ export async function processFacebookCommentWebhook(
             commentId,
             error: dmErr instanceof Error ? dmErr.message : String(dmErr),
           },
-          'Facebook comment: proactive Messenger DM failed'
+          'Facebook comment: private reply failed'
         );
       }
 
@@ -305,8 +298,14 @@ export async function processFacebookCommentWebhook(
     highIntent: isHighIntent,
     dmSent,
     publicReplySent,
-    doctorTokenPresent: isHighIntent && !receptionistPaused ? commentDoctorTokenPresent : undefined,
-    automationSkipped: isHighIntent && receptionistPaused ? 'receptionist_paused' : undefined,
+    doctorTokenPresent:
+      isHighIntent && !receptionistPaused && underDailyCap ? commentDoctorTokenPresent : undefined,
+    automationSkipped:
+      isHighIntent && receptionistPaused
+        ? 'receptionist_paused'
+        : isHighIntent && !underDailyCap
+          ? 'daily_cap'
+          : undefined,
   });
 
   await markWebhookProcessed(eventId, provider);

@@ -82,7 +82,8 @@ describe('processFacebookCommentWebhook (fbm-09/10)', () => {
       instagram_receptionist_paused: false,
     } as never);
     jest.mocked(idempotency.markWebhookProcessed).mockResolvedValue({} as never);
-    jest.mocked(instagramService.sendInstagramMessage).mockResolvedValue({} as never);
+    jest.mocked(commentLead.canSendCommentPrivateReply).mockResolvedValue(true);
+    jest.mocked(instagramService.sendInstagramPrivateReply).mockResolvedValue({} as never);
     jest.mocked(notification.sendCommentLeadToDoctor).mockResolvedValue(undefined as never);
   });
 
@@ -126,13 +127,32 @@ describe('processFacebookCommentWebhook (fbm-09/10)', () => {
       }),
       'c1'
     );
-    expect(instagramService.sendInstagramMessage).toHaveBeenCalled();
+    expect(instagramService.sendInstagramPrivateReply).toHaveBeenCalledWith(
+      COMMENT_ID,
+      expect.any(String),
+      'c1',
+      'page-tok'
+    );
+    expect(instagramService.sendInstagramMessage).not.toHaveBeenCalled();
     expect(facebookConnect.replyToFacebookComment).toHaveBeenCalledWith(
       COMMENT_ID,
       expect.any(String),
       'page-tok',
       'c1'
     );
+  });
+
+  it('skips private reply and public reply when daily cap is reached', async () => {
+    jest.mocked(commentLead.canSendCommentPrivateReply).mockResolvedValue(false);
+    await processFacebookCommentWebhook({
+      eventId: COMMENT_ID,
+      correlationId: 'c1',
+      provider: 'facebook',
+      payload: feedCommentPayload(),
+    });
+    expect(commentLead.createCommentLead).toHaveBeenCalled();
+    expect(instagramService.sendInstagramPrivateReply).not.toHaveBeenCalled();
+    expect(facebookConnect.replyToFacebookComment).not.toHaveBeenCalled();
   });
 
   it('skips non-add verbs', async () => {
