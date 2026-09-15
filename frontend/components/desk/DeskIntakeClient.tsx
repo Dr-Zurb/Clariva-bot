@@ -13,7 +13,7 @@ import { DeskMovePanel } from "@/components/desk/DeskMovePanel";
 import { DeskPatientFacts } from "@/components/desk/DeskPatientFacts";
 import { DeskPaymentStep } from "@/components/desk/DeskPaymentStep";
 import { DeskSplit } from "@/components/desk/DeskSplit";
-import { DeskVitalsForm } from "@/components/desk/DeskVitalsForm";
+import { DeskPrepPanel } from "@/components/desk/DeskPrepPanel";
 import { cn } from "@/lib/utils";
 import {
   createDeskAppointment,
@@ -39,6 +39,7 @@ import {
   type DeskDuplicateMatch,
   type DeskPatientCard,
 } from "@/lib/desk/api";
+import { hasAnyDeskPrepCapability, hasDeskCapability } from "@/lib/desk/capabilities";
 import { formatDeskDate, walkInAppointmentIso } from "@/lib/desk/format";
 import {
   DESK_SEARCH_FALLBACK_PAGE,
@@ -208,6 +209,12 @@ export function DeskIntakeClient({ token }: { token: string }) {
   const [vitalsAppointmentId, setVitalsAppointmentId] = useState<string | null>(
     null
   );
+  const [historyAppointmentId, setHistoryAppointmentId] = useState<
+    string | null
+  >(null);
+  const [documentsAppointmentId, setDocumentsAppointmentId] = useState<
+    string | null
+  >(null);
   const [collectAppointmentId, setCollectAppointmentId] = useState<
     string | null
   >(null);
@@ -334,6 +341,8 @@ export function DeskIntakeClient({ token }: { token: string }) {
     setArchiveError(null);
     setShowBook(false);
     setVitalsAppointmentId(null);
+    setHistoryAppointmentId(null);
+    setDocumentsAppointmentId(null);
     setCollectAppointmentId(null);
     setCheckingIn(false);
     setCheckedInToken(null);
@@ -349,6 +358,8 @@ export function DeskIntakeClient({ token }: { token: string }) {
     setBookError(null);
     setArchiveError(null);
     setVitalsAppointmentId(null);
+    setHistoryAppointmentId(null);
+    setDocumentsAppointmentId(null);
     setCollectAppointmentId(null);
     setCheckingIn(false);
     setCheckedInToken(null);
@@ -362,6 +373,8 @@ export function DeskIntakeClient({ token }: { token: string }) {
     setBookError(null);
     setArchiveError(null);
     setVitalsAppointmentId(null);
+    setHistoryAppointmentId(null);
+    setDocumentsAppointmentId(null);
     setCollectAppointmentId(null);
     setCheckingIn(false);
     setCheckedInToken(null);
@@ -653,12 +666,16 @@ export function DeskIntakeClient({ token }: { token: string }) {
   ) {
     void queryClient.invalidateQueries({ queryKey: queryKeys.desk.all });
     if (action === "checked in" && appointmentId) {
+      const canBill = hasDeskCapability(context?.capabilities, "front_desk");
+      const canPrep = hasAnyDeskPrepCapability(context?.capabilities);
       const payment = visitPaymentById(hisab?.visits, appointmentId);
-      if (!payment || payment.status === "due") {
+      if (canBill && (!payment || payment.status === "due")) {
         setCollectAppointmentId(appointmentId);
-      } else {
+      } else if (canPrep) {
         setCheckingIn(false);
         setVitalsAppointmentId(appointmentId);
+      } else {
+        setCheckingIn(false);
       }
       setShowBook(false);
       return;
@@ -671,7 +688,7 @@ export function DeskIntakeClient({ token }: { token: string }) {
     resetSearch();
   }
 
-  function finishVitalsAfterCheckIn() {
+  function finishDocumentsAfterCheckIn() {
     const bookedName = patient?.name.trim();
     setNotice(
       bookedName ? `${bookedName} checked in for today` : "Checked in for today"
@@ -1043,6 +1060,8 @@ export function DeskIntakeClient({ token }: { token: string }) {
     return <p className="text-sm text-muted-foreground">Loading desk…</p>;
   }
 
+  const canBill = hasDeskCapability(context.capabilities, "front_desk");
+  const canPrep = hasAnyDeskPrepCapability(context.capabilities);
   const lookup = resolveDeskLookup(matches, liveHits);
   const identityHintReady = isDeskIdentitySearchReady({
     name: name.trim(),
@@ -1471,6 +1490,23 @@ export function DeskIntakeClient({ token }: { token: string }) {
       (todayVisit && (todayBucket === "arrived" || todayBucket === "seen")
         ? todayVisit.id
         : null));
+  const deskHistoryAppointmentId: string | null = isArchived
+    ? null
+    : (historyAppointmentId ??
+      (todayVisit && (todayBucket === "arrived" || todayBucket === "seen")
+        ? todayVisit.id
+        : null));
+  const deskDocumentsAppointmentId: string | null = isArchived
+    ? null
+    : (documentsAppointmentId ??
+      (todayVisit && (todayBucket === "arrived" || todayBucket === "seen")
+        ? todayVisit.id
+        : null));
+  const prepAppointmentId =
+    deskVitalsAppointmentId ?? deskHistoryAppointmentId ?? deskDocumentsAppointmentId;
+  const prepSequence = Boolean(
+    vitalsAppointmentId || historyAppointmentId || documentsAppointmentId
+  );
   const showArrive =
     !isArchived &&
     !deskVitalsAppointmentId &&
@@ -1507,7 +1543,7 @@ export function DeskIntakeClient({ token }: { token: string }) {
           ) : null}
         </div>
 
-        {collectAppointmentId || checkingIn ? (
+        {canBill && (collectAppointmentId || checkingIn) ? (
           <div className="border-t border-border/60 px-5 py-4">
             <DeskPaymentStep
               tokenNo={checkedInToken ?? todayToken}
@@ -1522,22 +1558,25 @@ export function DeskIntakeClient({ token }: { token: string }) {
                 });
                 arriveJobRef.current = null;
                 setCheckingIn(false);
-                setVitalsAppointmentId(appointmentId);
+                if (canPrep) {
+                  setVitalsAppointmentId(appointmentId);
+                }
                 setCollectAppointmentId(null);
               }}
             />
           </div>
         ) : null}
 
-        {deskVitalsAppointmentId && !collectAppointmentId ? (
+        {canPrep && prepAppointmentId && !collectAppointmentId ? (
           <div className="border-t border-border/60 px-5 py-4">
-            <DeskVitalsForm
+            <DeskPrepPanel
               token={token}
-              appointmentId={deskVitalsAppointmentId}
-              onFinished={
-                vitalsAppointmentId ? finishVitalsAfterCheckIn : undefined
+              appointmentId={prepAppointmentId}
+              sequence={prepSequence}
+              capabilities={context.capabilities}
+              onAdvance={
+                prepSequence ? finishDocumentsAfterCheckIn : undefined
               }
-              skipFetch={Boolean(vitalsAppointmentId)}
             />
           </div>
         ) : null}
@@ -1559,7 +1598,7 @@ export function DeskIntakeClient({ token }: { token: string }) {
           </div>
         ) : null}
 
-        {showBook && !isArchived ? (
+        {canBill && showBook && !isArchived ? (
           <div className="space-y-3 border-t border-border/60 px-5 py-4">
             {!lockBookToday && slots.length > 0 ? (
               <p className="text-xs text-muted-foreground">
@@ -1650,6 +1689,7 @@ export function DeskIntakeClient({ token }: { token: string }) {
             )}
           >
             {isArchived ? (
+              canBill ? (
               <Button
                 type="button"
                 className="h-10 w-full"
@@ -1658,6 +1698,7 @@ export function DeskIntakeClient({ token }: { token: string }) {
               >
                 {archiving ? "Restoring…" : "Restore"}
               </Button>
+              ) : null
             ) : (
               <div className="space-y-2">
                 {todayStatusCopy ? (
@@ -1665,6 +1706,7 @@ export function DeskIntakeClient({ token }: { token: string }) {
                     {todayStatusCopy}
                   </p>
                 ) : null}
+                {canBill ? (
                 <div className="flex items-center justify-between gap-3">
                   <div className="flex min-w-0 items-center gap-0.5">
                     <Button
@@ -1778,13 +1820,14 @@ export function DeskIntakeClient({ token }: { token: string }) {
                     ) : null}
                   </div>
                 </div>
+                ) : null}
               </div>
             )}
           </div>
         )}
       </div>
 
-      {isArchived || (showArrive && !checkingIn && !collectAppointmentId) ? (
+      {canBill && (isArchived || (showArrive && !checkingIn && !collectAppointmentId)) ? (
         <div
           className={cn(
             "sticky bottom-0 z-20 -mx-4 mt-2 flex gap-2 border-t border-border bg-background px-4 py-3",
@@ -2172,7 +2215,7 @@ export function DeskIntakeClient({ token }: { token: string }) {
                 <span className="text-foreground">
                   {deskSearchQuery(query)}
                 </span>
-                . Fill in the form to register.
+                {canBill ? ". Fill in the form to register." : "."}
               </>
             ) : null}
           </p>
@@ -2198,7 +2241,9 @@ export function DeskIntakeClient({ token }: { token: string }) {
                       </p>
                       <p className="mt-1 text-sm text-muted-foreground">
                         {isCompleteDeskPhone(phone) || identityHintReady
-                          ? "None yet. Register will create a new record."
+                          ? canBill
+                            ? "None yet. Register will create a new record."
+                            : "None yet. Search an arrived patient to prepare the visit."
                           : "Or type a name to search. Age and relative narrow the list."}
                       </p>
                     </>
@@ -2344,7 +2389,7 @@ export function DeskIntakeClient({ token }: { token: string }) {
     return (
       <div className="mx-auto flex w-full max-w-4xl flex-col gap-4">
         {lookupColumn}
-        {formColumn}
+        {canBill ? formColumn : null}
         {noticeBanner}
       </div>
     );
@@ -2353,7 +2398,15 @@ export function DeskIntakeClient({ token }: { token: string }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <DeskSplit
-        left={formColumn}
+        left={
+          canBill || formMode === "edit" ? (
+            formColumn
+          ) : (
+            <div className="flex h-full items-start rounded-xl border border-dashed border-border bg-card p-5 text-sm text-muted-foreground">
+              Search an arrived patient to prepare the visit.
+            </div>
+          )
+        }
         right={
           <div className="flex h-full min-h-0 flex-col">{lookupColumn}</div>
         }

@@ -8,12 +8,17 @@ import {
   deskStatusLabel,
   findDeskSameDayVisit,
   formatDeskAgeSex,
+  formatDeskDaysPending,
   formatDeskOpdNumber,
   isDeskSameDayLockVisit,
   nextDeskQueueToken,
   canDeskCancelVisit,
   canDeskLeaveVisit,
   canDeskMoveVisit,
+  canDeskOpenLabUpload,
+  canDeskOpenVisitPrep,
+  deskLabWaitingBarClass,
+  deskLabWaitingTone,
   isOpenDeskAppointment,
   matchesDeskQueueSearch,
 } from "@/lib/desk/queue";
@@ -56,6 +61,57 @@ describe("canDeskCancelVisit", () => {
         status: "confirmed",
         patient_checked_in_at: "2026-08-30T10:00:00Z",
       })
+    ).toBe(false);
+  });
+});
+
+describe("deskLabWaitingTone", () => {
+  it("warms from info to warning to destructive", () => {
+    expect(deskLabWaitingTone(0)).toBe("info");
+    expect(deskLabWaitingTone(2)).toBe("info");
+    expect(deskLabWaitingTone(3)).toBe("warning");
+    expect(deskLabWaitingTone(6)).toBe("warning");
+    expect(deskLabWaitingTone(7)).toBe("destructive");
+    expect(deskLabWaitingBarClass(1)).toBe("bg-primary");
+    expect(deskLabWaitingBarClass(5)).toBe("bg-warning");
+    expect(deskLabWaitingBarClass(11)).toBe("bg-destructive");
+  });
+});
+
+describe("canDeskOpenLabUpload", () => {
+  it("allows any visit that is still on the books", () => {
+    expect(canDeskOpenLabUpload({ status: "completed" })).toBe(true);
+    expect(canDeskOpenLabUpload({ status: "confirmed" })).toBe(true);
+    expect(canDeskOpenLabUpload({ status: "cancelled" })).toBe(false);
+    expect(canDeskOpenLabUpload({ status: "no_show" })).toBe(false);
+  });
+});
+
+describe("canDeskOpenVisitPrep", () => {
+  it("is only for arrived or seen visits", () => {
+    expect(
+      canDeskOpenVisitPrep({
+        status: "confirmed",
+        patient_checked_in_at: "2026-08-30T10:00:00Z",
+      })
+    ).toBe(true);
+    expect(
+      canDeskOpenVisitPrep({
+        status: "completed",
+        patient_checked_in_at: "2026-08-30T10:00:00Z",
+      })
+    ).toBe(true);
+    expect(
+      canDeskOpenVisitPrep({ status: "confirmed", patient_checked_in_at: null })
+    ).toBe(false);
+    expect(
+      canDeskOpenVisitPrep({
+        status: "no_show",
+        patient_checked_in_at: "2026-08-30T10:00:00Z",
+      })
+    ).toBe(false);
+    expect(
+      canDeskOpenVisitPrep({ status: "cancelled", patient_checked_in_at: null })
     ).toBe(false);
   });
 });
@@ -106,6 +162,14 @@ describe("deskQueueBucket", () => {
   });
 });
 
+describe("formatDeskDaysPending", () => {
+  it("singularizes one day", () => {
+    expect(formatDeskDaysPending(1)).toBe("1 day pending");
+    expect(formatDeskDaysPending(0)).toBe("0 days pending");
+    expect(formatDeskDaysPending(3)).toBe("3 days pending");
+  });
+});
+
 describe("formatDeskAgeSex", () => {
   it("prints age/sex like the OPD column", () => {
     expect(formatDeskAgeSex(31, "female")).toBe("31/F");
@@ -152,7 +216,7 @@ describe("matchesDeskQueueSearch", () => {
 });
 
 describe("DESK_QUEUE_HEADER", () => {
-  it("reads left to right as #, time, mrn, patient, age/sex, relative, phone, origin, status, payment, actions", () => {
+  it("reads left to right as #, time, mrn, patient, age/sex, relative, phone, origin, status, prep, payment, actions", () => {
     expect(DESK_QUEUE_HEADER.map((col) => col.key)).toEqual([
       "bar",
       "token",
@@ -164,6 +228,7 @@ describe("DESK_QUEUE_HEADER", () => {
       "phone",
       "origin",
       "status",
+      "prep",
       "payment",
       "actions",
     ]);

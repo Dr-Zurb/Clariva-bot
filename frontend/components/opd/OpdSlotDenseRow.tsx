@@ -20,11 +20,13 @@ import { formatTimeShort } from "@/lib/format-date";
 import { useConsultSteppedAway } from "@/hooks/useConsultSteppedAway";
 import type { SlotSessionRow } from "@/types/opd-doctor";
 import { OPD_SLOT_GRID_TEMPLATE } from "./OpdQueueGrid";
-import { showArrivedChip } from "./shared/opdArrival";
+import {
+  resolveSlotBoardStatus,
+  showSlotLobbyPresence,
+} from "./shared/opdArrival";
 import {
   hasSlotTag,
   isOverflowRow,
-  lifecycleBadgeLabel,
   lifecycleTone,
   resolveLifecycle,
 } from "./shared/slotAxes";
@@ -74,14 +76,14 @@ export function OpdSlotDenseRow({
   const steppedAway = useConsultSteppedAway(entry.appointmentId);
   const lifecycle = resolveLifecycle(entry) ?? "scheduled";
   const tone = lifecycleTone(lifecycle);
-  const badgeLabel = lifecycleBadgeLabel(lifecycle);
+  const board = resolveSlotBoardStatus(entry, lifecycle);
+  const badgeLabel = board.label;
   const isInConsult = lifecycle === "in_consult";
   const isIncomplete = lifecycle === "incomplete";
-  const isActiveConsult = isInConsult && !steppedAway;
   const showAwayChip = steppedAway && (isInConsult || isIncomplete);
   const overflowTagged = isOverflowRow(entry);
-  const lateBand =
-    entry.timing?.band === "late" || entry.slotStatus === "running_late";
+  const lateBand = board.kind === "overdue";
+  const lobby = showSlotLobbyPresence(board.kind, entry.tags);
   const modality = modalityIcon(entry.consultationType);
   const rowRef = useRef<HTMLDivElement>(null);
   const ariaStatus =
@@ -230,26 +232,17 @@ export function OpdSlotDenseRow({
           )}
         >
           <span
-            aria-hidden
-            className={cn(
-              "inline-block h-2 w-2 shrink-0 rounded-full",
-              tone.dotClass,
-              lateBand && lifecycle === "scheduled" && "bg-amber-500",
-              overflowTagged && lifecycle === "scheduled" && "bg-indigo-500",
-              isActiveConsult && "animate-pulse"
-            )}
-          />
-          <span
             title={isIncomplete ? "Incomplete consult" : badgeLabel}
             className={cn(
-              "inline-flex min-w-0 max-w-full items-center truncate rounded-full px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+              "inline-flex shrink-0 items-center rounded-full px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
               tone.pillClass,
               lateBand &&
-                lifecycle === "scheduled" &&
-                "bg-amber-100 text-amber-950 dark:bg-amber-950/40 dark:text-amber-100"
+                "bg-amber-100 text-amber-950 dark:bg-amber-950/40 dark:text-amber-100",
+              board.kind === "arrived" &&
+                "bg-emerald-100 text-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-100"
             )}
           >
-            {lifecycle === "scheduled" && lateBand ? "Overdue" : badgeLabel}
+            {badgeLabel}
           </span>
           {overflowTagged && (
             <span className="inline-flex shrink-0 rounded border border-orange-500/50 bg-orange-500/10 px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-orange-900 dark:text-orange-200">
@@ -271,23 +264,15 @@ export function OpdSlotDenseRow({
               Early invite
             </span>
           )}
-          {showArrivedChip(entry) && (
-            <span
-              title="Arrived at the clinic."
-              className="inline-flex shrink-0 rounded border border-emerald-500/50 bg-emerald-500/10 px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-emerald-900 dark:text-emerald-200"
-            >
-              Arrived
-            </span>
-          )}
-          {hasSlotTag(entry, "patient_waiting") && (
+          {lobby === "in_lobby" && (
             <span
               title="Patient is in the consult lobby right now."
               className="inline-flex shrink-0 rounded border border-emerald-500/50 bg-emerald-500/10 px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-emerald-900 dark:text-emerald-200"
             >
-              Waiting
+              In lobby
             </span>
           )}
-          {hasSlotTag(entry, "patient_stepped_away") && (
+          {lobby === "stepped_away" && (
             <span
               title="Patient checked in earlier but lobby went idle."
               className="inline-flex shrink-0 rounded border border-stone-400/50 bg-stone-500/10 px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-stone-700 dark:text-stone-300"

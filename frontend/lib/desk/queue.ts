@@ -3,6 +3,9 @@ import { formatDeskAgeYears } from "@/lib/desk/age";
 
 export type DeskQueueFilter = "all" | "waiting" | "arrived" | "seen";
 
+/** Date-scoped chips plus the Labs pending mode (not a status bucket). */
+export type DeskQueueMode = DeskQueueFilter | "labs_pending";
+
 export function isOpenDeskAppointment(
   row: Pick<Appointment, "status">
 ): boolean {
@@ -55,6 +58,22 @@ export function canDeskLeaveVisit(
   return hasDeskArrived(row);
 }
 
+/** Same gate as Check-in reopen: arrived or seen, not cancelled / no-show. */
+export function canDeskOpenVisitPrep(
+  row: Pick<Appointment, "status" | "patient_checked_in_at">
+): boolean {
+  if (row.status === "cancelled" || row.status === "no_show") return false;
+  const bucket = deskQueueBucket(row);
+  return bucket === "arrived" || bucket === "seen";
+}
+
+/** Lab-only list: upload on any non-cancelled visit that still has orders. */
+export function canDeskOpenLabUpload(
+  row: Pick<Appointment, "status">
+): boolean {
+  return row.status !== "cancelled" && row.status !== "no_show";
+}
+
 export function deskQueueBucket(
   row: Pick<Appointment, "status" | "patient_checked_in_at">
 ): Exclude<DeskQueueFilter, "all"> {
@@ -69,6 +88,24 @@ export function deskQueueBarClass(
   if (bucket === "seen") return "bg-green-500";
   if (bucket === "arrived") return "bg-primary";
   return "bg-muted-foreground/40";
+}
+
+export function formatDeskDaysPending(days: number): string {
+  return days === 1 ? "1 day pending" : `${days} days pending`;
+}
+
+export function deskLabWaitingTone(
+  days: number
+): "info" | "warning" | "destructive" {
+  if (days >= 7) return "destructive";
+  if (days >= 3) return "warning";
+  return "info";
+}
+
+export function deskLabWaitingBarClass(days: number): string {
+  if (days >= 7) return "bg-destructive";
+  if (days >= 3) return "bg-warning";
+  return "bg-primary";
 }
 
 export function formatDeskAgeSex(
@@ -152,7 +189,7 @@ export function nextDeskQueueToken(
 }
 
 export const DESK_QUEUE_GRID =
-  "4px 36px 72px 80px minmax(110px, 1.2fr) 64px minmax(100px, 1fr) 110px 80px 88px minmax(92px, 0.7fr) 132px";
+  "4px 36px 72px 80px minmax(110px, 1.2fr) 64px minmax(100px, 1fr) 110px 80px 88px 56px minmax(92px, 0.7fr) 132px";
 
 export const DESK_MATCH_GRID =
   "4px 80px minmax(110px, 1.4fr) 64px minmax(100px, 1.1fr) 110px 108px";
@@ -167,6 +204,21 @@ export const DESK_MATCH_HEADER = [
   { key: "last", label: "Last visit" },
 ] as const;
 
+export const DESK_LABS_GRID =
+  "4px 68px 80px minmax(200px, 1.6fr) 56px 104px minmax(160px, 2fr) 120px 124px";
+
+export const DESK_LABS_HEADER = [
+  { key: "bar", label: "", srOnly: true },
+  { key: "date", label: "Visit", srOnly: false },
+  { key: "mrn", label: "MRN", srOnly: false },
+  { key: "patient", label: "Patient", srOnly: false },
+  { key: "ageSex", label: "Age/Sex", srOnly: false },
+  { key: "phone", label: "Phone", srOnly: false },
+  { key: "tests", label: "Tests", srOnly: false },
+  { key: "waiting", label: "Report", srOnly: false },
+  { key: "actions", label: "Actions", srOnly: true },
+] as const;
+
 export const DESK_QUEUE_HEADER = [
   { key: "bar", label: "", srOnly: true },
   { key: "token", label: "#", srOnly: false },
@@ -178,6 +230,7 @@ export const DESK_QUEUE_HEADER = [
   { key: "phone", label: "Phone", srOnly: false },
   { key: "origin", label: "Origin", srOnly: false },
   { key: "status", label: "Status", srOnly: false },
+  { key: "prep", label: "Prep", srOnly: false },
   { key: "payment", label: "Payment", srOnly: false },
   { key: "actions", label: "Actions", srOnly: true },
 ] as const;

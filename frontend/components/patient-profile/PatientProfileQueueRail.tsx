@@ -13,7 +13,13 @@
  * @see docs/Work/Daily-plans/May 2026/09-05-2026/Tasks/task-cp-02-prev-now-next-strip.md
  */
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
@@ -27,7 +33,7 @@ import {
 import { matchesOpdSearch } from "@/components/opd/shared/opdSearchMatcher";
 import { formatDeskAgeSex } from "@/lib/desk/queue";
 import { buildCockpitAppointmentPathFromCurrentOrigin } from "@/lib/cockpit/back-target";
-import { todayLocalIso } from "@/lib/dates";
+import { formatOpdSessionDateLabel, todayLocalIso } from "@/lib/dates";
 import { formatTime as formatClockTime } from "@/lib/format-date";
 import {
   Tooltip,
@@ -258,6 +264,7 @@ interface QueuePickerProps {
   positionLabel: string;
   viewAllHref: string;
   token: string;
+  sessionLabel: string;
 }
 
 function QueuePicker({
@@ -267,6 +274,7 @@ function QueuePicker({
   positionLabel,
   viewAllHref,
   token,
+  sessionLabel,
 }: QueuePickerProps) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -282,12 +290,22 @@ function QueuePicker({
     if (!open) setQuery("");
   }, [open]);
 
+  // Callback ref: Radix portals the list after `open`, so a layout effect
+  // on `open` often runs before the row exists. Skip while filtering.
+  const attachCurrentRow = useCallback(
+    (node: HTMLLIElement | null) => {
+      if (!node || query.trim()) return;
+      node.scrollIntoView({ block: "center", inline: "nearest" });
+    },
+    [query],
+  );
+
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <button
           type="button"
-          aria-label={`Today's OPD, ${positionLabel}`}
+          aria-label={`${sessionLabel}, ${positionLabel}`}
           className="flex items-center gap-1.5 whitespace-nowrap rounded text-xs text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
         >
           All
@@ -308,14 +326,14 @@ function QueuePicker({
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             placeholder="Search name or #token"
-            aria-label="Search today's OPD"
+            aria-label={`Search ${sessionLabel}`}
             className="w-full rounded border border-input bg-background px-2 py-1.5 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
           />
         </div>
         <ul className="max-h-80 overflow-y-auto overscroll-y-contain py-1">
           {matches.length === 0 ? (
             <li className="px-3 py-6 text-center text-xs text-muted-foreground">
-              No one in today&apos;s OPD matches that.
+              No one in {sessionLabel} matches that.
             </li>
           ) : (
             matches.map((entry) => {
@@ -328,7 +346,10 @@ function QueuePicker({
                   patientId: entry.patientId,
                 });
               return (
-                <li key={entry.id}>
+                <li
+                  key={entry.id}
+                  ref={isCurrent ? attachCurrentRow : undefined}
+                >
                   <Link
                     href={buildCockpitAppointmentPathFromCurrentOrigin(
                       entry.id,
@@ -338,6 +359,9 @@ function QueuePicker({
                     onMouseEnter={warm}
                     onFocus={warm}
                     aria-current={isCurrent ? "page" : undefined}
+                    data-testid={
+                      isCurrent ? "cockpit-queue-picker-current" : undefined
+                    }
                     className={cn(
                       "flex items-center gap-2 px-3 py-2 text-sm hover:bg-muted focus-visible:outline-none focus-visible:bg-muted",
                       isCurrent && "bg-muted/60 font-medium"
@@ -412,6 +436,11 @@ export interface CockpitQueueRailProps {
   state: CockpitState;
   /** Auth token forwarded to useDoctorDayPipeline. */
   token: string;
+  /**
+   * Visit calendar day (YYYY-MM-DD) when the cockpit URL has no `date`.
+   * URL `?date=` still wins inside the pipeline.
+   */
+  visitDate?: string | null;
   /** `inline` is the identity-row trio. `rail` is the legacy band. */
   variant?: "rail" | "inline";
   /** Current-patient title rendered in the trio center (inline only). */
@@ -433,11 +462,12 @@ export function CockpitQueueRail({
   token,
   variant = "rail",
   nowSlot,
+  visitDate,
 }: CockpitQueueRailProps): JSX.Element | null {
   const queryClient = useQueryClient();
   const router = useRouter();
-  const { entries, currentIndex, totalCount, source, isLoading } =
-    useDoctorDayPipeline({ token, currentAppointmentId });
+  const { entries, currentIndex, totalCount, source, isLoading, sessionDate } =
+    useDoctorDayPipeline({ token, currentAppointmentId, sessionDate: visitDate });
 
   const nextForPrefetch =
     currentIndex !== null ? (entries[currentIndex + 1] ?? null) : null;
@@ -483,9 +513,12 @@ export function CockpitQueueRail({
   const next =
     currentIndex !== null ? (entries[currentIndex + 1] ?? null) : null;
 
-  // "View all" links to today's OPD queue
-  const todayIso = todayLocalIso();
-  const viewAllHref = `/dashboard/opd-today?date=${todayIso}`;
+  // "View all" / Open OPD tab stay on the session the doctor opened, not today.
+  const viewAllHref = `/dashboard/opd-today?date=${sessionDate}`;
+  const sessionLabel =
+    sessionDate === todayLocalIso()
+      ? "Today's OPD"
+      : formatOpdSessionDateLabel(sessionDate);
 
   const positionLabel =
     currentIndex !== null
@@ -497,7 +530,7 @@ export function CockpitQueueRail({
     return (
       <TooltipProvider delayDuration={300}>
         <nav
-          aria-label="Today's queue"
+          aria-label={`${sessionLabel} queue`}
           data-testid="cockpit-queue-inline"
           className="flex min-w-0 flex-1 items-center gap-2"
         >
@@ -510,6 +543,7 @@ export function CockpitQueueRail({
                 positionLabel={positionLabel}
                 viewAllHref={viewAllHref}
                 token={token}
+                sessionLabel={sessionLabel}
               />
             ) : null}
           </div>

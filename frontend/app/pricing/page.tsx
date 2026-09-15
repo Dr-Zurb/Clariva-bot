@@ -6,11 +6,16 @@ import { Button } from "@/components/ui/button";
 import { FinalCtaBand } from "@/components/marketing/FinalCtaBand";
 import { MarketingFooter } from "@/components/marketing/MarketingFooter";
 import { MarketingNav } from "@/components/marketing/MarketingNav";
-import { DEMO_HREF, SIGNUP_HREF, haloPrimaryButton } from "@/components/marketing/constants";
+import {
+  DEMO_HREF,
+  SIGNUP_HREF,
+  haloPrimaryButton,
+} from "@/components/marketing/constants";
 
-const TITLE = "Halo Aid pricing — ₹999 a month, ₹49 a consult, never more than ₹12,499";
+const TITLE =
+  "Halo Aid pricing — ₹999 a month covers the clinic, ₹49 a teleconsult, never more than ₹12,499";
 const DESCRIPTION =
-  "₹999 a month includes your first 20 completed consults. ₹49 after that. The bill can never exceed ₹12,499. You only pay when the patient shows up.";
+  "₹999 a month covers every in-clinic visit and your first 20 teleconsults. ₹49 per teleconsult after that. The bill can never exceed ₹12,499.";
 
 export const metadata: Metadata = {
   title: { absolute: TITLE },
@@ -31,18 +36,21 @@ export const metadata: Metadata = {
 };
 
 const NEVER_BILLED = [
-  "No-shows and cancellations — a consult bills only when it happened",
-  "Everything the bot handles alone — timings, fees, directions, booking links",
+  "In-clinic visits — every one, unlimited",
+  "No-shows and cancellations — a teleconsult bills only when it happened",
+  "Everything Halo Aid handles alone — timings, fees, directions, booking links",
   "Documentation — prescriptions, notes, records",
-  "Reconnects — one consult, not two",
+  "Reconnects — one teleconsult, not two",
+  "A message back to a patient you already saw",
 ] as const;
 
 const EXAMPLES = [
-  { month: "20 consults", bill: "₹999", paid: "₹1,179" },
-  { month: "60 consults", bill: "₹2,959", paid: "₹3,492" },
-  { month: "100 consults", bill: "₹4,919", paid: "₹5,804" },
-  { month: "200 consults", bill: "₹9,819", paid: "₹11,586" },
-  { month: "255+ consults", bill: "₹12,499", paid: "₹14,749" },
+  { month: "In-clinic only", bill: "₹999", paid: "₹1,179" },
+  { month: "20 teleconsults", bill: "₹999", paid: "₹1,179" },
+  { month: "60 teleconsults", bill: "₹2,959", paid: "₹3,492" },
+  { month: "100 teleconsults", bill: "₹4,919", paid: "₹5,804" },
+  { month: "200 teleconsults", bill: "₹9,819", paid: "₹11,586" },
+  { month: "255+ teleconsults", bill: "₹12,499", paid: "₹14,749" },
 ] as const;
 
 export default function PricingPage() {
@@ -57,20 +65,26 @@ export default function PricingPage() {
           />
           <div className="mx-auto max-w-6xl px-4 py-16 sm:px-6 sm:py-20">
             <p className="text-sm font-medium text-[hsl(var(--halo-blue))]">
-              Simple, usage-based, capped
+              One plan. Clinic included.
             </p>
             <h1 className="mt-3 max-w-3xl text-4xl font-bold leading-[1.1] tracking-tight text-[hsl(var(--halo-navy))] sm:text-5xl">
-              A receptionist costs ₹15,000 a month and sleeps at night. This doesn&apos;t.
+              They&apos;re already in your inbox.
             </h1>
             <p className="mt-5 max-w-2xl text-lg text-[hsl(var(--halo-ink))]/70">
-              ₹999 a month includes your first 20 completed consults. ₹49 after that.
-              Patient doesn&apos;t show — you pay nothing. Whatever happens, your bill
-              can never cross ₹12,499.
+              ₹999 a month covers your clinic — every in-clinic visit,
+              unlimited — plus your first 20 teleconsults. ₹49 per teleconsult
+              after that. Patient doesn&apos;t show — you pay nothing. Your
+              bill can never cross ₹12,499.
+            </p>
+            <p className="mt-3 max-w-2xl text-sm text-[hsl(var(--halo-ink))]/60">
+              A receptionist costs ₹15,000 a month and sleeps at night. This
+              doesn&apos;t.
             </p>
             <p className="mt-3 max-w-2xl text-sm text-[hsl(var(--halo-ink))]/55">
-              Medical services are GST-exempt, so you cannot claim input credit. The
-              numbers you actually pay: ₹1,179 · ₹58 per consult · ₹14,749 maximum.
-              Invoices stay standard — ex-GST plus an 18% GST line.
+              Medical services are GST-exempt, so you cannot claim input credit.
+              The numbers you actually pay: ₹1,179 · ₹58 per teleconsult ·
+              ₹14,749 maximum. Invoices stay standard — ex-GST plus an 18% GST
+              line.
             </p>
             <div className="mt-8 flex flex-wrap items-center gap-3">
               <Button asChild size="lg" className={haloPrimaryButton}>
@@ -95,7 +109,8 @@ export default function PricingPage() {
                 What a month looks like
               </h2>
               <p className="mt-1 text-sm text-[hsl(var(--halo-ink))]/60">
-                One plan. All channels. No lock-in.
+                ₹999 per doctor. Desk logins are free. No lock-in. In-clinic
+                volume is not in this table.
               </p>
             </div>
             <div className="overflow-x-auto">
@@ -104,7 +119,9 @@ export default function PricingPage() {
                   <tr>
                     <th className="px-6 py-3 font-medium">Your month</th>
                     <th className="px-6 py-3 font-medium">Invoice (ex-GST)</th>
-                    <th className="px-6 py-3 font-medium">You pay (incl. GST)</th>
+                    <th className="px-6 py-3 font-medium">
+                      You pay (incl. GST)
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
@@ -123,13 +140,13 @@ export default function PricingPage() {
             <div className="border-t border-black/5 px-6 py-4">
               <p className="text-sm leading-relaxed text-[hsl(var(--halo-ink))]/60">
                 <span className="font-medium text-[hsl(var(--halo-navy))]">
-                  Follow-up visits count as consults.
+                  A new teleconsult follow-up counts. A message to someone you
+                  already saw does not.
                 </span>{" "}
-                Many doctors see a patient again at no charge, and that is good
-                care — we would rather not put a price on that judgement, so we
-                never look at what you charge. Every visit runs the same booking,
-                reminder, consult and notes. The 20 included each month and the
-                ₹12,499 ceiling are what leave room for it.
+                In-clinic follow-ups stay in the ₹999. Text, voice, and video
+                are the same ₹49 — we never look at what you charge the
+                patient. The 20 included each month and the ₹12,499 ceiling
+                are what leave room for it.
               </p>
             </div>
           </div>
@@ -163,13 +180,15 @@ export default function PricingPage() {
             </h2>
             <p className="mt-4 text-sm leading-relaxed text-[hsl(var(--halo-ink))]/75">
               The first ten doctors get the ₹999 base waived for three months —
-              you pay only ₹49 per completed consult, and the cap still applies.
-              That price is locked for twelve months. In exchange: a case study
-              and two warm introductions. After ten, the offer is gone.
+              in-clinic stays included, you pay only ₹49 per completed
+              teleconsult, and the cap still applies. That price is locked for
+              twelve months. In exchange: a case study and two warm
+              introductions. After ten, the offer is gone.
             </p>
             <p className="mt-4 text-sm leading-relaxed text-[hsl(var(--halo-ink))]/75">
-              Above 500 consults a month we quote a committed-volume plan — same
-              shape, billed separately. We reach out first. Nothing shuts off.
+              Above 500 teleconsults a month we quote a committed-volume plan —
+              same shape, billed separately. We reach out first. Nothing shuts
+              off.
             </p>
           </div>
         </section>

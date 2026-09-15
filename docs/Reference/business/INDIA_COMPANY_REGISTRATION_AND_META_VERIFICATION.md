@@ -263,6 +263,7 @@ While legal + Meta run:
 |------|------|
 | 2026-07-27 | Guide created. |
 | 2026-07-27 | **Entity decided: Private Limited (Pvt Ltd).** Not yet filed; Meta portfolio Unverified; IG tester DM + comment reply working. |
+| 2026-09-13 | Pvt Ltd live (DOI 20 Aug, CIN `U62090PB2026PTC069487`). Meta **Try 2 In review**. Attempt log, form values, live footer check (`haloaid.com` + `www`), and Try-3 change list: [`tracks.md` M2](../../Work/Business/tracks.md). |
 
 ---
 

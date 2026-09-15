@@ -339,6 +339,7 @@ max_appointments_per_day INTEGER NULL
 booking_buffer_minutes  INTEGER NULL
 welcome_message         TEXT NULL
 specialty               TEXT NULL
+social_enquiries        TEXT NOT NULL DEFAULT 'yes'  -- migration 232; CHECK (yes | not_yet); Instagram required when yes
 address_summary         TEXT NULL
 consultation_types      TEXT NULL
 service_offerings_json  JSONB NULL  -- migration 035; Zod shape `serviceCatalogV1` in backend (version, services[], modalities, optional followup_policy)
@@ -515,6 +516,112 @@ uploaded_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 **RLS:** Enabled (via parent prescription ownership).
 
 **PHI:** Stored images may contain handwritten prescription with diagnosis/meds.
+
+---
+
+### `visit_documents` (migrations 233, 236)
+
+**Purpose:** Appointment-scoped clinical documents captured at the front desk (lab reports, old prescriptions, imaging). Parent row holds the label; pages are separate files.
+
+**Columns:**
+```sql
+id              UUID PRIMARY KEY
+doctor_id       UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE
+patient_id      UUID NOT NULL REFERENCES patients(id) ON DELETE CASCADE
+appointment_id  UUID NOT NULL REFERENCES appointments(id) ON DELETE CASCADE
+document_type   TEXT NOT NULL  -- lab_report | imaging | discharge_summary | old_prescription | referral_letter | other
+report_date     DATE NULL
+ordered_by      TEXT NOT NULL  -- us | outside
+source          TEXT NOT NULL  -- front_desk | patient
+actor_id        UUID NOT NULL  -- uploader; no FK
+created_at      TIMESTAMPTZ NOT NULL
+updated_at      TIMESTAMPTZ NOT NULL
+extracted_results JSONB NOT NULL DEFAULT '[]'  -- migration 236; staff-confirmed lab panels
+```
+
+**Indexes:** `(doctor_id, appointment_id)`, `(doctor_id, patient_id)`
+
+**RLS:** `auth.uid() = doctor_id` (four CRUD policies). Desk writes use the service-role client.
+
+**PHI:** Yes — clinical document images, plus confirmed lab names/values in `extracted_results`.
+
+---
+
+### `visit_document_pages` (migration 233)
+
+**Purpose:** Files belonging to a `visit_documents` row. Storage path is `{doctor_id}/desk/{appointment_id}/…` in the `prescription-attachments` bucket.
+
+**Columns:**
+```sql
+id              UUID PRIMARY KEY
+document_id     UUID NOT NULL REFERENCES visit_documents(id) ON DELETE CASCADE
+doctor_id       UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE
+file_path       TEXT NOT NULL
+file_type       TEXT NOT NULL
+page_index      INTEGER NOT NULL CHECK (>= 0)
+created_at      TIMESTAMPTZ NOT NULL
+UNIQUE (document_id, page_index)
+```
+
+**RLS:** `auth.uid() = doctor_id`.
+
+---
+
+### `visit_lab_order_fulfillments` (migration 238)
+
+**Purpose:** Per attested investigation close-out for the internal-lab loop. Pending is still derived (no row). Uploaded rows point at a covering `visit_documents` file; not-done rows store a reason. Deleting the document cascades the uploaded row back to pending.
+
+**Columns:**
+```sql
+id              UUID PRIMARY KEY
+doctor_id       UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE
+appointment_id  UUID NOT NULL REFERENCES appointments(id) ON DELETE CASCADE
+order_id        TEXT NOT NULL  -- investigations_orders_json[].id; not a FK
+status          TEXT NOT NULL  -- uploaded | not_done
+reason_code     TEXT NULL      -- sample_not_collected | patient_refused | sample_rejected | machine_down | done_outside | other
+reason_note     TEXT NULL      -- required when reason_code = other; max 200
+document_id     UUID NULL REFERENCES visit_documents(id) ON DELETE CASCADE
+actor_id        UUID NOT NULL  -- closer; no FK
+created_at      TIMESTAMPTZ NOT NULL
+updated_at      TIMESTAMPTZ NOT NULL
+UNIQUE (appointment_id, order_id)
+```
+
+**Indexes:** `(doctor_id, appointment_id)`
+
+**RLS:** `auth.uid() = doctor_id` (four CRUD policies). Desk writes use the service-role client.
+
+**PHI:** Yes — `reason_note` is free text. Do not log it.
+
+---
+
+### `patient_history_submissions` (migration 234)
+
+**Purpose:** Appointment-scoped sidecar for front-desk (or later patient) history. Desk writes never touch `patient_allergies`, `patient_chronic_conditions`, `patient_medications`, or `prescriptions` (DVP-DL-3 / HL-DL-1). One row per appointment.
+
+**Columns:**
+```sql
+id              UUID PRIMARY KEY
+doctor_id       UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE
+patient_id      UUID NOT NULL REFERENCES patients(id) ON DELETE CASCADE
+appointment_id  UUID NOT NULL REFERENCES appointments(id) ON DELETE CASCADE
+source          TEXT NOT NULL  -- front_desk | patient
+actor_id        UUID NOT NULL  -- last writer; no FK
+why_today       TEXT NOT NULL
+allergies       JSONB NOT NULL -- { none: true } | { none: false, items: [{ name, reaction? }] }
+medicines       JSONB NOT NULL -- { none: true } | { none: false, items: [{ name, dose? }] }
+conditions      JSONB NOT NULL -- { none: true } | { none: false, items: [{ name }] }
+notice_version  TEXT NULL      -- collection-notice snapshot; wording is counsel-owned
+submitted_at    TIMESTAMPTZ NOT NULL
+updated_at      TIMESTAMPTZ NOT NULL
+UNIQUE (appointment_id)
+```
+
+**Indexes:** `(doctor_id, appointment_id)`, `(doctor_id, patient_id)`
+
+**RLS:** `auth.uid() = doctor_id` (four CRUD policies). Desk writes use the service-role client.
+
+**PHI:** Yes — why-today and the three lists.
 
 ---
 

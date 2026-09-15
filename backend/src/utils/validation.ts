@@ -20,6 +20,7 @@ import {
   AUTO_NO_SHOW_AFTER_MIN_MAX,
   AUTO_NO_SHOW_AFTER_MIN_MIN,
   CATALOG_MODES,
+  SOCIAL_ENQUIRIES_VALUES,
   PATIENT_FLOW_ADVANCE_VALUES,
   COCKPIT_TEMPLATE_OVERRIDE_VALUES,
   CUSTOM_VITAL_GROUPS,
@@ -1621,6 +1622,7 @@ export const patchDoctorSettingsSchema = z
     booking_buffer_minutes: z.number().int().min(0).nullable().optional(),
     welcome_message: z.string().max(1000).trim().nullable().optional(),
     specialty: z.string().max(200).trim().nullable().optional(),
+    social_enquiries: z.enum(SOCIAL_ENQUIRIES_VALUES).optional(),
     address_summary: z.string().max(500).trim().nullable().optional(),
     consultation_types: z.string().max(200).trim().nullable().optional(),
     /** SFU-01 / SFU-11: catalog v1; service_id optional until merge */
@@ -4340,6 +4342,214 @@ export function validateDeskVitalsBody(body: unknown): DeskVitalsBody {
   if (!result.success) {
     const first = result.error.issues[0];
     throw new ValidationError(first?.message ?? 'Invalid request body');
+  }
+  return result.data;
+}
+
+// ============================================================================
+// Visit documents (desk-visit-prep P1)
+// ============================================================================
+
+const VISIT_DOCUMENT_TYPES = [
+  'lab_report',
+  'imaging',
+  'discharge_summary',
+  'old_prescription',
+  'referral_letter',
+  'other',
+] as const;
+const VISIT_DOCUMENT_ORDERED_BY = ['us', 'outside'] as const;
+const VISIT_ISO_DATE = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, 'reportDate must be YYYY-MM-DD')
+  .nullable();
+
+export const visitDocumentUploadUrlBodySchema = z.object({
+  filename: z.string().max(200).trim().optional().default('file'),
+  contentType: z
+    .enum(ATTACHMENT_ALLOWED_MIME as unknown as [string, ...string[]])
+    .optional()
+    .default('image/jpeg'),
+});
+
+export type VisitDocumentUploadUrlBody = z.infer<typeof visitDocumentUploadUrlBodySchema>;
+
+export function validateVisitDocumentUploadUrlBody(body: unknown): VisitDocumentUploadUrlBody {
+  const result = visitDocumentUploadUrlBodySchema.safeParse(body);
+  if (!result.success) {
+    throw new ValidationError(result.error.issues[0]?.message ?? 'Invalid request body');
+  }
+  return result.data;
+}
+
+export const createVisitDocumentBodySchema = z
+  .object({
+    documentType: z.enum(VISIT_DOCUMENT_TYPES).optional().default('other'),
+    reportDate: VISIT_ISO_DATE.optional(),
+    orderedBy: z.enum(VISIT_DOCUMENT_ORDERED_BY).optional().default('outside'),
+    filePath: z.string().min(1).max(500).trim(),
+    fileType: z.enum(ATTACHMENT_ALLOWED_MIME as unknown as [string, ...string[]]),
+  })
+  .strict();
+
+export type CreateVisitDocumentBody = z.infer<typeof createVisitDocumentBodySchema>;
+
+export function validateCreateVisitDocumentBody(body: unknown): CreateVisitDocumentBody {
+  const result = createVisitDocumentBodySchema.safeParse(body);
+  if (!result.success) {
+    throw new ValidationError(result.error.issues[0]?.message ?? 'Invalid request body');
+  }
+  return result.data;
+}
+
+export const addVisitDocumentPageBodySchema = z
+  .object({
+    filePath: z.string().min(1).max(500).trim(),
+    fileType: z.enum(ATTACHMENT_ALLOWED_MIME as unknown as [string, ...string[]]),
+  })
+  .strict();
+
+export type AddVisitDocumentPageBody = z.infer<typeof addVisitDocumentPageBodySchema>;
+
+export function validateAddVisitDocumentPageBody(body: unknown): AddVisitDocumentPageBody {
+  const result = addVisitDocumentPageBodySchema.safeParse(body);
+  if (!result.success) {
+    throw new ValidationError(result.error.issues[0]?.message ?? 'Invalid request body');
+  }
+  return result.data;
+}
+
+export const updateVisitDocumentBodySchema = z
+  .object({
+    documentType: z.enum(VISIT_DOCUMENT_TYPES).optional(),
+    reportDate: VISIT_ISO_DATE.optional(),
+    orderedBy: z.enum(VISIT_DOCUMENT_ORDERED_BY).optional(),
+  })
+  .strict();
+
+export type UpdateVisitDocumentBody = z.infer<typeof updateVisitDocumentBodySchema>;
+
+export function validateUpdateVisitDocumentBody(body: unknown): UpdateVisitDocumentBody {
+  const result = updateVisitDocumentBodySchema.safeParse(body);
+  if (!result.success) {
+    throw new ValidationError(result.error.issues[0]?.message ?? 'Invalid request body');
+  }
+  return result.data;
+}
+
+export const visitDocumentParamsSchema = z.object({
+  id: z.string().uuid('Invalid appointment ID'),
+  documentId: z.string().uuid('Invalid document ID'),
+});
+
+export type VisitDocumentParams = z.infer<typeof visitDocumentParamsSchema>;
+
+export function validateVisitDocumentParams(params: unknown): VisitDocumentParams {
+  const result = visitDocumentParamsSchema.safeParse(params);
+  if (!result.success) {
+    throw new ValidationError(result.error.issues[0]?.message ?? 'Invalid params');
+  }
+  return result.data;
+}
+
+export const visitDocumentPageParamsSchema = visitDocumentParamsSchema.extend({
+  pageId: z.string().uuid('Invalid page ID'),
+});
+
+export type VisitDocumentPageParams = z.infer<typeof visitDocumentPageParamsSchema>;
+
+export function validateVisitDocumentPageParams(params: unknown): VisitDocumentPageParams {
+  const result = visitDocumentPageParamsSchema.safeParse(params);
+  if (!result.success) {
+    throw new ValidationError(result.error.issues[0]?.message ?? 'Invalid params');
+  }
+  return result.data;
+}
+
+// ============================================================================
+// History submissions (desk-visit-prep P2)
+// ============================================================================
+
+const HISTORY_WHY_TODAY_MAX = 280;
+const HISTORY_LIST_MAX = 20;
+const HISTORY_NOTICE_VERSION_MAX = 40;
+
+const historyAllergyItemSchema = z
+  .object({
+    name: z.string().min(1).max(PATIENT_CHART_ALLERGEN_MAX).trim(),
+    reaction: z.string().max(PATIENT_CHART_TEXT_MAX).trim().optional().nullable(),
+  })
+  .strict();
+
+const historyMedicineItemSchema = z
+  .object({
+    name: z.string().min(1).max(PATIENT_CHART_DRUG_NAME_MAX).trim(),
+    dose: z.string().max(PATIENT_CHART_DOSE_MAX).trim().optional().nullable(),
+  })
+  .strict();
+
+const historyConditionItemSchema = z
+  .object({
+    name: z.string().min(1).max(PATIENT_CHART_CONDITION_MAX).trim(),
+    code: z.string().max(32).trim().optional().nullable(),
+    codeTitle: z.string().max(300).trim().optional().nullable(),
+  })
+  .strict();
+
+function historyNoneOrListSchema<T extends z.ZodTypeAny>(
+  itemSchema: T
+): z.ZodType<{ none: boolean; items: z.infer<T>[] }> {
+  return z
+    .object({
+      none: z.boolean(),
+      items: z.array(itemSchema).max(HISTORY_LIST_MAX).optional().default([]),
+    })
+    .strict()
+    .superRefine((data, ctx) => {
+      if (data.none && data.items.length > 0) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Clear names when marking none' });
+      }
+    });
+}
+
+export const upsertHistorySubmissionBodySchema = z
+  .object({
+    whyToday: z.string().max(HISTORY_WHY_TODAY_MAX).trim().optional().default(''),
+    allergies: historyNoneOrListSchema(historyAllergyItemSchema),
+    medicines: historyNoneOrListSchema(historyMedicineItemSchema),
+    conditions: historyNoneOrListSchema(historyConditionItemSchema),
+    noticeVersion: z.string().max(HISTORY_NOTICE_VERSION_MAX).trim().optional().nullable(),
+  })
+  .strict();
+
+export type UpsertHistorySubmissionBody = z.infer<typeof upsertHistorySubmissionBodySchema>;
+
+export function validateUpsertHistorySubmissionBody(body: unknown): UpsertHistorySubmissionBody {
+  const result = upsertHistorySubmissionBodySchema.safeParse(body);
+  if (!result.success) {
+    throw new ValidationError(result.error.issues[0]?.message ?? 'Invalid request body');
+  }
+  return result.data;
+}
+
+export const acceptHistorySubmissionBodySchema = z
+  .object({
+    field: z.enum(['why_today', 'allergies', 'medicines', 'conditions']),
+    index: z.number().int().min(0).max(HISTORY_LIST_MAX - 1).optional(),
+  })
+  .strict()
+  .superRefine((data, ctx) => {
+    if (data.field === 'why_today' && data.index !== undefined) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Why today does not take an index' });
+    }
+  });
+
+export type AcceptHistorySubmissionBody = z.infer<typeof acceptHistorySubmissionBodySchema>;
+
+export function validateAcceptHistorySubmissionBody(body: unknown): AcceptHistorySubmissionBody {
+  const result = acceptHistorySubmissionBodySchema.safeParse(body);
+  if (!result.success) {
+    throw new ValidationError(result.error.issues[0]?.message ?? 'Invalid request body');
   }
   return result.data;
 }

@@ -36,6 +36,10 @@ import type { RxFormProviderSetup } from "@/components/cockpit/rx/useRxFormProvi
 vi.mock("@/components/cockpit/rx/inputs/VitalsGrid", () => ({
   VitalsGrid: () => <div data-testid="vitals-grid-stub" />,
 }));
+
+vi.mock("@/components/cockpit/rx/objective/DeskVisitDocumentsStrip", () => ({
+  DeskVisitDocumentsStrip: () => null,
+}));
 import {
   buildObjectiveTemplateApplyActions,
   buildObjectiveTemplateSavePayload,

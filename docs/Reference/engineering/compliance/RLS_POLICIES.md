@@ -487,6 +487,18 @@ auth.jwt() ->> 'role' = 'admin'
 
 ---
 
+### `visit_lab_order_fulfillments` Table (migration 238)
+
+**RLS Enabled:** ✅ Yes
+
+**Policies:** `auth.uid() = doctor_id` (SELECT / INSERT / UPDATE / DELETE).
+
+**Access:** Doctor JWT matches `doctor_id`. Desk staff write through the service-role backend (`upsertLabOrderFulfillments`). Same defence-in-depth pattern as `visit_documents` (233).
+
+**Writes:** Upsert or delete one row per `(appointment_id, order_id)`. `document_id` ON DELETE CASCADE returns an uploaded order to pending.
+
+---
+
 ### `visit_payments` Table (migration 223, reversal columns 225)
 
 **RLS Enabled:** ✅ Yes

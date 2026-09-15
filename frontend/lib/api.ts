@@ -3241,6 +3241,48 @@ export async function getAppointmentDeskVitals(
   );
 }
 
+export async function getAppointmentVisitDocuments(
+  token: string,
+  appointmentId: string
+): Promise<ApiSuccess<{ documents: import("@/types/visit-documents").VisitDocument[] }>> {
+  return request<{ documents: import("@/types/visit-documents").VisitDocument[] }>(
+    `/api/v1/appointments/${encodeURIComponent(appointmentId)}/documents`,
+    { token }
+  );
+}
+
+export async function getAppointmentHistorySubmission(
+  token: string,
+  appointmentId: string
+): Promise<ApiSuccess<import("@/types/patient-history-submissions").HistorySubmissionView>> {
+  return request<import("@/types/patient-history-submissions").HistorySubmissionView>(
+    `/api/v1/appointments/${encodeURIComponent(appointmentId)}/history-submission`,
+    { token }
+  );
+}
+
+export async function getVisitDocumentPageDownloadUrl(
+  token: string,
+  appointmentId: string,
+  documentId: string,
+  pageId: string
+): Promise<ApiSuccess<{ downloadUrl: string }>> {
+  return request<{ downloadUrl: string }>(
+    `/api/v1/appointments/${encodeURIComponent(appointmentId)}/documents/${encodeURIComponent(documentId)}/pages/${encodeURIComponent(pageId)}/download-url`,
+    { token }
+  );
+}
+
+export async function listPatientVisitDocuments(
+  token: string,
+  patientId: string
+): Promise<ApiSuccess<{ documents: import("@/types/visit-documents").VisitDocument[] }>> {
+  return request<{ documents: import("@/types/visit-documents").VisitDocument[] }>(
+    `/api/v1/patients/${encodeURIComponent(patientId)}/chart/visit-documents`,
+    { token }
+  );
+}
+
 // ============================================================================
 // EHR Sub-batch B2 / T3.16 — Public prescription share-link surface
 // ============================================================================
@@ -3645,6 +3687,44 @@ export async function getPrescriptionUploadUrl(
 /**
  * Register attachment after upload. Requires auth token.
  */
+/**
+ * Copy a front-desk visit page into this prescription's objective attachments
+ * (DVP-Q3). Requires a doctor auth token. Returns the new attachment.
+ */
+export async function promoteVisitDocumentPageToPrescription(
+  token: string,
+  prescriptionId: string,
+  body: { appointmentId: string; documentId: string; pageId: string }
+): Promise<ApiSuccess<RegisterAttachmentData>> {
+  const res = await fetch(
+    `${requireApiBaseUrl()}/api/v1/prescriptions/${encodeURIComponent(prescriptionId)}/attachments/from-visit-page`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(body),
+      cache: "no-store",
+    }
+  );
+  const json = (await res.json().catch(() => ({}))) as
+    | ApiSuccess<RegisterAttachmentData>
+    | ApiError;
+  if (!res.ok) {
+    const message = isApiError(json) ? json.error.message : "Request failed";
+    const err = new Error(message) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
+  if (isApiError(json)) {
+    const err = new Error(json.error.message) as Error & { status?: number };
+    err.status = json.error.statusCode ?? 500;
+    throw err;
+  }
+  return json as ApiSuccess<RegisterAttachmentData>;
+}
+
 export async function registerPrescriptionAttachment(
   token: string,
   prescriptionId: string,
@@ -6172,6 +6252,8 @@ export async function getTelehealthQualityOverview(
 
 export interface OnboardingStatus {
   instagramConnected: boolean;
+  /** Absent on older payloads — treat as required. */
+  instagramRequired?: boolean;
   practiceInfoSet: boolean;
   pricingSet: boolean;
   availabilitySet: boolean;
@@ -6646,6 +6728,7 @@ export interface DoctorClinicStaffItem {
   displayName: string | null;
   role: string;
   status: AdminClinicStaffStatus;
+  capabilities?: string[];
   createdAt: string;
 }
 
@@ -6659,7 +6742,7 @@ export async function listDoctorClinicStaff(
 
 export async function provisionDoctorClinicStaff(
   token: string,
-  body: { email: string; displayName?: string }
+  body: { email: string; displayName?: string; capabilities?: string[] }
 ): Promise<
   ApiSuccess<{
     item: DoctorClinicStaffItem;
@@ -6721,7 +6804,7 @@ export async function deleteDoctorClinicStaff(
 export async function patchDoctorClinicStaff(
   token: string,
   id: string,
-  body: { status?: AdminClinicStaffStatus; displayName?: string }
+  body: { status?: AdminClinicStaffStatus; displayName?: string; capabilities?: string[] }
 ): Promise<ApiSuccess<{ staff: { id: string; status: AdminClinicStaffStatus } }>> {
   const res = await fetch(
     `${requireApiBaseUrl()}/api/v1/clinic-staff/${encodeURIComponent(id)}`,

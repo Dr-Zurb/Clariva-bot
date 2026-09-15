@@ -8,11 +8,13 @@ import { useConsultSteppedAway } from "@/hooks/useConsultSteppedAway";
 import type { SlotSessionRow } from "@/types/opd-doctor";
 import type { AddSlotDialogMode } from "./AddSlotDialog";
 import { OpdSlotRowActions } from "./OpdSlotRowActions";
-import { showArrivedChip } from "./shared/opdArrival";
+import {
+  resolveSlotBoardStatus,
+  showSlotLobbyPresence,
+} from "./shared/opdArrival";
 import {
   hasSlotTag,
   isOverflowRow,
-  lifecycleBadgeLabel,
   lifecycleTone,
   resolveLifecycle,
 } from "./shared/slotAxes";
@@ -50,16 +52,14 @@ export function OpdSlotMobileCard({
   const steppedAway = useConsultSteppedAway(entry.appointmentId);
   const lifecycle = resolveLifecycle(entry) ?? "scheduled";
   const tone = lifecycleTone(lifecycle);
-  const lateBand =
-    entry.timing?.band === "late" || entry.slotStatus === "running_late";
-  const badgeLabel =
-    lifecycle === "scheduled" && lateBand
-      ? "Overdue"
-      : lifecycleBadgeLabel(lifecycle);
+  const board = resolveSlotBoardStatus(entry, lifecycle);
+  const badgeLabel = board.label;
+  const lateBand = board.kind === "overdue";
   const isInConsult = lifecycle === "in_consult";
   const isIncomplete = lifecycle === "incomplete";
   const showAwayChip = steppedAway && (isInConsult || isIncomplete);
   const overflowTagged = isOverflowRow(entry);
+  const lobby = showSlotLobbyPresence(board.kind, entry.tags);
   const earlyInviteActive =
     entry.earlyInviteExpiresAt != null &&
     new Date(entry.earlyInviteExpiresAt).getTime() > Date.now();
@@ -115,8 +115,9 @@ export function OpdSlotMobileCard({
               "rounded-full px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
               tone.pillClass,
               lateBand &&
-                lifecycle === "scheduled" &&
-                "bg-amber-100 text-amber-950 dark:bg-amber-950/40 dark:text-amber-100"
+                "bg-amber-100 text-amber-950 dark:bg-amber-950/40 dark:text-amber-100",
+              board.kind === "arrived" &&
+                "bg-emerald-100 text-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-100"
             )}
           >
             {badgeLabel}
@@ -131,23 +132,15 @@ export function OpdSlotMobileCard({
               Away
             </span>
           )}
-          {showArrivedChip(entry) && (
-            <span
-              title="Arrived at the clinic."
-              className="inline-flex shrink-0 rounded border border-emerald-500/50 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-900"
-            >
-              Arrived
-            </span>
-          )}
-          {hasSlotTag(entry, "patient_waiting") && (
+          {lobby === "in_lobby" && (
             <span
               title="Patient is in the consult lobby right now."
               className="inline-flex shrink-0 rounded border border-emerald-500/50 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-900"
             >
-              Waiting
+              In lobby
             </span>
           )}
-          {hasSlotTag(entry, "patient_stepped_away") && (
+          {lobby === "stepped_away" && (
             <span
               title="Patient checked in earlier but lobby went idle."
               className="inline-flex shrink-0 rounded border border-stone-400/50 bg-stone-500/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-stone-700"

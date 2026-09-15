@@ -5,6 +5,10 @@ import {
   classifyDeskAccessError,
   DESK_LIVE_SEARCH_PAGE_SIZE,
   DESK_SEARCH_PAGE_SIZE,
+  listDeskLabOrders,
+  listDeskLabPending,
+  mapDeskLabOrder,
+  mapDeskLabPendingItem,
   parseAlreadyOnToday,
   parseDuplicateMatches,
   probeDeskAccess,
@@ -267,5 +271,191 @@ describe("desk search includeArchived", () => {
     expect(String(fetchMock.mock.calls[0]?.[0])).toContain(
       `pageSize=${DESK_LIVE_SEARCH_PAGE_SIZE}`
     );
+  });
+});
+
+describe("mapDeskLabOrder", () => {
+  it("prefers snake_case and still reads camelCase", () => {
+    expect(
+      mapDeskLabOrder({ order_id: "o1", label: "CBC", kind: "blood" })
+    ).toEqual({
+      orderId: "o1",
+      label: "CBC",
+      kind: "blood",
+      status: "pending",
+      reasonCode: null,
+      reasonNote: null,
+      documentId: null,
+    });
+    expect(
+      mapDeskLabOrder({
+        orderId: "o2",
+        label: "USG",
+        kind: "imaging",
+        status: "uploaded",
+        documentId: "doc-1",
+      })
+    ).toEqual({
+      orderId: "o2",
+      label: "USG",
+      kind: "imaging",
+      status: "uploaded",
+      reasonCode: null,
+      reasonNote: null,
+      documentId: "doc-1",
+    });
+  });
+});
+
+describe("mapDeskLabPendingItem", () => {
+  it("maps the live backend pending shape", () => {
+    expect(
+      mapDeskLabPendingItem({
+        id: "apt-1",
+        patient_id: "p1",
+        patient_name: "Ria",
+        patient_phone: "9814861579",
+        patient_mrn: "P-00837",
+        patient_age: 31,
+        patient_sex: "female",
+        appointment_date: "2026-09-01T04:00:00Z",
+        status: "completed",
+        patient_checked_in_at: "2026-09-01T04:10:00Z",
+        days_pending: 3,
+        report_uploaded: true,
+        orders: [{ orderId: "o1", label: "CBC", kind: "blood" }],
+        has_visit_documents: false,
+        visit_document_count: 0,
+      })
+    ).toMatchObject({
+      appointmentId: "apt-1",
+      patientName: "Ria",
+      patientMrn: "P-00837",
+      daysPending: 3,
+      reportUploaded: true,
+      orders: [{ orderId: "o1", label: "CBC", kind: "blood" }],
+    });
+  });
+
+  it("still reads appointment_id when id is absent", () => {
+    expect(
+      mapDeskLabPendingItem({
+        appointment_id: "apt-3",
+        patient_name: "Ria",
+        days_pending: 2,
+        orders: [],
+      })
+    ).toMatchObject({ appointmentId: "apt-3", daysPending: 2 });
+  });
+
+  it("maps the locked camelCase contract", () => {
+    expect(
+      mapDeskLabPendingItem({
+        appointmentId: "apt-2",
+        patientId: null,
+        patientName: "Arjun",
+        patientPhone: null,
+        patientAge: null,
+        patientSex: null,
+        appointmentDate: "2026-09-10T04:00:00Z",
+        status: "confirmed",
+        patientCheckedInAt: null,
+        daysPending: 1,
+        orders: [{ orderId: "o9", label: "Lipid", kind: "blood" }],
+        hasVisitDocuments: true,
+        visitDocumentCount: 1,
+      })
+    ).toMatchObject({
+      appointmentId: "apt-2",
+      patientName: "Arjun",
+      daysPending: 1,
+      hasVisitDocuments: true,
+    });
+  });
+});
+
+describe("listDeskLabOrders", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  });
+
+  it("maps a 200 empty payload to an empty list", async () => {
+    vi.stubEnv("NEXT_PUBLIC_API_URL", "http://api.test");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          success: true,
+          data: { orders: [] },
+          meta: { timestamp: "2026-09-13T00:00:00Z", requestId: "r1" },
+        }),
+      })
+    );
+    const res = await listDeskLabOrders("tok", "apt-1");
+    expect(res.data.orders).toEqual([]);
+  });
+
+  it("throws on 404 so the desk can show an error", async () => {
+    vi.stubEnv("NEXT_PUBLIC_API_URL", "http://api.test");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 404,
+        json: async () => ({
+          success: false,
+          error: { code: "NotFoundError", message: "Not found" },
+        }),
+      })
+    );
+    await expect(listDeskLabOrders("tok", "apt-1")).rejects.toMatchObject({
+      message: "Not found",
+      status: 404,
+    });
+  });
+});
+
+describe("listDeskLabPending", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  });
+
+  it("maps a 200 empty payload to an empty list", async () => {
+    vi.stubEnv("NEXT_PUBLIC_API_URL", "http://api.test");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          success: true,
+          data: { items: [] },
+          meta: { timestamp: "2026-09-13T00:00:00Z", requestId: "r1" },
+        }),
+      })
+    );
+    const res = await listDeskLabPending("tok");
+    expect(res.data.items).toEqual([]);
+  });
+
+  it("throws on 403 so the desk can show an error", async () => {
+    vi.stubEnv("NEXT_PUBLIC_API_URL", "http://api.test");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 403,
+        json: async () => ({
+          success: false,
+          error: { code: "ForbiddenError", message: "Forbidden" },
+        }),
+      })
+    );
+    await expect(listDeskLabPending("tok")).rejects.toMatchObject({
+      message: "Forbidden",
+      status: 403,
+    });
   });
 });

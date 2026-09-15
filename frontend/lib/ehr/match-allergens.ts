@@ -56,6 +56,11 @@ import type {
   PatientAllergy,
   PatientAllergySeverity,
 } from "@/types/patient-chart";
+
+/** Chart allergy plus an optional desk-sidecar flag (DVP-DL-4). */
+export type MatchableAllergy = PatientAllergy & {
+  reportedAtDesk?: boolean;
+};
 import type { PrescriptionMedicine } from "@/types/prescription";
 import type { DrugMasterRow } from "@/types/drug-master";
 
@@ -100,6 +105,8 @@ export interface AllergyMatch {
     | "generic-substring"
     | "brand-substring"
     | "free-text-substring";
+  /** True when the allergen is an unaccepted desk sidecar item (DVP-DL-4). */
+  reportedAtDesk?: boolean;
 }
 
 /**
@@ -150,7 +157,7 @@ export function normalizeForAllergyMatch(s: string): string {
  */
 export function matchAllergens(
   medicines: ReadonlyArray<MatchableMedicine | PrescriptionMedicine>,
-  allergies: ReadonlyArray<PatientAllergy>,
+  allergies: ReadonlyArray<MatchableAllergy>,
   drugMasterIndex: ReadonlyMap<string, DrugMasterRow>,
 ): AllergyMatch[] {
   const matches: AllergyMatch[] = [];
@@ -221,6 +228,7 @@ export function matchAllergens(
             severity: allergy.severity,
             reaction: allergy.reaction,
             matchKind: candidate.kind,
+            reportedAtDesk: allergy.reportedAtDesk === true,
           });
           break;
         }

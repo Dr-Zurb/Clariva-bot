@@ -61,12 +61,15 @@ const safetySurface = vi.hoisted((): RxSafetySurfaceValue => ({
   setDrugMasterIndex: vi.fn(),
   ddiInteractions: [],
   formAllergyMatches: [],
+  unacceptedDeskAllergies: [],
   isAcked: () => false,
   onAcknowledge: vi.fn(),
   onAckDdi: vi.fn(),
+  onAckDeskAllergy: vi.fn(),
   visible: true,
   clashesCount: 1,
   ddiCount: 0,
+  deskAllergyCount: 0,
 }));
 
 vi.mock("@/lib/patient-profile/v3/useCockpitLayoutPresets", () => ({
@@ -374,16 +377,16 @@ describe("CockpitPlatform integration (cv3p-04 gate)", () => {
     const { rerender } = render(platformShellUi(storageKey));
 
     const base = telemedDefaultPaneTree();
-    const movedPlan = reshape(base, "plan", "subjective", "north");
+    const movedPlan = reshape(base, "plan", "body", "north");
     applyPaneTree(movedPlan);
 
     expect(screen.getByTestId("cockpit-v3-safety-dock")).toBeInTheDocument();
     expect(screen.getByTestId("cockpit-v3-action-dock")).toBeInTheDocument();
     expect(screen.getByTestId("safety-sticky-strip")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /review/i }));
+    fireEvent.click(screen.getByRole("button", { name: /done/i }));
     expect(mockSendAndFinish).toHaveBeenCalledOnce();
 
-    const tabbed = reshape(base, "plan", "assessment", "center");
+    const tabbed = reshape(base, "plan", "body", "center");
     applyPaneTree(tabbed);
 
     const splitOut = reshape(base, "plan", "body", "west");

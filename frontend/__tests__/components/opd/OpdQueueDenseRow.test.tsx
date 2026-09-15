@@ -219,6 +219,17 @@ describe("OpdQueueDenseRow", () => {
     expect(screen.getByText("In consult")).toBeInTheDocument();
   });
 
+  it("does not stack an Arrived pill on a waiting row", () => {
+    const entry = makeEntry({
+      queueStatus: "waiting",
+      patientCheckedInAt: "2026-08-22T10:00:00.000Z",
+    });
+    renderRow({ entry });
+
+    expect(screen.getByText("Waiting")).toBeInTheDocument();
+    expect(screen.queryByText("Arrived")).not.toBeInTheDocument();
+  });
+
   it("shows Incomplete consult when doctor stepped away", async () => {
     const { markConsultSteppedAway, clearConsultSteppedAway } = await import(
       "@/lib/cockpit/consult-stepped-away"

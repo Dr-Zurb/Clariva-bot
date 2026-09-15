@@ -27,9 +27,9 @@ import { pruneLayoutToKnownLeaves } from "@/lib/patient-profile/v3/prune-layout-
 // Storage keys
 // ---------------------------------------------------------------------------
 
-/** v4 recursive-tree payload — sole write target after cv2-02 (v5 shape from cpf-01). */
+/** Recursive-tree payload. Prefix bumped to v5 so remade Write/Call/Notes/After seeds win over old 3–4 column trees. */
 export const v4TreeLayoutStorageKey = (callerKey: string) =>
-  `patient-profile/v4-tree-layout::${callerKey}`;
+  `patient-profile/v5-tree-layout::${callerKey}`;
 
 export const LAYOUT_VERSION = 5 as const;
 

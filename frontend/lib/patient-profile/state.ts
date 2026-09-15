@@ -275,15 +275,12 @@ export function deriveCockpitState(input: CockpitStateInput): CockpitState {
 // ---------------------------------------------------------------------------
 
 /**
- * Gate for the prescription "Send to patient" button. Rx may only be
- * sent once a consultation is in flight or wrapped up — never from a
- * pre-call (`ready` / `lobby`) or terminal state.
- *
- * `wrap_up` is included because the doctor may still want to send or
- * revise the Rx while completing the visit notes before marking done.
+ * Gate for the prescription send / finish / print actions. Opening the
+ * chart is enough — Done uses the same commit set in ready, lobby, live,
+ * wrap-up, and ended. Terminal visits have no Rx actions.
  */
 export function canSendPrescription(state: CockpitState): boolean {
-  return state === "live" || state === "wrap_up" || state === "ended";
+  return state !== "terminal";
 }
 
 /**
@@ -324,7 +321,8 @@ export function shouldShowChartRail(
  * header for a given state.
  *
  * Tele labels stay identical across text / voice / video (cockpit-1 lock).
- * Finish lives on the footer Done button — header wrap-up CTAs are gone.
+ * Finish lives on the footer Done button — header start / wrap-up CTAs
+ * are gone. Ready visits use Done like live visits.
  */
 /**
  * In-clinic charts dated today or earlier start themselves on open.
@@ -362,7 +360,6 @@ export function primaryCtaFor(
   if (modality === "in_clinic") {
     switch (state) {
       case "ready":
-        return { label: "Start visit", action: "start" };
       case "live":
       case "wrap_up":
       case "ended":
@@ -376,7 +373,7 @@ export function primaryCtaFor(
 
   switch (state) {
     case "ready":
-      return { label: "Start consult", action: "start" };
+      return null;
     case "lobby":
       return { label: "Resend join link", action: "resend" };
     case "live":

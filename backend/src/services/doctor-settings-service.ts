@@ -30,6 +30,7 @@ import {
   type OpdMode,
   type PatientFlowAdvance,
   type PayoutSchedule,
+  type SocialEnquiries,
 } from '../types/doctor-settings';
 import type { CustomSubsection } from '../types/prescription';
 import {
@@ -106,7 +107,7 @@ const SELECT_COLUMNS =
   'doctor_id, appointment_fee_minor, appointment_fee_currency, country, ' +
   'practice_name, timezone, slot_interval_minutes, max_advance_booking_days, min_advance_hours, business_hours_summary, ' +
   'cancellation_policy_hours, max_appointments_per_day, booking_buffer_minutes, ' +
-  'welcome_message, specialty, address_summary, consultation_types, service_offerings_json, service_catalog_templates_json, default_notes, ' +
+  'welcome_message, specialty, social_enquiries, address_summary, consultation_types, service_offerings_json, service_catalog_templates_json, default_notes, ' +
   'payment_collection_mode, ' +
   'payout_schedule, payout_minor, razorpay_linked_account_id, ' +
   'opd_mode, opd_policies, ' +
@@ -176,6 +177,7 @@ const DEFAULT_SETTINGS: DoctorSettingsRow = {
   booking_buffer_minutes: null,
   welcome_message: null,
   specialty: null,
+  social_enquiries: 'yes',
   address_summary: null,
   consultation_types: null,
   service_offerings_json: null,
@@ -985,6 +987,7 @@ export interface UpdateDoctorSettingsPayload {
   booking_buffer_minutes?: number | null;
   welcome_message?: string | null;
   specialty?: string | null;
+  social_enquiries?: SocialEnquiries;
   address_summary?: string | null;
   consultation_types?: string | null;
   /** SFU-01 / SFU-11: structured catalog; merged + normalized before persist. */
@@ -1468,6 +1471,7 @@ export async function updateDoctorSettings(
     'booking_buffer_minutes',
     'welcome_message',
     'specialty',
+    'social_enquiries',
     'address_summary',
     'consultation_types',
     'default_notes',

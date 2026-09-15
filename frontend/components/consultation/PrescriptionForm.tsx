@@ -451,6 +451,7 @@ function PrescriptionFormBody({
     allergies,
     ddiInteractions,
     formAllergyMatches,
+    unacceptedDeskAllergies,
     isAcked,
     onAcknowledge,
     onAckDdi,
@@ -953,6 +954,7 @@ function PrescriptionFormBody({
       let ddiSeverity: InteractionRow["severity"] | undefined;
       for (const w of warnings) {
         switch (w.kind) {
+          case "unacked-desk-allergy":
           case "unacked-allergy":
           case "unacked-ddi":
             counts[w.kind] = (counts[w.kind] ?? 0) + w.count;
@@ -1069,6 +1071,7 @@ function PrescriptionFormBody({
       medicineInstanceIds,
       ddiInteractions: ddiInteractions,
       isAcked,
+      unacceptedDeskAllergies,
     });
     if (warnings.length === 0) {
       await performSaveAndSend();

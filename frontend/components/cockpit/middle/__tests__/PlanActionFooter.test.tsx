@@ -37,7 +37,7 @@ describe("PlanActionFooter", () => {
   it("shows Treating in the footer", () => {
     const fields = createEmptyRxFormFields();
     fields.provisionalDiagnosis = "Viral fever";
-    renderFooter(<PlanActionFooter state="ready" onPreview={vi.fn()} />, fields);
+    renderFooter(<PlanActionFooter state="ready" onReview={vi.fn()} />, fields);
     expect(screen.getByTestId("treating-diagnosis")).toHaveTextContent(
       /treating: viral fever/i,
     );
@@ -71,20 +71,14 @@ describe("PlanActionFooter", () => {
     expect(onPrewarm).toHaveBeenCalledTimes(1);
   });
 
-  it("hides Done when canSendPrescription(state) is false (ready)", () => {
+  it("shows Done before the visit starts (ready)", () => {
     renderFooter(<PlanActionFooter state="ready" onReview={vi.fn()} />);
     expect(
-      screen.queryByRole("button", { name: /done/i }),
-    ).not.toBeInTheDocument();
-  });
-
-  it("shows Preview as patient in ready when onPreview is provided", () => {
-    renderFooter(
-      <PlanActionFooter state="ready" onPreview={vi.fn()} />,
-    );
-    expect(
-      screen.getByRole("button", { name: /preview as patient/i }),
+      screen.getByRole("button", { name: /done/i }),
     ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /preview as patient/i }),
+    ).not.toBeInTheDocument();
   });
 
   it("does not keep Print on the footer", () => {
@@ -97,7 +91,7 @@ describe("PlanActionFooter", () => {
   });
 
   it("shows SaveStatus pill when not terminal", () => {
-    renderFooter(<PlanActionFooter state="ready" onPreview={vi.fn()} />);
+    renderFooter(<PlanActionFooter state="ready" onReview={vi.fn()} />);
     expect(screen.getByRole("status")).toHaveTextContent(/saved/i);
   });
 

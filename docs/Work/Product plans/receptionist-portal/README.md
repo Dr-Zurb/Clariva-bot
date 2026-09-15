@@ -14,7 +14,7 @@ Human front-desk staff, with their own logins, doing **offline** (walk-in / phon
 | [`task-p5-left-and-till-reversal.md`](./task-p5-left-and-till-reversal.md) | P5.3 — left after check-in + till return. Migration **225**. |
 | [`task-p5-prepaid-cancel.md`](./task-p5-prepaid-cancel.md) | P5.4 — cancel prepaid booked + refund status |
 
-**Status:** P1–P4 plus RQ1/RQ6/RQ7 shipped. Desk walk-in collect at check-in (no Due / Collect on Today). **P5.1–P5.3 shipped** (cancel waiting, move, left + till return). P5.4 prepaid cancel still drafted. Doctor Settings → Front desk: many receptionist logins, one active (migration **205**). They sign in at `/desk`.
+**Status:** P1–P4 plus RQ1/RQ6/RQ7 shipped. Desk walk-in collect at check-in (no Due / Collect on Today). **P5.1–P5.3 shipped** (cancel waiting, move, left + till return). P5.4 prepaid cancel still drafted. Doctor Settings → Staff: many logins; one active login per ticked job (`front_desk` includes payments; prep splits into `vitals` / `history` / `internal_labs` / `papers` in migration **237**). JWT role stays `receptionist`. They sign in at `/desk`. **Job UI locked 2026-09-13 (R13–R17 / RQ11):** one portal; job = panel; prep order `vitals → history → internal_labs → papers` (filter, don’t sort); one slot = no stepper; `front_desk` is not a stepper step.
 
 **Trigger:** founder is starting a real-patient pilot in his own OPD. Offline intake is the blocker — today the only way a patient enters the system is through the DM bot.
 

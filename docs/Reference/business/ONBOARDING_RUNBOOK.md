@@ -40,7 +40,7 @@ Do this **with** them, not for them. You are watching for where they hesitate �
 - [ ] **`settings/practice-setup/booking-rules`** — notice period, cancellation window, buffers.
 - [ ] **`settings/practice-setup/opd-mode`** and **`patient-flow`** — match how their clinic actually runs, not how you think it should.
 - [ ] **`settings/practice-setup/bot-messages`** — read the bot's opening line aloud to them. If they wince, edit it now. This is the single highest-value five minutes of the call.
-- [ ] **`settings/integrations`** — connect Instagram, and Facebook if they use it.
+- [ ] **`settings/integrations`** — connect Instagram, and Facebook if they use it. Skip if they answered **Not yet** on complete-profile (Instagram is optional; the step stays visible).
 - [ ] **`dashboard/get-verified`** — walk their RMP registration through. P0 under telemedicine rules.
 - [ ] Consent flow — show them what the patient sees and confirm they are comfortable being the one who obtains it (clause 5 of the pilot agreement).
 

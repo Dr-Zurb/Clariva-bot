@@ -27,12 +27,15 @@ const baseSafety: RxSafetySurfaceValue = {
   setDrugMasterIndex: vi.fn(),
   ddiInteractions: [],
   formAllergyMatches: [],
+  unacceptedDeskAllergies: [],
   isAcked: () => false,
   onAcknowledge: vi.fn(),
   onAckDdi: vi.fn(),
+  onAckDeskAllergy: vi.fn(),
   visible: false,
   clashesCount: 0,
   ddiCount: 0,
+  deskAllergyCount: 0,
 };
 
 vi.mock("@/components/cockpit/rx/RxSafetyContext", async (importOriginal) => {

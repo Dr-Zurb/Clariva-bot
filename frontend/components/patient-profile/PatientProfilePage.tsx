@@ -31,6 +31,7 @@ import KeyboardHelpHost from "@/components/patient-profile/KeyboardHelpHost";
 import CockpitV3Shell from "@/components/patient-profile/v3/CockpitV3Shell";
 import { cancelStorageKey } from "@/components/consultation/cockpit/NextPatientCountdown";
 import { AdvanceToNextPatient } from "@/components/patient-profile/AdvanceToNextPatient";
+import { isPrintAdvanceHeld } from "@/lib/cockpit/rx-print-advance";
 import {
   ConsultSurfaceHost,
   ConsultSurfaceProvider,
@@ -45,6 +46,7 @@ import {
   TELEMED_VIDEO_LAYOUT_STORAGE_KEY,
   WALKIN_LAYOUT_STORAGE_KEY,
 } from "@/lib/patient-profile/layout";
+import { TELE_LIVE_SEED_ID } from "@/lib/patient-profile/v3/default-layouts";
 import type {
   TelemedVideoContext,
   CockpitTemplate,
@@ -98,7 +100,7 @@ interface PatientProfilePageProps {
   panes?: PaneDefinition[];
   /**
    * cv2-03: optional layout persistence namespace (distinct per route).
-   * Persisted under `patient-profile/v4-tree-layout::<storageKey>`.
+   * Persisted under `patient-profile/v5-tree-layout::<storageKey>`.
    */
   storageKey?: string;
 }
@@ -147,11 +149,14 @@ export default function PatientProfilePage({
   }, [appt.id]);
 
   const armAdvance = useCallback((appointmentId: string) => {
-    // A Print earlier on this visit parked pf-11; finishing re-enables it.
-    try {
-      sessionStorage.removeItem(cancelStorageKey(appointmentId));
-    } catch {
-      // private mode / SSR
+    // A Print earlier on this visit parked pf-11; finishing re-enables it
+    // unless a print dialog is still open (navigation closes Chrome's preview).
+    if (!isPrintAdvanceHeld()) {
+      try {
+        sessionStorage.removeItem(cancelStorageKey(appointmentId));
+      } catch {
+        // private mode / SSR
+      }
     }
     setAdvanceAfterFinish(true);
   }, []);
@@ -477,18 +482,13 @@ export default function PatientProfilePage({
   const advanceActive = advanceAfterFinish && state === "ended";
 
   const pageContent = (
-    // `-m-4 md:-m-6` cancels the parent `<DashboardShell>` `p-4 md:p-6`
-    // padding so the patient-profile shell bleeds edge-to-edge — matches
-    // v1 (`ConsultationCockpit.tsx` ~L2103). Without this, v2 renders
-    // visibly inset on every side (parity bug surfaced in ppr-11 QA).
-    //
-    // Height must add the cancelled vertical padding back: `h-full` only spans
-    // `<main>`'s content box, so with negative margins the shell stops short
-    // of the bottom. `calc(100% + padding)` fills `<main>`'s padding box so
-    // the footer sits flush. Requires a definite height chain on ancestors
-    // (DashboardShell row + main both use `min-h-0 flex-1`).
+    // DashboardShell drops main padding/inset on appointment-detail
+    // (`data-cockpit-focus`) so this wrapper is flush — no negative-margin
+    // bleed. `h-full` fills the inset-0 content box. Requires a definite
+    // height chain on ancestors (DashboardShell row + main both use
+    // `min-h-0 flex-1`).
     <ConsultSurfaceProvider>
-      <div className="-m-4 md:-m-6 flex h-[calc(100%_+_2rem)] md:h-[calc(100%_+_3rem)] min-h-0 flex-col overflow-hidden">
+      <div className="flex h-full min-h-0 flex-col overflow-hidden">
         {/* Mount keyboard handlers once at the page root. */}
         <CommandBar />
         <RxCommandBar />
@@ -523,6 +523,13 @@ export default function PatientProfilePage({
             storageKey={storageKey}
             token={token}
             consultActive={state === "live"}
+            seedLayoutId={
+              appt.consultation_type === "video" ||
+              appt.consultation_type === "voice" ||
+              appt.consultation_type === "text"
+                ? TELE_LIVE_SEED_ID
+                : undefined
+            }
             safetyDock={
               <>
                 <VisitNarrativeAmendmentHost token={token} />

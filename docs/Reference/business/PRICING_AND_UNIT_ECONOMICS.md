@@ -27,7 +27,8 @@ Cost basis lives in [`PRICING_MODEL_DECISIONS.md`](./PRICING_MODEL_DECISIONS.md)
 | Planning number ₹8 | Rounded up from ₹6.55 | Until Gate 3 measures AI |
 | Consult length ~6 min | Indian teleconsult benchmarks | **Measure in our pilots** |
 | AI ₹15 today / ₹0.90 after Luna | Modelled, not queried | **Weakest number — Gate 3** |
-| Willingness to pay ₹999 + ₹49 | Untested hypothesis | **Test in the first five conversations** |
+| Willingness to pay ₹999 / doctor + ₹49 / teleconsult | Untested hypothesis | **Test in the first five conversations** |
+| In-clinic included in the base | Locked 2026-09-12 in [`PRICING_MODEL_DECISIONS.md`](./PRICING_MODEL_DECISIONS.md) #9–#10 | Structure locked; levels still a hypothesis |
 
 Real AI cost is already recoverable: `logAIClassification` in `backend/src/utils/audit-logger.ts` writes `model` and `tokens` into `audit_logs` under `action = 'ai_classification'` for every AI call. Query it before trusting the ₹15.
 
@@ -39,5 +40,7 @@ Locking price unblocks P1 items already open in [`LAUNCH_READINESS_CHECKLIST.md`
 
 **Created:** 2026-08-16.
 **Owner:** Founder (commercial).
-**Status:** `Draft` — hypothesis. Relock after the first five paying doctors.
+**Status:** `Draft` — hypothesis on levels. Structure as of 2026-09-12: ₹999 per doctor covers
+unlimited in-clinic + 20 teleconsults; ₹49 per further teleconsult; cap ₹12,499 per practice;
+desk logins free. Relock numbers after the first five paying doctors.
 **Capital context:** Bootstrapping (GTM-Q1 answered) — every customer must be gross-margin positive from month one.

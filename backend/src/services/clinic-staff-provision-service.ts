@@ -12,8 +12,12 @@ import type { User } from '@supabase/supabase-js';
 import { isStaffRole } from '../auth/staff-roles';
 import { getSupabaseAdminClient } from '../config/database';
 import {
-  findActiveStaffForDoctor,
+  normalizeStaffCapabilities,
+  seatsOverlap,
+} from '../auth/staff-capabilities';
+import {
   findStaffLink,
+  listActiveStaffForDoctor,
   setClinicStaffStatus,
   upsertClinicStaffLink,
 } from './clinic-staff-service';
@@ -85,14 +89,17 @@ async function createStaffUser(
 
 async function nextStatusForNewLink(
   doctorId: string,
+  capabilities: readonly string[],
   correlationId: string
 ): Promise<'active' | 'suspended'> {
-  const active = await findActiveStaffForDoctor(doctorId, correlationId);
-  return active ? 'suspended' : 'active';
+  const actives = await listActiveStaffForDoctor(doctorId, correlationId);
+  return actives.some((row) => seatsOverlap(row.capabilities, capabilities))
+    ? 'suspended'
+    : 'active';
 }
 
 export async function provisionClinicStaff(
-  input: { email: string; doctorId: string; displayName?: string },
+  input: { email: string; doctorId: string; displayName?: string; capabilities?: string[] },
   correlationId: string
 ): Promise<{ link: ClinicStaffLink; created: boolean; temporaryPassword?: string }> {
   const email = input.email.trim().toLowerCase();
@@ -100,6 +107,7 @@ export async function provisionClinicStaff(
     throw new ValidationError('A valid email is required');
   }
 
+  const capabilities = normalizeStaffCapabilities(input.capabilities);
   const existing = await findAuthUserByEmail(email, correlationId);
   if (existing) {
     const link = await findStaffLink(existing.id, correlationId);
@@ -112,6 +120,7 @@ export async function provisionClinicStaff(
           doctorId: input.doctorId,
           staffUserId: existing.id,
           displayName: input.displayName,
+          capabilities,
         },
         correlationId
       );
@@ -120,20 +129,21 @@ export async function provisionClinicStaff(
     if (!isStaffRole(existingRole(existing))) {
       throw new ConflictError('That email already has an account');
     }
-    const status = await nextStatusForNewLink(input.doctorId, correlationId);
+    const status = await nextStatusForNewLink(input.doctorId, capabilities, correlationId);
     const relinked = await upsertClinicStaffLink(
       {
         doctorId: input.doctorId,
         staffUserId: existing.id,
         displayName: input.displayName,
         status,
+        capabilities,
       },
       correlationId
     );
     return { link: relinked, created: false };
   }
 
-  const status = await nextStatusForNewLink(input.doctorId, correlationId);
+  const status = await nextStatusForNewLink(input.doctorId, capabilities, correlationId);
   const { user, password } = await createStaffUser(email, correlationId);
   const createdLink = await upsertClinicStaffLink(
     {
@@ -141,6 +151,7 @@ export async function provisionClinicStaff(
       staffUserId: user.id,
       displayName: input.displayName,
       status,
+      capabilities,
     },
     correlationId
   );

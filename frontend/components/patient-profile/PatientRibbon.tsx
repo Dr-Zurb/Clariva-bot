@@ -18,10 +18,11 @@
  * @see frontend/hooks/usePatientRibbonData.ts
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Clock, Shield } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import type { Appointment } from "@/types/appointment";
+import { getAppointmentHistorySubmission } from "@/lib/api/patient-history-submissions";
 import { trackCockpitV2RRibbonLanded } from "@/lib/patient-profile/telemetry";
 import { patientPrescriptionsQueryOptions } from "@/lib/query/options";
 import {
@@ -33,6 +34,7 @@ import {
 import { useRxForm } from "@/components/cockpit/rx/RxFormContext";
 import { useOptionalRxSafety } from "@/components/cockpit/rx/RxSafetyContext";
 import { useSideSheet } from "@/components/patient-profile/SideSheetHost";
+import type { PatientHistorySubmission } from "@/types/patient-history-submissions";
 import HistoryPane from "@/components/patient-profile/panes/HistoryPane";
 import AllergiesSection from "@/components/ehr/sections/AllergiesSection";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -89,6 +91,13 @@ export function PatientRibbon({ appointment, token, compact = false }: PatientRi
 // the walk-in guard (hooks cannot be called conditionally at the top level).
 // ---------------------------------------------------------------------------
 
+function deskSubmissionHasContent(row: PatientHistorySubmission | null): boolean {
+  if (!row) return false;
+  if (row.allergies.none || row.allergies.items.length > 0) return true;
+  if (row.medicines.none || row.medicines.items.length > 0) return true;
+  return row.conditions.items.length > 0;
+}
+
 function PatientRibbonInner({
   appointment,
   patientId,
@@ -101,6 +110,7 @@ function PatientRibbonInner({
   compact: boolean;
 }) {
   const data = usePatientRibbonData(patientId, token);
+  const [deskSubmission, setDeskSubmission] = useState<PatientHistorySubmission | null>(null);
   const queryClient = useQueryClient();
   const { state } = useRxForm();
   const dxValue = state.fields.provisionalDiagnosis;
@@ -127,6 +137,38 @@ function PatientRibbonInner({
     );
   }, [patientId, queryClient, token]);
 
+  useEffect(() => {
+    if (!appointment.id || !token) {
+      setDeskSubmission(null);
+      return;
+    }
+    let cancelled = false;
+    void getAppointmentHistorySubmission(token, appointment.id)
+      .then((res) => {
+        if (!cancelled) setDeskSubmission(res.data.submission);
+      })
+      .catch(() => {
+        if (!cancelled) setDeskSubmission(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [appointment.id, token]);
+
+  const fromDesk = deskSubmissionHasContent(deskSubmission);
+  const deskAllergyNames = useMemo(
+    () => new Set((deskSubmission?.allergies.items ?? []).map((item) => item.name.trim().toLowerCase())),
+    [deskSubmission],
+  );
+  const allergyChips = useMemo(
+    () =>
+      data.allergies.map((chip) => ({
+        ...chip,
+        fromDesk: deskAllergyNames.has(chip.name.trim().toLowerCase()),
+      })),
+    [data.allergies, deskAllergyNames],
+  );
+
   // Dev-only perf mark so the Dx mirror latency is visible in the
   // Performance tab. Measures from when provisionalDiagnosis changes to
   // when React commits this effect. Well below the 200ms ceiling.
@@ -149,7 +191,7 @@ function PatientRibbonInner({
         data-testid="patient-ribbon"
       >
         <AllergiesSlot
-          chips={data.allergies}
+          chips={allergyChips}
           isLoading={data.isLoading}
           patientId={patientId}
           token={token}
@@ -164,6 +206,17 @@ function PatientRibbonInner({
         />
         <Sep />
         <SafetySlot />
+        {fromDesk ? (
+          <>
+            <Sep />
+            <span
+              data-testid="ribbon-from-desk"
+              className="inline-flex items-center rounded-md px-1.5 py-0.5 text-xs text-muted-foreground"
+            >
+              From desk
+            </span>
+          </>
+        ) : null}
         <RibbonSheetActions appointment={appointment} token={token} />
         {compact ? null : (
           <>
@@ -332,17 +385,23 @@ function AllergyChip({ chip }: { chip: RibbonAllergyChip }) {
       <TooltipTrigger asChild>
         <span
           className={cn(
-            "inline-flex items-center rounded border px-1.5 py-0.5 text-xs font-medium",
+            "inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-xs font-medium",
             chipClass,
           )}
           role="note"
-          aria-label={`Allergy: ${chip.name}`}
+          aria-label={
+            chip.fromDesk ? `Allergy from desk: ${chip.name}` : `Allergy: ${chip.name}`
+          }
         >
           ⚠️ {chip.name}
+          {chip.fromDesk ? (
+            <span className="text-[10px] font-normal text-muted-foreground">Desk</span>
+          ) : null}
         </span>
       </TooltipTrigger>
       <TooltipContent side="bottom" className="max-w-[200px] space-y-1">
         <p className="font-semibold">{chip.name}</p>
+        {chip.fromDesk ? <p className="text-xs">From desk this visit</p> : null}
         {chip.severity && (
           <p className="capitalize text-xs">Severity: {chip.severity}</p>
         )}

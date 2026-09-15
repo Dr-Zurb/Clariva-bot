@@ -32,7 +32,8 @@
 
 import { Router } from 'express';
 import { authenticateToken } from '../../../middleware/auth';
-import { allowStaff } from '../../../middleware/allow-staff';
+import { staffCapability } from '../../../middleware/allow-staff';
+import { STAFF_CAPABILITIES } from '../../../auth/staff-capabilities';
 import { resolveActingDoctor } from '../../../middleware/resolve-acting-doctor';
 import {
   bulkTagPatientsHandler,
@@ -58,29 +59,29 @@ import patientChartRoutes from './patient-chart-routes';
 
 const router = Router();
 
-router.get('/', allowStaff, authenticateToken, resolveActingDoctor, listPatientsHandler);
-router.post('/', allowStaff, authenticateToken, resolveActingDoctor, createPatientHandler);
+router.get('/', staffCapability(...STAFF_CAPABILITIES), authenticateToken, resolveActingDoctor, listPatientsHandler);
+router.post('/', staffCapability('front_desk'), authenticateToken, resolveActingDoctor, createPatientHandler);
 // `/kpis` BEFORE `/:id` so the literal doesn't get caught by the param.
 router.get('/kpis', authenticateToken, getPatientsKpisHandler);
 router.get('/possible-duplicates', authenticateToken, listPossibleDuplicatesHandler);
 router.patch('/bulk-tag', authenticateToken, bulkTagPatientsHandler);
 router.post('/merge', authenticateToken, mergePatientsHandler);
-router.patch('/:id', allowStaff, authenticateToken, resolveActingDoctor, updatePatientHandler);
+router.patch('/:id', staffCapability('front_desk'), authenticateToken, resolveActingDoctor, updatePatientHandler);
 router.post(
   '/:id/archive',
-  allowStaff,
+  staffCapability('front_desk'),
   authenticateToken,
   resolveActingDoctor,
   archivePatientHandler
 );
 router.post(
   '/:id/restore',
-  allowStaff,
+  staffCapability('front_desk'),
   authenticateToken,
   resolveActingDoctor,
   restorePatientHandler
 );
-router.get('/:id', allowStaff, authenticateToken, resolveActingDoctor, getPatientByIdHandler);
+router.get('/:id', staffCapability(...STAFF_CAPABILITIES), authenticateToken, resolveActingDoctor, getPatientByIdHandler);
 router.get('/:id/overview', authenticateToken, getPatientOverviewHandler);
 router.get('/:id/consult-timeline', authenticateToken, getPatientConsultTimelineHandler);
 

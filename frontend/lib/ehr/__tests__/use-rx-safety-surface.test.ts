@@ -12,7 +12,12 @@ describe("computeRxSafetyStripVisible", () => {
         ddiInteractions: [],
         isAcked: () => false,
       }),
-    ).toEqual({ visible: false, clashesCount: 0, ddiCount: 0 });
+    ).toEqual({
+      visible: false,
+      clashesCount: 0,
+      ddiCount: 0,
+      deskAllergyCount: 0,
+    });
   });
 
   it("counts unacked allergy clashes", () => {
@@ -74,5 +79,17 @@ describe("computeRxSafetyStripVisible", () => {
     });
     expect(result.visible).toBe(false);
     expect(result.ddiCount).toBe(0);
+  });
+
+  it("does not surface sidecar allergies after write-through", () => {
+    const result = computeRxSafetyStripVisible({
+      formAllergyMatches: [],
+      medicineInstanceIds: ["m-1"],
+      ddiInteractions: [],
+      unacceptedDeskAllergies: [{ id: "desk:sub:0" }],
+      isAcked: () => false,
+    });
+    expect(result.visible).toBe(false);
+    expect(result.deskAllergyCount).toBe(0);
   });
 });

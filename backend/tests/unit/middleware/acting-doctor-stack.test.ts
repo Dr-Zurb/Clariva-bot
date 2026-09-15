@@ -32,7 +32,7 @@ jest.mock('../../../src/services/clinic-staff-service', () => ({
   findStaffLink: (...args: unknown[]) => findStaffLink(...args),
 }));
 
-import { allowStaff } from '../../../src/middleware/allow-staff';
+import { staffCapability } from '../../../src/middleware/allow-staff';
 import { authenticateToken } from '../../../src/middleware/auth';
 import { resolveActingDoctor } from '../../../src/middleware/resolve-acting-doctor';
 
@@ -59,7 +59,7 @@ async function runStack(req: Request): Promise<{ req: Request; error: unknown }>
     error = err;
   }) as NextFunction;
 
-  allowStaff(req, {} as Response, (err?: unknown) => {
+  staffCapability('front_desk')(req, {} as Response, (err?: unknown) => {
     if (err) error = err;
   });
   if (error) return { req, error };
@@ -82,6 +82,7 @@ beforeEach(() => {
     staffUserId: STAFF_ID,
     role: 'receptionist',
     status: 'active',
+    capabilities: ['front_desk', 'previsit'],
   });
 });
 

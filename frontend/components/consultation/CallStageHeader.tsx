@@ -6,7 +6,7 @@
  * Matches light card / border tokens used by SOAP panes.
  */
 
-import { Maximize2, Minimize2 } from "lucide-react";
+import { Maximize2, Minimize2, Pin, PinOff } from "lucide-react";
 import type { ReactNode } from "react";
 import CallControlTooltip from "./CallControlTooltip";
 import NetworkBars from "./NetworkBars";
@@ -46,6 +46,9 @@ export interface CallStageHeaderProps {
   fillTabActive?: boolean;
   fullscreenActive?: boolean;
   onExitExpand?: () => void;
+  /** Pin Consult at stage size so auto-thumbnail never fights the doctor. */
+  consultStagePinned?: boolean;
+  onToggleConsultStagePin?: () => void;
   className?: string;
 }
 
@@ -62,6 +65,8 @@ export default function CallStageHeader({
   fillTabActive = false,
   fullscreenActive = false,
   onExitExpand,
+  consultStagePinned = false,
+  onToggleConsultStagePin,
   className,
 }: CallStageHeaderProps) {
   const { formatted: duration } = useCallDuration(connectedAt);
@@ -141,6 +146,39 @@ export default function CallStageHeader({
             />
           )}
         </div>
+
+        {onToggleConsultStagePin ? (
+          <CallControlTooltip
+            label={
+              consultStagePinned
+                ? "Unpin video size"
+                : "Pin video at stage size"
+            }
+            side="bottom"
+          >
+            <button
+              type="button"
+              onClick={onToggleConsultStagePin}
+              className={COCKPIT_STAGE_HEADER_BTN}
+              aria-pressed={consultStagePinned}
+              aria-label={
+                consultStagePinned
+                  ? "Unpin video size"
+                  : "Pin video at stage size"
+              }
+              data-testid="call-stage-pin"
+            >
+              {consultStagePinned ? (
+                <PinOff className="h-3.5 w-3.5" aria-hidden />
+              ) : (
+                <Pin className="h-3.5 w-3.5" aria-hidden />
+              )}
+              <span className="hidden sm:inline">
+                {consultStagePinned ? "Unpin" : "Pin"}
+              </span>
+            </button>
+          </CallControlTooltip>
+        ) : null}
 
         {expanded && onExitExpand ? (
           <CallControlTooltip label="Exit expand" side="bottom">

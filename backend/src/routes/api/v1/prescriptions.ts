@@ -28,6 +28,7 @@ import {
   registerAttachmentHandler,
   getAttachmentDownloadUrlHandler,
   extractLabPdfFromAttachmentHandler,
+  promoteVisitDocumentPageHandler,
   deleteAttachmentHandler,
   sendPrescriptionToPatientHandler,
   reissuePrescriptionHandler,
@@ -50,6 +51,7 @@ router.patch('/:id', updatePrescriptionHandler);
 
 // Attachment routes (nested under prescription id)
 router.post('/:id/attachments/upload-url', createUploadUrlHandler);
+router.post('/:id/attachments/from-visit-page', promoteVisitDocumentPageHandler);
 router.post('/:id/attachments', registerAttachmentHandler);
 router.get('/:id/attachments/:attachmentId/download-url', getAttachmentDownloadUrlHandler);
 // rpt-05.6: rate-limited because photo attachments route to a paid vision model.

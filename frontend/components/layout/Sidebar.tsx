@@ -185,7 +185,7 @@ export function Sidebar({
         )}
         <aside
           className={cn(
-            "relative z-50 flex flex-col border-r border-border bg-background",
+            "relative z-50 flex h-full shrink-0 flex-col border-r border-border bg-background",
             "md:relative md:flex-shrink-0 md:transition-[width] md:duration-200 md:ease-in-out",
             collapsed ? "md:w-14" : "md:w-56",
             "fixed inset-y-0 left-0 w-56 transition-transform duration-200 ease-in-out md:translate-x-0",

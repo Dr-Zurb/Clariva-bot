@@ -19,6 +19,7 @@ import {
   pipelineTokenLabel,
 } from "../PatientProfileQueueRail";
 import type { PipelineEntry } from "@/hooks/useDoctorDayPipeline";
+import { formatOpdSessionDateLabel, todayLocalIso } from "@/lib/dates";
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -89,7 +90,11 @@ function makeEntry(
 function pipelineResult(
   entries: PipelineEntry[],
   currentIndex: number | null,
-  extra: { totalCount?: number; source?: "queue" | "schedule" } = {},
+  extra: {
+    totalCount?: number;
+    source?: "queue" | "schedule";
+    sessionDate?: string;
+  } = {},
 ) {
   const idx = currentIndex;
   mockUsePipeline.mockReturnValue({
@@ -102,6 +107,7 @@ function pipelineResult(
     source: extra.source ?? "queue",
     isLoading: false,
     error: null,
+    sessionDate: extra.sessionDate ?? todayLocalIso(),
   });
 }
 
@@ -192,6 +198,7 @@ describe("CockpitQueueRail", () => {
       source: "queue",
       isLoading: true,
       error: null,
+      sessionDate: todayLocalIso(),
     });
     // Provide currentAppointmentId so visibility gate doesn't fire
     // (entries.length === 0 but isLoading === true)
@@ -394,7 +401,10 @@ describe("CockpitQueueRail", () => {
     renderRail();
 
     const link = screen.getByRole("link", { name: /View all \(12\)/i });
-    expect(link).toHaveAttribute("href", expect.stringContaining("/dashboard/opd-today"));
+    expect(link).toHaveAttribute(
+      "href",
+      `/dashboard/opd-today?date=${todayLocalIso()}`,
+    );
   });
 
   it("hides View all while a consult is live", () => {
@@ -554,7 +564,13 @@ describe("CockpitQueueRail", () => {
 
   it("matches three-slot snapshot", () => {
     const entries = [
-      makeEntry({ id: "a1", label: "Ananya Bose", tokenNumber: 1, position: 1 }),
+      makeEntry({
+        id: "a1",
+        label: "Ananya Bose",
+        tokenNumber: 1,
+        position: 1,
+        appointmentDate: "2099-01-01T10:00:00Z",
+      }),
       makeEntry({
         id: "a2",
         label: "Priya Sharma",
@@ -562,12 +578,14 @@ describe("CockpitQueueRail", () => {
         position: 2,
         isCurrent: true,
         status: "in_consultation",
+        appointmentDate: "2099-01-01T10:00:00Z",
       }),
       makeEntry({
         id: "a3",
         label: "Rahul Verma",
         tokenNumber: 3,
         position: 3,
+        appointmentDate: "2099-01-01T10:00:00Z",
       }),
     ];
     pipelineResult(entries, 1, { totalCount: 8 });
@@ -655,7 +673,7 @@ describe("CockpitQueueRail today's-OPD picker", () => {
     renderInline();
 
     const picker = within(openPicker());
-    const search = picker.getByLabelText("Search today's OPD");
+    const search = picker.getByLabelText(/search today's opd/i);
 
     fireEvent.change(search, { target: { value: "rahul" } });
     expect(picker.getByRole("link", { name: /Rahul Verma/ })).toBeInTheDocument();
@@ -687,8 +705,32 @@ describe("CockpitQueueRail today's-OPD picker", () => {
     // The full hub stays one click away if the doctor still wants the table.
     expect(picker.getByRole("link", { name: /Open OPD tab/i })).toHaveAttribute(
       "href",
-      expect.stringContaining("/dashboard/opd-today"),
+      `/dashboard/opd-today?date=${todayLocalIso()}`,
     );
+  });
+
+  it("scrolls the current patient into the middle of the list on open", () => {
+    const scrollIntoView = vi.fn();
+    const proto = Element.prototype as Element & {
+      scrollIntoView: typeof scrollIntoView;
+    };
+    const previous = proto.scrollIntoView;
+    proto.scrollIntoView = scrollIntoView;
+    try {
+      seedDay(12);
+      renderInline();
+      openPicker();
+      expect(screen.getByTestId("cockpit-queue-picker-current")).toHaveAttribute(
+        "aria-current",
+        "page",
+      );
+      expect(scrollIntoView).toHaveBeenCalledWith({
+        block: "center",
+        inline: "nearest",
+      });
+    } finally {
+      proto.scrollIntoView = previous;
+    }
   });
 
   it("warms a patient's chart when the doctor points at the row", () => {
@@ -704,5 +746,91 @@ describe("CockpitQueueRail today's-OPD picker", () => {
       "tok",
       expect.objectContaining({ appointmentId: "appt-3" }),
     );
+  });
+
+  it("keeps a past day's list, and prev/next stay clickable when those visits are done", () => {
+    const sessionDate = "2026-09-10";
+    pipelineResult(
+      [
+        makeEntry({
+          id: "appt-14",
+          label: "Test Patient Fourteen",
+          tokenNumber: 14,
+          status: "completed",
+        }),
+        makeEntry({
+          id: "appt-15",
+          label: "Test Patient Fifteen",
+          tokenNumber: 15,
+          status: "completed",
+          isCurrent: true,
+        }),
+        makeEntry({
+          id: "appt-16",
+          label: "Test Patient Sixteen",
+          tokenNumber: 16,
+          status: "completed",
+        }),
+      ],
+      1,
+      { totalCount: 23, sessionDate },
+    );
+    renderWithClient(
+      <CockpitQueueRail
+        currentAppointmentId="appt-15"
+        state="ended"
+        token="tok"
+        variant="inline"
+        visitDate={sessionDate}
+        nowSlot={<span>NOW</span>}
+      />,
+    );
+
+    const sessionLabel = formatOpdSessionDateLabel(sessionDate);
+    expect(
+      screen.getByRole("button", { name: `${sessionLabel}, 2 of 23` }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: /Previous patient: Test Patient Fourteen/i }),
+    ).toHaveAttribute(
+      "href",
+      "/dashboard/appointments/appt-14?from=opd-today&date=2026-08-09",
+    );
+    expect(
+      screen.getByRole("link", { name: /Next patient: Test Patient Sixteen/i }),
+    ).toHaveAttribute(
+      "href",
+      "/dashboard/appointments/appt-16?from=opd-today&date=2026-08-09",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: `${sessionLabel}, 2 of 23` }));
+    const picker = within(screen.getByTestId("cockpit-queue-picker"));
+    expect(picker.getByText("3 patients")).toBeInTheDocument();
+    expect(picker.getByRole("link", { name: /Open OPD tab/i })).toHaveAttribute(
+      "href",
+      `/dashboard/opd-today?date=${sessionDate}`,
+    );
+  });
+
+  it("asks the pipeline for the visit day when the URL has no date", () => {
+    pipelineResult(
+      [makeEntry({ id: "appt-2", tokenNumber: 2, isCurrent: true })],
+      0,
+    );
+    renderWithClient(
+      <CockpitQueueRail
+        currentAppointmentId="appt-2"
+        state="ended"
+        token="tok"
+        variant="inline"
+        visitDate="2026-09-10"
+        nowSlot={<span>NOW</span>}
+      />,
+    );
+    expect(mockUsePipeline).toHaveBeenCalledWith({
+      token: "tok",
+      currentAppointmentId: "appt-2",
+      sessionDate: "2026-09-10",
+    });
   });
 });

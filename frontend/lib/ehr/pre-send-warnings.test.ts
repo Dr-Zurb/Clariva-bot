@@ -281,6 +281,30 @@ describe("computePreSendWarnings — unacked-ddi", () => {
 // Warning ordering
 // ---------------------------------------------------------------------------
 
+describe("computePreSendWarnings — desk sidecar allergies", () => {
+  it("does not emit a separate desk-allergy gate after write-through", () => {
+    const warnings = computePreSendWarnings(
+      makeInputs({
+        unacceptedDeskAllergies: [{ id: "desk:sub:0" }],
+      })
+    );
+    expect(warnings.find((w) => w.kind === "unacked-desk-allergy")).toBeUndefined();
+  });
+
+  it("does not double-count a leftover desk clash under unacked-allergy", () => {
+    const warnings = computePreSendWarnings(
+      makeInputs({
+        allergyMatches: [
+          makeAllergyMatch(0, "desk:sub:0", { reportedAtDesk: true }),
+        ],
+        medicineInstanceIds: ["m-1"],
+        unacceptedDeskAllergies: [{ id: "desk:sub:0" }],
+      })
+    );
+    expect(warnings.map((w) => w.kind)).toEqual([]);
+  });
+});
+
 describe("computePreSendWarnings — ordering", () => {
   it("emits warnings in clinical-severity order: allergy → ddi", () => {
     const warnings = computePreSendWarnings(
@@ -292,6 +316,7 @@ describe("computePreSendWarnings — ordering", () => {
         allergyMatches: [makeAllergyMatch(0, "a-1")],
         medicineInstanceIds: ["m-1"],
         ddiInteractions: [makeDdi("major")],
+        unacceptedDeskAllergies: [{ id: "desk:sub:0" }],
       })
     );
     expect(warnings.map((w) => w.kind)).toEqual([

@@ -19,7 +19,7 @@ New ranking:
 | Rank | Persona | Why | Plan fit |
 |---|---|---|---|
 | **1 — the wedge** | Dr. Anjali (influencer doctor) | Instagram-native, which is the only channel you can reach today. Decides in one conversation. Recommends tools to other doctors — distribution a bootstrapper cannot buy. | Standard ₹7,500 (expect price resistance) |
-| **2 — the revenue** | Dr. Raj (multi-location clinic) | Displaces ~₹90,000/mo of receptionist salary with ₹15,000. The arithmetic sells itself. | Clinic ₹15,000 |
+| **2 — the revenue** | Dr. Raj (multi-location clinic) | Displaces ~₹90,000/mo of receptionist salary with ₹15,000. The arithmetic sells itself. **Public URL is `/clinics`, not `/`.** | Clinic ₹15,000 |
 | **3 — not yet** | Dr. Priya (solo) | Largest market and real pain, but no profitable plan exists for her today. | None |
 
 Run 1 and 2 in parallel — Anjali closes fast and funds the month, Raj's ROI-evaluation cycle is too slow to wait on.

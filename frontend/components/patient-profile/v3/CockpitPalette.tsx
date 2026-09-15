@@ -58,7 +58,15 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { getPalettePaneIcon, isSoapPaneId } from "@/lib/patient-profile/pane-icons";
+import {
+  getPalettePaneIcon,
+  isSoapPaneId,
+  SOAP_PANE_DISPLAY,
+} from "@/lib/patient-profile/pane-icons";
+import {
+  DESTINATION_FLASH_CLASS,
+  useDestinationFlash,
+} from "@/lib/patient-profile/v3/destination-flash";
 
 export interface CockpitPaletteProps {
   panes: PaneDefinition[];
@@ -171,6 +179,8 @@ export default function CockpitPalette({
     setDeleteOpen(true);
   }, []);
 
+  const { flashingPaneIds } = useDestinationFlash();
+
   if (panes.length === 0) return null;
 
   assertFlatLeafRegistry(panes);
@@ -198,7 +208,9 @@ export default function CockpitPalette({
         {panes.map((pane) => {
           const hidden = layout.paneState[pane.id]?.hidden ?? true;
           const Icon = getPalettePaneIcon(pane.id, pane.icon ?? LayoutGrid);
-          const soapInitial = isSoapPaneId(pane.id);
+          const soapGlyph = isSoapPaneId(pane.id)
+            ? SOAP_PANE_DISPLAY[pane.id].glyph
+            : null;
           const tooltipLabel = hidden
             ? `Add ${pane.title}`
             : `Remove ${pane.title}`;
@@ -211,23 +223,31 @@ export default function CockpitPalette({
                   data-palette-pane-id={pane.id}
                   data-palette-on-canvas={hidden ? "false" : "true"}
                   onClick={() => handleToggle(pane.id)}
+                  data-destination-flash={
+                    flashingPaneIds.has(pane.id) ? "true" : "false"
+                  }
                   className={cn(
-                    "inline-flex h-7 w-7 items-center justify-center rounded transition-colors",
+                    "inline-flex h-7 items-center justify-center rounded transition-colors",
+                    "w-7",
                     "focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
                     !hidden && "bg-primary/15 text-primary hover:bg-primary/25",
                     hidden &&
                       "bg-transparent text-muted-foreground hover:bg-muted hover:text-foreground",
+                    flashingPaneIds.has(pane.id) && DESTINATION_FLASH_CLASS,
                   )}
                   aria-pressed={!hidden}
                   aria-label={tooltipLabel}
                 >
-                  <Icon
-                    className={cn(
-                      "shrink-0",
-                      soapInitial ? "h-4 w-4" : "h-3.5 w-3.5",
-                    )}
-                    aria-hidden
-                  />
+                  {soapGlyph ? (
+                    <span
+                      className="select-none text-xs font-semibold leading-none tracking-tight"
+                      aria-hidden
+                    >
+                      {soapGlyph}
+                    </span>
+                  ) : (
+                    <Icon className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                  )}
                 </button>
               </TooltipTrigger>
               <TooltipContent side="bottom" sideOffset={6}>

@@ -29,7 +29,10 @@ const ROW = {
   staff_user_id: STAFF_ID,
   role: 'receptionist',
   status: 'active' as const,
+  capabilities: ['front_desk', 'previsit'],
 };
+
+const FOLDED = ['front_desk', 'vitals', 'history', 'internal_labs', 'papers'];
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -52,6 +55,7 @@ describe('findStaffLink', () => {
       staffUserId: STAFF_ID,
       role: 'receptionist',
       status: 'active',
+      capabilities: FOLDED,
     });
     expect(from).toHaveBeenCalledWith('clinic_staff');
   });

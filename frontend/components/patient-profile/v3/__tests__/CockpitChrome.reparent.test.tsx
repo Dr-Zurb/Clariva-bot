@@ -67,12 +67,15 @@ const safetySurface = vi.hoisted((): RxSafetySurfaceValue => ({
   setDrugMasterIndex: vi.fn(),
   ddiInteractions: [],
   formAllergyMatches: [],
+  unacceptedDeskAllergies: [],
   isAcked: () => false,
   onAcknowledge: vi.fn(),
   onAckDdi: vi.fn(),
+  onAckDeskAllergy: vi.fn(),
   visible: false,
   clashesCount: 0,
   ddiCount: 0,
+  deskAllergyCount: 0,
 }));
 
 const layoutControlRef = vi.hoisted(() => ({
@@ -381,7 +384,7 @@ function applyPaneTree(paneTree: PaneTreeNode) {
 }
 
 function clickDockedSend() {
-  const sendBtn = screen.getByRole("button", { name: /review/i });
+  const sendBtn = screen.getByRole("button", { name: /done/i });
   fireEvent.click(sendBtn);
 }
 
@@ -460,7 +463,7 @@ describe("cv3p-01: CockpitChrome re-parent (R-CHROME3)", () => {
 
     it("fires send after plan moves beside subjective", () => {
       renderChromeShell();
-      const moved = reshape(telemedDefaultPaneTree(), "plan", "subjective", "north");
+      const moved = reshape(telemedDefaultPaneTree(), "plan", "body", "north");
       applyPaneTree(moved);
 
       expect(screen.getByTestId("cockpit-v3-action-dock")).toContainElement(
@@ -472,7 +475,7 @@ describe("cv3p-01: CockpitChrome re-parent (R-CHROME3)", () => {
 
     it("fires send after plan is tabbed under assessment", () => {
       renderChromeShell();
-      const tabbed = reshape(telemedDefaultPaneTree(), "plan", "assessment", "center");
+      const tabbed = reshape(telemedDefaultPaneTree(), "plan", "body", "center");
       applyPaneTree(tabbed);
 
       clickDockedSend();
@@ -495,7 +498,7 @@ describe("cv3p-01: CockpitChrome re-parent (R-CHROME3)", () => {
       safetySurface.clashesCount = 2;
 
       renderChromeShell();
-      const moved = reshape(telemedDefaultPaneTree(), "plan", "subjective", "north");
+      const moved = reshape(telemedDefaultPaneTree(), "plan", "body", "north");
       applyPaneTree(moved);
 
       const safetyDock = screen.getByTestId("cockpit-v3-safety-dock");
@@ -525,19 +528,19 @@ describe("cv3p-01: CockpitChrome re-parent (R-CHROME3)", () => {
     it("shows footer send in live and ended; hides in terminal", () => {
       renderChromeShell(telemedDefaultPaneTree(), { state: "live" });
       expect(
-        screen.getByRole("button", { name: /review/i }),
+        screen.getByRole("button", { name: /done/i }),
       ).toBeInTheDocument();
 
       cleanup();
       renderChromeShell(telemedDefaultPaneTree(), { state: "ended" });
       expect(
-        screen.getByRole("button", { name: /review/i }),
+        screen.getByRole("button", { name: /done/i }),
       ).toBeInTheDocument();
 
       cleanup();
       renderChromeShell(telemedDefaultPaneTree(), { state: "terminal" });
       expect(
-        screen.queryByRole("button", { name: /review/i }),
+        screen.queryByRole("button", { name: /done/i }),
       ).not.toBeInTheDocument();
       expect(screen.getByTestId("cockpit-v3-action-dock")).toBeInTheDocument();
     });
@@ -550,8 +553,8 @@ describe("cv3p-01: CockpitChrome re-parent (R-CHROME3)", () => {
       const bodySortable = sortableCalls.find((c) => c.id.includes("-body"));
       expect(bodySortable?.disabled).toBe(false);
 
-      const subjectiveSortable = sortableCalls.find((c) => c.id.includes("-subjective"));
-      expect(subjectiveSortable?.disabled).toBe(false);
+      const planSortable = sortableCalls.find((c) => c.id.includes("-plan"));
+      expect(planSortable?.disabled).toBe(false);
     });
   });
 

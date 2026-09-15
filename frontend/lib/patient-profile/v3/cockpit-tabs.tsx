@@ -53,6 +53,7 @@ import type {
 import {
   PANE_ICONS,
   BODY_VARIANT_ICONS,
+  SOAP_PANE_DISPLAY,
 } from '@/lib/patient-profile/pane-icons';
 import RxPane from '@/components/patient-profile/panes/RxPane';
 import SubjectivePane from '@/components/patient-profile/panes/SubjectivePane';
@@ -216,7 +217,7 @@ export function buildCockpitTabs(
 
   const assessment: PaneDefinition = {
     id: 'assessment',
-    title: 'Assessment',
+    title: SOAP_PANE_DISPLAY.assessment.title,
     icon: PANE_ICONS.assessment,
     render: () => (
       <div
@@ -241,7 +242,7 @@ export function buildCockpitTabs(
   // safety / Dx / the "Send Rx & finish" action).
   const plan: PaneDefinition = {
     id: 'plan',
-    title: 'Plan',
+    title: SOAP_PANE_DISPLAY.plan.title,
     icon: PANE_ICONS.plan,
     render: () => (
       <RxPane
@@ -263,12 +264,12 @@ export function buildCockpitTabs(
       />
     ),
     naturalSizePct: 60,
-    minSizePx: 280,
+    minSizePx: 520,
   };
 
   const subjective: PaneDefinition = {
     id: 'subjective',
-    title: 'Subjective',
+    title: SOAP_PANE_DISPLAY.subjective.title,
     icon: PANE_ICONS.subjective,
     render: () => (
       <SubjectivePane
@@ -284,7 +285,7 @@ export function buildCockpitTabs(
 
   const objective: PaneDefinition = {
     id: 'objective',
-    title: 'Objective',
+    title: SOAP_PANE_DISPLAY.objective.title,
     icon: PANE_ICONS.objective,
     render: () => <ObjectivePane appointmentId={appointmentId} hideHeader />,
     naturalSizePct: 50,

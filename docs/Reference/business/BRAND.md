@@ -1,6 +1,6 @@
 # Clariva — Brand Reference
 
-> **Last updated:** 2026-05-06  
+> **Last updated:** 2026-09-12  
 > **Owner:** Design / Product (promote to a named person when the team grows).  
 > This is the single source of truth for all visual and copy decisions in the dashboard. All new UI work should reference this doc before picking a colour, font size, or writing system copy.
 
@@ -8,9 +8,13 @@
 
 ## Identity
 
-**Product:** Clariva — digital infrastructure for doctors operating on social media.
+**Product:** Halo Aid — turn your audience into your practice.
 
-**Tone statement:** Clinical, calm, modern. We respect the doctor's time and never patronize the patient. Every word earns its place.
+**Tone statement:** Clinical, calm, modern. We respect the doctor's time and never patronize the patient. Every word earns its place. Write public marketing as if the doctor's own patient will read it. Prefer *patients, practice, visits* over *leads, funnel, influencer*.
+
+**Public line:** Turn your audience into your practice. Teleconsult or in-clinic — order, not a decision. "Doctor creators" is a category word (ads, community, About) — the hero describes the behaviour, not the label.
+
+**Second pitch:** `/clinics` — same product, clinic opener is records, visits, and prescriptions — not a receptionist replacement. `/` stays creator-first. "For clinics" in the marketing nav is an exit, not a gate.
 
 ---
 
@@ -155,6 +159,9 @@ Located in `frontend/public/brand/`. Referenced from `frontend/app/layout.tsx` m
 
 | Date | Change | By |
 |---|---|---|
+| 2026-09-12 | Clinic opener is records / visits / Rx, not receptionist. | Agent (clinics pitch) |
+| 2026-09-12 | `/clinics` noted as the second public pitch. `/` stays creator-first. | Agent (clinic-path P1) |
+| 2026-09-12 | Public line set to "Turn your audience into your practice." Product name on this doc is Halo Aid. | Agent (marketing reposition) |
 | 2026-05-06 | Initial version — authored during Sub-batch A (UI redesign batch). Default palette, typography, spacing, iconography, voice/tone. | Agent (UI sub-batch A execution) |
 
 Promote updates here when any brand decision changes. Three-way sync: this file → `globals.css` CSS vars → `tailwind.config.ts` theme extension.

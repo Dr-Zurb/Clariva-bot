@@ -31,6 +31,7 @@ import {
   deleteAttachment,
 } from '../services/prescription-attachment-service';
 import { extractLabPdfFromAttachment } from '../services/lab-pdf-extract-service';
+import { promoteVisitDocumentPageToPrescription } from '../services/visit-documents-service';
 import { sendPrescriptionToPatient } from '../services/notification-service';
 import { getDoctorTimezone } from '../services/doctor-settings-service';
 import { reissuePrescriptionAsRevision } from '../services/prescription-revision-service';
@@ -55,6 +56,7 @@ import {
   validateLastSubjectiveQuery,
   validateReissuePrescriptionBody,
 } from '../utils/validation';
+import { validatePromoteVisitDocumentPageBody } from '../utils/visit-document-promote-validation';
 import { InternalError, ServiceUnavailableError, UnauthorizedError } from '../utils/errors';
 import { prescriptionPdfFilenameFromRow } from '../utils/prescription-pdf-filename';
 
@@ -250,6 +252,36 @@ export const extractLabPdfFromAttachmentHandler = asyncHandler(
     res.status(200).json(successResponse(result, req));
   }
 );
+
+/**
+ * Copy a front-desk visit page into prescription_attachments (DVP-Q3).
+ * POST /api/v1/prescriptions/:id/attachments/from-visit-page
+ *
+ * Doctor-only. Suggestion extract stays on the existing extract-lab route.
+ */
+export const promoteVisitDocumentPageHandler = asyncHandler(async (req: Request, res: Response) => {
+  const correlationId = req.correlationId || 'unknown';
+  const userId = req.user?.id;
+
+  if (!userId) {
+    throw new UnauthorizedError('Authentication required');
+  }
+
+  const { id } = validatePrescriptionParams(req.params);
+  const { appointmentId, documentId, pageId } = validatePromoteVisitDocumentPageBody(req.body);
+
+  const attachment = await promoteVisitDocumentPageToPrescription(
+    id,
+    appointmentId,
+    documentId,
+    pageId,
+    userId,
+    correlationId,
+    userId
+  );
+
+  res.status(201).json(successResponse({ attachment }, req));
+});
 
 /**
  * Delete a prescription attachment (DB row + storage object)

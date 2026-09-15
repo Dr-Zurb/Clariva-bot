@@ -95,6 +95,20 @@ Founder-answered at roadmap creation. Phase deep dives MUST respect these or exp
 | **R11** | **The pf-16 no-patient-row walk-in path is kept but demoted.** | It stays reachable from the doctor's own `AddSlotDialog` for true one-offs. It is **not** exposed on the desk. Removing it entirely is a follow-up once desk usage proves nobody needs it — deleting it now would also delete `buildWalkInCockpitTabs` and its tests mid-pilot. |
 | **R12** | **Deep dives one phase at a time.** This file stays the index. | P1 is spec'd; P2–P4 are sketches until committed. |
 
+## Decisions LOCKED 2026-09-13 — job-shaped desk UI
+
+Founder-agreed after the seat split (`237`). Phase work MUST respect these or explicitly reopen them. Complements R3 (desk stays at `/desk`) and RQ1 (one active login per ticked job).
+
+| ID | Decision | Implication |
+|----|----------|-------------|
+| **R13** | **One portal. A job is a panel, not an app.** Every staff login stays on `/desk`. Do not add `/desk/vitals`, `/desk/labs`, or a new JWT role per job. | Shared shell, Today list, and acting-doctor. `clinic_staff.capabilities` decide which panels mount. A later job is “append to prep order + add a panel.” |
+| **R14** | **Two families.** `front_desk` is the counter (check-in, Today, collect, move, left). `vitals` / `history` / `internal_labs` / `papers` are per-visit prep on a selected patient. | Registration is never a stepper step. Counter-only logins never see prep forms. Prep-only logins never see register / collect / hisab. Mixed logins: counter first, then their prep slots after arrive/collect. |
+| **R15** | **Prep order is clinic flow, hardcoded.** `vitals → history → internal_labs → papers`. Filter that list by the seats this login holds. Never sort by assignment time, alphabet, or what’s still empty. Not doctor-configurable in V1. | Source of truth: `PREP_CAPABILITIES` / `WORK_SLOTS`. History + papers → `Health record → Patient files`. Labs-only → labs panel only. Completeness may badge a patient as needed; it must not reshuffle tabs. |
+| **R16** | **One held prep slot = that panel, no stepper.** Two or more = existing Next chrome (`Save and next`, last button `Done`). | `DeskPrepPanel` stays one mapper. Hide the stepper chrome when `slots.length === 1`. |
+| **R17** | **Today completeness dots do not decide job order.** Splitting the old `reports` glance into labs + papers is a later polish. | Dots follow the same filter-not-reorder rule if they split. |
+
+Landing: only `front_desk` → Check-in; only prep → Today (Check-in hidden; open an arrived/seen visit for that login’s panel); both → Check-in, then prep after collect.
+
 ---
 
 ## Phase overview
@@ -159,6 +173,8 @@ These flow from the locked decisions. Phase plans reference this section rather 
 | Desk-initiated WhatsApp/SMS to patients | Notification fan-out is owned by the integrations roadmap. |
 | Editing clinical content from the desk | Violates principle 6. Hard no. |
 | Merging the desk into `/dashboard/opd-today` | R3. Considered and rejected — that page is doctor-clinical. |
+| Per-job portals (`/desk/vitals`, `/desk/labs`) or a JWT role per seat | R13. Same login, same shell, capability-filtered panels. |
+| Doctor-configurable prep order | R15. Revisit only if a real clinic does papers before vitals. |
 
 ---
 
@@ -168,7 +184,7 @@ Answer during the relevant phase deep dive; update this table when resolved.
 
 | ID | Question | Affects | Default if unanswered |
 |----|----------|---------|----------------------|
-| **RQ1** | How does a staff account get created — founder-run script, admin console screen, or doctor-facing invite in settings? | P1 ops path | **Resolved 2026-08-23.** Doctor Settings → Front desk. Many logins, **one active** (unique index `205`). Extra adds start suspended; Make active swaps the seat. Delete removes the link (auth user kept so the email can be re-added). Admin + CLI follow the same cap. |
+| **RQ1** | How does a staff account get created — founder-run script, admin console screen, or doctor-facing invite in settings? | P1 ops path | **Revised 2026-09-13.** Doctor Settings → Staff. Many logins. **One active login per ticked job** (`front_desk`, `vitals`, `history`, `internal_labs`, `papers`; migration `237`). Combined-role people occupy every seat they hold. A second login for the same seat starts suspended. Delete removes the link (auth user kept so the email can be re-added). Admin + CLI follow the same seat rule. |
 | **RQ2** | Is the role claim (`app_metadata.role = 'receptionist'`) authoritative, or is the `clinic_staff` row? | P1 middleware | **The row is authoritative**; the claim is only a routing hint so the frontend can pick a landing page. Revocation must not depend on a token refresh. |
 | **RQ3** | What does the desk see of a patient's history — nothing, or last-visit date + upcoming appointments? | P4 scope, principle 6 | **Scheduling facts only** (last visit date, next appointment, MRN, tags). No diagnoses, no Rx, no notes. |
 | **RQ4** | Should the desk be able to collect a fee / mark "paid at desk"? | P4, out-of-scope boundary | **Superseded 2026-08-30.** Walk-in collect at check-in (Cash / UPI / Card / No charge). No Collect / Due on Today. Reversal / prepaid refund = P5. |
@@ -176,6 +192,7 @@ Answer during the relevant phase deep dive; update this table when resolved.
 | **RQ6** | Does check-in belong on the desk only, or should the doctor's OPD board also expose it? | P4 | **Both** — desk Today + doctor `/dashboard/opd-today` (⋯ → Arrive). Same `patient_checked_in_at`. Desk-only stamps show **Arrived**, not a false lobby Stepped away. |
 | **RQ7** | Do desk-created appointments notify the patient (DM/email) the way bot bookings do? | P4 | **Resolved 2026-08-23.** Walk-ins stay silent. Phone pre-bookings (`booking_origin = booked`) fan out SMS / email / DM via `sendDeskBookingConfirmationToPatient` — same confirmed-time copy as the bot payment DM, without "Payment received". |
 | **RQ8–RQ10** | Token keep vs new; Left vs Cancelled chip; clinic-caused cancel | P5 | Defaults in [`plan-05`](./plan-05-desk-day-ops.md). |
+| **RQ11** | If one login holds more than one job, what UI do they get, and in what order? | Desk prep chrome | **Locked 2026-09-13.** R13–R17. One `/desk`. Filter `vitals → history → internal_labs → papers`. One slot = no stepper; many = Next. `front_desk` is a sibling surface. |
 
 ---
 

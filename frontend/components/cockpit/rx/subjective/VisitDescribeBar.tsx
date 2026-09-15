@@ -67,6 +67,13 @@ import {
   isSpeechRecognitionSupported,
   useSpeechRecognition,
 } from "@/lib/text/use-speech-recognition";
+import { paneIdsFromVisitProposal } from "@/lib/cockpit/visit-parse-pane";
+import { useDestinationFlash } from "@/lib/patient-profile/v3/destination-flash";
+
+export const VISIT_DESCRIBE_ARIA_LABEL = "Describe this visit";
+
+export const VISIT_DESCRIBE_PLACEHOLDER =
+  "Add anything — it goes to the right place. Medicine, test, CC…";
 
 export interface VisitDescribeBarProps {
   token: string;
@@ -407,12 +414,8 @@ export function VisitDescribeBar({
           if (status !== "idle") reset();
         }}
         onKeyDown={handleKeyDown}
-        placeholder={
-          embedded
-            ? "Add or describe anything…"
-            : "Add or describe anything — a vital, a medicine, or the whole visit"
-        }
-        aria-label="Describe this visit"
+        placeholder={VISIT_DESCRIBE_PLACEHOLDER}
+        aria-label={VISIT_DESCRIBE_ARIA_LABEL}
         className={cn(
           "min-w-0 flex-1 rounded-md border border-input bg-background px-3 text-sm outline-none focus-visible:ring-1 focus-visible:ring-ring",
           embedded ? "h-7" : "h-9",
@@ -490,6 +493,14 @@ export function VisitDescribeFormBar({
   const disabled = contentLocked;
   const { dispatch, setField, state } = useRxForm();
   const hidden = useRxHiddenTargets();
+  const { flashPanes } = useDestinationFlash();
+
+  const flashApplied = useCallback(
+    (applied: VisitParseProposalDto) => {
+      flashPanes(paneIdsFromVisitProposal(applied));
+    },
+    [flashPanes],
+  );
 
   const onApplyDeterministic = useCallback(
     (applied: VisitParseProposalDto) => {
@@ -509,8 +520,9 @@ export function VisitDescribeFormBar({
         if (row) dispatch({ type: "ADD_MEDICINE", medicine: row });
       });
       applyVisitProseItems(setField, state.fields, applied.prose);
+      flashApplied(applied);
     },
-    [dispatch, hidden, setField, state.fields]
+    [dispatch, flashApplied, hidden, setField, state.fields]
   );
 
   const onAcceptComplaints = useCallback(
@@ -519,8 +531,9 @@ export function VisitDescribeFormBar({
         const complaint = complaintFromAiParsed(item);
         if (complaint) dispatch({ type: "ADD_COMPLAINT", complaint });
       }
+      if (items.length > 0) flashPanes(["subjective"]);
     },
-    [dispatch]
+    [dispatch, flashPanes]
   );
 
   const onAcceptMedicines = useCallback(
@@ -528,8 +541,9 @@ export function VisitDescribeFormBar({
       for (const row of medicinesFromAiParsed(items)) {
         dispatch({ type: "ADD_MEDICINE", medicine: row });
       }
+      if (items.length > 0) flashPanes(["plan"]);
     },
-    [dispatch]
+    [dispatch, flashPanes]
   );
 
   const onAcceptVitals = useCallback(
@@ -541,8 +555,9 @@ export function VisitDescribeFormBar({
         hidden,
         showHiddenTarget
       );
+      if (items.length > 0) flashPanes(["objective"]);
     },
-    [hidden, setField, state.fields]
+    [flashPanes, hidden, setField, state.fields]
   );
 
   const onAcceptDiagnoses = useCallback(
@@ -554,8 +569,9 @@ export function VisitDescribeFormBar({
         dispatch({ type: "ADD_DIAGNOSIS", diagnosis: row });
         existing = [row, ...existing];
       }
+      if (items.length > 0) flashPanes(["assessment"]);
     },
-    [dispatch, state.fields.diagnoses]
+    [dispatch, flashPanes, state.fields.diagnoses]
   );
 
   const onAcceptInvestigations = useCallback(
@@ -567,15 +583,26 @@ export function VisitDescribeFormBar({
       if (next !== state.fields.investigationsOrders) {
         setField("investigationsOrders", next);
       }
+      if (items.length > 0) flashPanes(["plan"]);
     },
-    [setField, state.fields.investigationsOrders]
+    [flashPanes, setField, state.fields.investigationsOrders]
   );
 
   const onAcceptProse = useCallback(
     (items: VisitProseItem[]) => {
       applyVisitProseItems(setField, state.fields, items);
+      if (items.length > 0) {
+        flashPanes(paneIdsFromVisitProposal({
+          subjective: [],
+          plan: [],
+          vitals: [],
+          assessment: [],
+          investigations: [],
+          prose: items,
+        }));
+      }
     },
-    [setField, state.fields]
+    [flashPanes, setField, state.fields]
   );
 
   const onKeepAsTyped = useCallback((_sourceText: string) => {

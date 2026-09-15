@@ -23,7 +23,7 @@ The single place I look when planning a week. If a thread isn't here, it doesn't
 | L8 | IP assignment from founders | `NEXT` | Print, sign two sets, scan the PDF |
 | L9 | DPDP Act + health-data posture | `NEXT` | Counsel sitting: attestation vs AI-on-transcript (blocks Phase 2) |
 | M1 | Meta — data deletion callback | `ACTIVE` | Optional Send Request if this Facebook account ever connected Halo Aid |
-| M2 | Meta — business verification | `WAITING` | Wait. Recheck Security Centre Mon 14 Sep. Do not restart. |
+| M2 | Meta — business verification | `WAITING` | Wait. Recheck Security Centre Tue 15 Sep. Do not restart while In review. |
 | M3 | Meta — app review submission | `NEXT` | Record one screencast per requested permission |
 | P1 | Desk / receptionist | `ACTIVE` | Review history-link spec; promote p1; then Opus `hl-01` |
 | P2 | Cockpit / EHR | `PARKED` | — |
@@ -31,7 +31,7 @@ The single place I look when planning a week. If a thread isn't here, it doesn't
 | P4 | Billing + usage metering | `PARKED` | — |
 | G1 | First paying clinic | `PARKED` | — |
 | G2 | Pricing | `NEXT` | Decide a number I can say out loud without flinching |
-| G3 | Cost-cut stack (Gate 1) | `ACTIVE` | Watch one consult transcribe off raw tracks, then turn on `RECORDING_COMPOSE_ON_DEMAND` |
+| G3 | Cost-cut stack (Gate 1) | `ACTIVE` | Watch one consult (raw STT + replay), then disable the Twilio compose hook |
 | O1 | `capture/inbox.md` has gone feral | `NEXT` | Triage the 375 lines into `capture/features/` |
 
 ---
@@ -169,13 +169,68 @@ Callback URL is in Basic Settings. Live POST returns `200` + `{ url, confirmatio
 **Next action:** optional — Facebook → Apps and Websites → Remove Halo Aid → Send Request, only if this account ever connected the app. Otherwise M1 is done enough until the Express backend is hosted.
 
 ### M2 · Business verification — `WAITING`
-Submitted **Fri 28 Aug 2026** for HALO AID PRIVATE LIMITED (use case: app / Meta for Developers). Meta AI on **Tue 8 Sep** confirmed the same case: status **Pending**, next step **Awaiting Meta review**, no open document request. Still inside the **14 working day** window (~17 Sep). Docs: COI + unlocked TAN. Website given: `https://haloaid.com`. Portfolio ID: `1014532090915807`.
+**Try 2 of N — In review** (submitted Sun 13 Sep 2026 ~19:50 IST). Meta UI: ~2 working days. Official outer window still up to 14 working days. Portfolio `1014532090915807` (Halo-Aid). Use case: **App requires access to permissions on Meta for Developers**. Do not start Access verification (Tech Provider). 2FA postponed.
 
-Business Info showing no address / phone / website / location while In review is expected — Meta blanks those fields until the review finishes. Do not fill them in, and do not restart, resubmit, or click **Start business verification** on the Access Verification page. That button is the same queue you are already in.
+Checked live **Sun 13 Sep**: `https://haloaid.com` and `https://www.haloaid.com` both show the footer `HALO AID PRIVATE LIMITED (CIN U62090PB2026PTC069487)` · `Gali No. 10, Shiv Nagar, Batala, Gurdaspur - 143505, Punjab, India` · `founder@haloaid.com`. Privacy / Terms already had the same line.
 
-**Access verification** (Tech Provider) is a later step. “Start verification” is correctly greyed out until this business is verified. Deadline shown on the app page: `06/11/2026` (Meta’s US UI usually means 11 Jun — already past as of 7 Sep; if the UI is localised it is 6 Nov). Either way, do not start it until M2 clears.
+Meta does not publish a hard retry cap for this Security Centre flow. Do not start Try 3 while In review. If Try 2 fails, **do not resubmit the same pack** — change something first (see below).
 
-**Next action:** Wait. Meta AI (Tue 8 Sep) confirmed status **Pending**, submitted 28 Aug, next step **Awaiting Meta review**, no document request. Recheck Security Centre **Mon 14 Sep**. If still Pending after ~14 working days (~17 Sep), chase again. Do not restart. 2FA is postponed.
+#### Try 1 — rejected
+- Submitted **Fri 28 Aug 2026**. Status Pending until rejected **Sun 13 Sep 2026** (~16 calendar days / ~10–11 working days).
+- Reason shown: “Couldn’t be verified.” No field-level note.
+- Docs: COI + unlocked **TAN**. Website given: `https://haloaid.com`.
+- Site timing: week notes still said **domain only / do not deploy the app** (Mon 24). Privacy / terms / data-deletion recorded live **29 Aug** — the day *after* this submit. A full marketing homepage is later still. Meta could have opened a parked or empty `haloaid.com` on Try 1.
+- Even after pages existed, the public homepage said “Halo Aid” only; legal name lived on `/privacy` and `/terms`.
+- Business Info was blank after the review (Meta clears those fields). That blank page was not itself the fail.
+
+#### What we changed before Try 2
+- Business Info refilled (legal name, Batala address, phone, site, PAN `AAICH9055P`). Primary business location left empty on purpose.
+- Public footer shipped (commit `1c74207` on `main`) and confirmed live on apex + `www`.
+- Dropped TAN. Email confirm used domain mail, not Gmail.
+
+#### Try 2 — In review — form values as typed
+| Field | Value |
+|---|---|
+| Business type | Private company (not Corporation / sole prop / partnership / institution) |
+| Tax ID / registration (lookup) | CIN `U62090PB2026PTC069487` |
+| Business name | `HALO AID PRIVATE LIMITED` |
+| Alternative / trade name | `Halo Aid` |
+| Street | `Gali No. 10, Shiv Nagar` |
+| Street 2 | (blank) |
+| Town / city | `Batala` |
+| County / region | `Punjab` |
+| PIN | `143505` |
+| Country | India |
+| Phone | `+91 8264602737` (`IN +91` + 10 digits; do not add a trailing 0) |
+| Website | `https://haloaid.com` |
+| Business Info tax ID | Company PAN `AAICH9055P` |
+| Connection confirm | Email `founder@haloaid.com` — **done** |
+| Legal-name doc | Type **Certificate of incorporation** · file `COI-U62090PB2026PTC069487-HA.pdf` |
+| Address / phone doc | Type **Certificate/articles of incorporation** · **same COI again** (not PAN) |
+| Address-slot types offered | Business registration/licence · **Business tax document** (this is the PAN slot) · Certificate/articles of incorporation · Change of name · Utility bill |
+| Registry match | None — Meta asked for uploads |
+
+Opened the PDFs **Sun 13 Sep** (after submit). What is actually printed:
+
+| File | Name | Address | Phone `8264602737` | Use as |
+|---|---|---|---|---|
+| COI | yes | yes — “Mailing Address… HALO AID PRIVATE LIMITED, Gali No. 10, Shiv Nagar, Batala, Batala, Gurdaspur-143505, Punjab” | no | Legal name, and it *can* cover address |
+| e-PAN `AAICH9055P` | yes | **no** | no | Tax ID only. **Cannot** satisfy the address/phone slot |
+| TAN letter `JLDH04909C` | yes | yes — Shiv Nagar, Gali No. 10, Batala, Gurdaspur-143505, Punjab | **yes** | Best address/phone file we have |
+
+Known thin spot on Try 2: two copies of the COI. Allowed, and the COI does carry name + RO. A reviewer can still read it as one document. PAN would not have fixed the address slot. TAN would have — it is the only PDF with name + address + the phone we typed. Try 1 already used COI + TAN and still failed (no public footer / blank Business Info then).
+
+#### If Try 2 fails — change the pack before Try 3
+Do **not** upload PAN for address. Do **not** send COI + COI again.
+
+1. Open **View details** / Security Centre. Paste Meta’s sentence into this track before touching the form.
+2. Legal name: COI as **Certificate of incorporation**.
+3. Address/phone: unlocked **TAN** (`TAN-JLDH04909C-unlocked-HA.pdf` or the unlocked TAN in Important Docs) as **Business tax document**. That letter has name + Batala line + `TEL NO. 8264602737`.
+4. Stronger later, do not invent: GST (L4) or company bank letter (L1). No personal utility bill. No e-PAN for the address box.
+5. After a second rejection, open a Meta Business support case and ask which field failed. Do not burn Try 3 blind.
+6. Recheck footer still live on both hosts before any resubmit.
+
+**Next action:** Wait. Recheck Security Centre **Tue 15 Sep**. Do not restart while In review.
 
 ### M3 · App review submission — `NEXT`
 Permissions needed: the `instagram_business_*` scopes and the `pages_*` scopes for messaging, plus Advanced Access. Each requires a screencast that shows a real user completing the flow, and a written justification.
@@ -236,15 +291,17 @@ Repo default is now `gpt-5.6-luna`. Gate 3 (15 Feb–1 Aug): 2.38M tokens still 
 
 **Step 7 is code-complete as of 2026-09-04.** Landed: the `twilio-recordings.ts` wrapper; the `twilio-recording:<RT…>` artifact kind with its archival and DPDP-erasure delete routes; raw-track registration at `room-ended` plus a worker re-sweep; a local `ffmpeg-static` mix feeding STT; and `compositions.create` at play time, guarded against double-billing by Twilio's own composition list. The transcode tests run the real binary against real Matroska fixtures.
 
-**Rollout sitting 1 — 2026-09-08.** `VOICE_TRANSCRIPTION_USE_RAW_TRACKS=true` is set in local `.env`. Repo default and production stay **off**. `RECORDING_COMPOSE_ON_DEMAND` stays off. The hook stays on. Restart `npm run dev` so the worker picks the flag up.
+**Rollout sitting 1 — 2026-09-08.** `VOICE_TRANSCRIPTION_USE_RAW_TRACKS=true` in local `.env`.
 
-What to check on the next real consult (runbook): no `audio lookup threw`; `audio-transcode: tracks mixed` with `trackCount` ≥ 2 for a two-party call; transcript covers both speakers; `tick complete` logs `useRawTracks: true`. Roll back by setting the flag `false`.
+**Rollout sitting 2 — 2026-09-12.** `RECORDING_COMPOSE_ON_DEMAND=true` in local `.env`. Repo defaults stay **off**. The hook is **still on**, so this flag is a no-op on hook-composed sessions — it is staged so it is already live when the hook comes off. Restart `npm run dev` so both flags load.
+
+What to check on the next real consult (runbook): no `audio lookup threw`; `audio-transcode: tracks mixed` with `trackCount` ≥ 2 for a two-party call; transcript covers both speakers; `tick complete` logs `useRawTracks: true`. Replay should still mint immediately while the hook is on. Roll back either flag by setting it `false`.
 
 One behaviour change to expect once the hook is off: the first press of play on a new consult returns "This recording is being prepared", because composing is asynchronous. Consults recorded before the flip already have a `CJ…` and are unaffected.
 
 Steps 8 and 9 were wrongly bundled with 7. **9 does not need LiveKit** (transcode locally, push to R2, delete Twilio's copy) but does need a Cloudflare DPA since R2 would hold PHI. **8 is blocked on economics, not engineering**: LiveKit Ship has no BAA and Scale is $500/mo ≈ ₹47,750, which exceeds the entire monthly saving until roughly 1,600 consults/month.
 
-**Next action:** do one voice/video consult and confirm the raw-track transcript (both speakers, `useRawTracks: true` on `tick complete`). Then sitting 2: `RECORDING_COMPOSE_ON_DEMAND=true`. Do not disable the hook. OTP parked.
+**Next action:** one voice/video consult — confirm raw-track STT, then disable hook `HKbe336c348bce4c81907f6a3c55844a82` (`haloaid-consult-audio`). Do not disable before that consult. OTP parked.
 
 ---
 

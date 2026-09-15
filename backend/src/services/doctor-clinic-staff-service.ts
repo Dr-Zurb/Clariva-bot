@@ -10,6 +10,7 @@ import {
   deleteClinicStaffLink,
   listClinicStaffRowsForDoctor,
   setClinicStaffStatusById,
+  updateClinicStaffCapabilities,
   updateClinicStaffDisplayName,
 } from './clinic-staff-service';
 import { provisionClinicStaff } from './clinic-staff-provision-service';
@@ -22,6 +23,7 @@ export type DoctorClinicStaffItem = {
   displayName: string | null;
   role: string;
   status: 'active' | 'suspended';
+  capabilities: string[];
   createdAt: string;
 };
 
@@ -44,6 +46,7 @@ async function toItem(
     display_name: string | null;
     role: string;
     status: 'active' | 'suspended';
+    capabilities?: string[] | null;
     created_at: string;
   },
   staffEmail?: string | null
@@ -55,6 +58,7 @@ async function toItem(
     displayName: row.display_name,
     role: row.role,
     status: row.status,
+    capabilities: row.capabilities ?? ['front_desk', 'vitals', 'history', 'internal_labs', 'papers'],
     createdAt: row.created_at,
   };
 }
@@ -83,7 +87,7 @@ export async function listDoctorClinicStaff(
 
 export async function provisionDoctorClinicStaff(
   doctorId: string,
-  input: { email: string; displayName?: string },
+  input: { email: string; displayName?: string; capabilities?: string[] },
   correlationId: string
 ): Promise<{
   item: DoctorClinicStaffItem;
@@ -91,7 +95,12 @@ export async function provisionDoctorClinicStaff(
   temporaryPassword?: string;
 }> {
   const result = await provisionClinicStaff(
-    { email: input.email, doctorId, displayName: input.displayName },
+    {
+      email: input.email,
+      doctorId,
+      displayName: input.displayName,
+      capabilities: input.capabilities,
+    },
     correlationId
   );
 
@@ -117,6 +126,7 @@ export async function provisionDoctorClinicStaff(
       displayName: input.displayName?.trim() || null,
       role: result.link.role,
       status: result.link.status,
+      capabilities: result.link.capabilities,
       createdAt: new Date().toISOString(),
     },
   };
@@ -138,6 +148,26 @@ export async function setDoctorClinicStaffStatus(
     'clinic_staff',
     link.id,
     ['status']
+  );
+  return link;
+}
+
+export async function updateDoctorClinicStaffCapabilities(
+  doctorId: string,
+  id: string,
+  capabilities: string[],
+  correlationId: string
+): Promise<ClinicStaffLink> {
+  const link = await updateClinicStaffCapabilities(id, capabilities, correlationId, {
+    doctorId,
+  });
+  await logDataModification(
+    correlationId,
+    doctorId,
+    'update',
+    'clinic_staff',
+    link.id,
+    ['capabilities']
   );
   return link;
 }

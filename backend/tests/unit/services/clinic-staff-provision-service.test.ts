@@ -8,6 +8,7 @@ const upsertClinicStaffLink = jest.fn<(...args: unknown[]) => Promise<unknown>>(
 const setClinicStaffStatus = jest.fn<(...args: unknown[]) => Promise<unknown>>();
 const findStaffLink = jest.fn<(...args: unknown[]) => Promise<unknown>>();
 const findActiveStaffForDoctor = jest.fn<(...args: unknown[]) => Promise<unknown>>();
+const listActiveStaffForDoctor = jest.fn<(...args: unknown[]) => Promise<unknown>>();
 
 jest.mock('../../../src/config/database', () => ({
   getSupabaseAdminClient: jest.fn(() => ({
@@ -20,6 +21,7 @@ jest.mock('../../../src/services/clinic-staff-service', () => ({
   setClinicStaffStatus: (...args: unknown[]) => setClinicStaffStatus(...args),
   findStaffLink: (...args: unknown[]) => findStaffLink(...args),
   findActiveStaffForDoctor: (...args: unknown[]) => findActiveStaffForDoctor(...args),
+  listActiveStaffForDoctor: (...args: unknown[]) => listActiveStaffForDoctor(...args),
 }));
 
 import { provisionClinicStaff } from '../../../src/services/clinic-staff-provision-service';
@@ -35,6 +37,7 @@ const LINK = {
   staffUserId: STAFF_ID,
   role: 'receptionist',
   status: 'active' as const,
+  capabilities: ['front_desk', 'previsit'],
 };
 
 function user(overrides: Partial<User> = {}): User {
@@ -54,6 +57,7 @@ beforeEach(() => {
   upsertClinicStaffLink.mockResolvedValue(LINK);
   findStaffLink.mockResolvedValue(null);
   findActiveStaffForDoctor.mockResolvedValue(null);
+  listActiveStaffForDoctor.mockResolvedValue([]);
   listUsers.mockResolvedValue({ data: { users: [] }, error: null });
 });
 
@@ -82,6 +86,7 @@ describe('provisionClinicStaff', () => {
         staffUserId: STAFF_ID,
         displayName: 'Front desk',
         status: 'active',
+        capabilities: ['front_desk', 'vitals', 'history', 'internal_labs', 'papers'],
       },
       'cid'
     );
@@ -126,10 +131,12 @@ describe('provisionClinicStaff', () => {
       data: { user: user({ id: OTHER_STAFF, email: 'newdesk@clinic.test' }) },
       error: null,
     });
-    findActiveStaffForDoctor.mockResolvedValue({
-      ...LINK,
-      staffUserId: OTHER_STAFF,
-    });
+    listActiveStaffForDoctor.mockResolvedValue([
+      {
+        ...LINK,
+        staffUserId: OTHER_STAFF,
+      },
+    ]);
 
     const result = await provisionClinicStaff(
       { email: 'newdesk@clinic.test', doctorId: DOCTOR_ID },
@@ -141,6 +148,38 @@ describe('provisionClinicStaff', () => {
       expect.objectContaining({
         doctorId: DOCTOR_ID,
         status: 'suspended',
+      }),
+      'cid'
+    );
+  });
+
+  it('activates a prep-only login beside an active front-desk seat', async () => {
+    createUser.mockResolvedValue({
+      data: { user: user({ id: OTHER_STAFF, email: 'assist@clinic.test' }) },
+      error: null,
+    });
+    listActiveStaffForDoctor.mockResolvedValue([
+      {
+        ...LINK,
+        capabilities: ['front_desk'],
+      },
+    ]);
+
+    const result = await provisionClinicStaff(
+      {
+        email: 'assist@clinic.test',
+        doctorId: DOCTOR_ID,
+        capabilities: ['previsit'],
+      },
+      'cid'
+    );
+
+    expect(result.created).toBe(true);
+    expect(upsertClinicStaffLink).toHaveBeenCalledWith(
+      expect.objectContaining({
+        doctorId: DOCTOR_ID,
+        status: 'active',
+        capabilities: ['vitals', 'history', 'internal_labs', 'papers'],
       }),
       'cid'
     );

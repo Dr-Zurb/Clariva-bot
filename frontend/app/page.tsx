@@ -6,11 +6,13 @@ import { Hero } from "@/components/marketing/Hero";
 import { HowItWorks } from "@/components/marketing/HowItWorks";
 import { MarketingFooter } from "@/components/marketing/MarketingFooter";
 import { MarketingNav } from "@/components/marketing/MarketingNav";
+import { ProofSection } from "@/components/marketing/ProofSection";
+import { ThesisBand } from "@/components/marketing/ThesisBand";
 import { TrustBand } from "@/components/marketing/TrustBand";
 
-const TITLE = "Halo Aid — Turn patient DMs into booked consultations";
+const TITLE = "Halo Aid — Turn your audience into your practice";
 const DESCRIPTION =
-  "Halo Aid helps doctors turn Instagram DMs and comments into booked consultations. Capture, reply, book, and consult — all in one place.";
+  "Bookings, teleconsults, OPD, records, and prescriptions in one place. Turn Instagram DMs into visits — or just run your clinic.";
 
 // `title.absolute` keeps the landing title clean (no "· Halo Aid" template
 // suffix) since the headline already leads with the brand name.
@@ -38,8 +40,10 @@ export default function HomePage() {
       <MarketingNav />
       <main className="flex-1">
         <Hero />
+        <ThesisBand />
         <HowItWorks />
         <FeatureGrid />
+        <ProofSection />
         <TrustBand />
         <FinalCtaBand />
       </main>

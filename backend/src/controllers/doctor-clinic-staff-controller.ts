@@ -1,5 +1,5 @@
 /**
- * Doctor Settings — front-desk staff (many logins, one active).
+ * Doctor Settings — front-desk staff (many logins; one seat per job).
  * JWT doctor only (no allowStaff). Never logs email / display_name.
  */
 
@@ -13,12 +13,23 @@ import {
   listDoctorClinicStaff,
   provisionDoctorClinicStaff,
   setDoctorClinicStaffStatus,
+  updateDoctorClinicStaffCapabilities,
   updateDoctorClinicStaffDisplayName,
 } from '../services/doctor-clinic-staff-service';
+import {
+  STAFF_CAPABILITIES,
+  normalizeStaffCapabilities,
+} from '../auth/staff-capabilities';
+
+const capabilitiesSchema = z.preprocess((value) => {
+  if (value === undefined || value === null) return value;
+  return normalizeStaffCapabilities(value);
+}, z.array(z.enum(STAFF_CAPABILITIES)).min(1));
 
 const provisionBodySchema = z.object({
   email: z.string().email().max(254).transform((s) => s.trim().toLowerCase()),
   displayName: z.string().trim().max(80).optional(),
+  capabilities: capabilitiesSchema.optional(),
 });
 
 const staffIdParamsSchema = z.object({
@@ -29,10 +40,17 @@ const patchBodySchema = z
   .object({
     status: z.enum(['active', 'suspended']).optional(),
     displayName: z.string().trim().max(80).optional(),
+    capabilities: capabilitiesSchema.optional(),
   })
-  .refine((body) => body.status !== undefined || body.displayName !== undefined, {
-    message: 'Nothing to update',
-  });
+  .refine(
+    (body) =>
+      body.status !== undefined ||
+      body.displayName !== undefined ||
+      body.capabilities !== undefined,
+    {
+      message: 'Nothing to update',
+    }
+  );
 
 function requireDoctorId(req: Request): string {
   const id = req.user?.id;
@@ -84,6 +102,14 @@ export const patchDoctorClinicStaffHandler = asyncHandler(
         doctorId,
         params.data.id,
         body.data.status,
+        cid
+      );
+    }
+    if (body.data.capabilities !== undefined) {
+      link = await updateDoctorClinicStaffCapabilities(
+        doctorId,
+        params.data.id,
+        body.data.capabilities,
         cid
       );
     }

@@ -5,10 +5,18 @@
  * there is no lookup cache. Never log display_name (DL-9).
  */
 
+import {
+  DEFAULT_STAFF_CAPABILITIES,
+  normalizeStaffCapabilities,
+  roleForCapabilities,
+  seatsOverlap,
+} from '../auth/staff-capabilities';
 import { getSupabaseAdminClient } from '../config/database';
 import type { ClinicStaffLink } from '../types/clinic-staff';
 import { handleSupabaseError } from '../utils/db-helpers';
 import { ConflictError, InternalError, NotFoundError } from '../utils/errors';
+
+const LINK_COLUMNS = 'id, doctor_id, staff_user_id, role, status, capabilities';
 
 type ClinicStaffRow = {
   id: string;
@@ -16,6 +24,7 @@ type ClinicStaffRow = {
   staff_user_id: string;
   role: string;
   status: 'active' | 'suspended';
+  capabilities?: string[] | null;
 };
 
 export type ClinicStaffAdminRow = ClinicStaffRow & {
@@ -30,6 +39,7 @@ function toLink(row: ClinicStaffRow): ClinicStaffLink {
     staffUserId: row.staff_user_id,
     role: row.role,
     status: row.status,
+    capabilities: normalizeStaffCapabilities(row.capabilities ?? DEFAULT_STAFF_CAPABILITIES),
   };
 }
 
@@ -48,7 +58,7 @@ export async function findStaffLink(
 
   const { data, error } = await admin
     .from('clinic_staff')
-    .select('id, doctor_id, staff_user_id, role, status')
+    .select(LINK_COLUMNS)
     .eq('staff_user_id', staffUserId)
     .maybeSingle();
 
@@ -63,10 +73,10 @@ export async function findStaffLink(
   return toLink(data as ClinicStaffRow);
 }
 
-export async function findActiveStaffForDoctor(
+export async function listActiveStaffForDoctor(
   doctorId: string,
   correlationId: string
-): Promise<ClinicStaffLink | null> {
+): Promise<ClinicStaffLink[]> {
   const admin = getSupabaseAdminClient();
   if (!admin) {
     throw new InternalError('Service role client not available');
@@ -74,20 +84,24 @@ export async function findActiveStaffForDoctor(
 
   const { data, error } = await admin
     .from('clinic_staff')
-    .select('id, doctor_id, staff_user_id, role, status')
+    .select(LINK_COLUMNS)
     .eq('doctor_id', doctorId)
-    .eq('status', 'active')
-    .maybeSingle();
+    .eq('status', 'active');
 
   if (error) {
     handleSupabaseError(error, correlationId);
   }
 
-  if (!data) {
-    return null;
-  }
+  return ((data ?? []) as ClinicStaffRow[]).map(toLink);
+}
 
-  return toLink(data as ClinicStaffRow);
+/** First active front_desk seat, else first active row. */
+export async function findActiveStaffForDoctor(
+  doctorId: string,
+  correlationId: string
+): Promise<ClinicStaffLink | null> {
+  const rows = await listActiveStaffForDoctor(doctorId, correlationId);
+  return rows.find((row) => row.capabilities.includes('front_desk')) ?? rows[0] ?? null;
 }
 
 export async function listClinicStaffRowsForDoctor(
@@ -101,7 +115,7 @@ export async function listClinicStaffRowsForDoctor(
 
   const { data, error } = await admin
     .from('clinic_staff')
-    .select('id, doctor_id, staff_user_id, role, status, display_name, created_at')
+    .select('id, doctor_id, staff_user_id, role, status, capabilities, display_name, created_at')
     .eq('doctor_id', doctorId)
     .order('created_at', { ascending: false });
 
@@ -112,9 +126,10 @@ export async function listClinicStaffRowsForDoctor(
   return (data ?? []) as ClinicStaffAdminRow[];
 }
 
-async function suspendOtherActiveStaff(
+async function suspendConflictingActiveStaff(
   doctorId: string,
   keepStaffUserId: string,
+  incomingCapabilities: readonly string[],
   correlationId: string
 ): Promise<void> {
   const admin = getSupabaseAdminClient();
@@ -122,19 +137,18 @@ async function suspendOtherActiveStaff(
     throw new InternalError('Service role client not available');
   }
 
-  const active = await findActiveStaffForDoctor(doctorId, correlationId);
-  if (!active || active.staffUserId === keepStaffUserId) {
-    return;
-  }
-
-  const { error } = await admin
-    .from('clinic_staff')
-    .update({ status: 'suspended' })
-    .eq('id', active.id)
-    .eq('status', 'active');
-
-  if (error) {
-    handleSupabaseError(error, correlationId);
+  const actives = await listActiveStaffForDoctor(doctorId, correlationId);
+  for (const other of actives) {
+    if (other.staffUserId === keepStaffUserId) continue;
+    if (!seatsOverlap(other.capabilities, incomingCapabilities)) continue;
+    const { error } = await admin
+      .from('clinic_staff')
+      .update({ status: 'suspended' })
+      .eq('id', other.id)
+      .eq('status', 'active');
+    if (error) {
+      handleSupabaseError(error, correlationId);
+    }
   }
 }
 
@@ -144,6 +158,7 @@ export async function upsertClinicStaffLink(
     staffUserId: string;
     displayName?: string;
     status?: 'active' | 'suspended';
+    capabilities?: string[];
   },
   correlationId: string
 ): Promise<ClinicStaffLink> {
@@ -157,25 +172,36 @@ export async function upsertClinicStaffLink(
     throw new ConflictError('Staff account is already linked to another practice');
   }
 
+  const capabilities = normalizeStaffCapabilities(
+    input.capabilities ?? existing?.capabilities
+  );
+
   let status = input.status;
   if (!status) {
     if (existing && existing.doctorId === input.doctorId) {
       status = existing.status;
     } else {
-      const active = await findActiveStaffForDoctor(input.doctorId, correlationId);
-      status = active ? 'suspended' : 'active';
+      const actives = await listActiveStaffForDoctor(input.doctorId, correlationId);
+      const conflict = actives.some((row) => seatsOverlap(row.capabilities, capabilities));
+      status = conflict ? 'suspended' : 'active';
     }
   }
 
   if (status === 'active') {
-    await suspendOtherActiveStaff(input.doctorId, input.staffUserId, correlationId);
+    await suspendConflictingActiveStaff(
+      input.doctorId,
+      input.staffUserId,
+      capabilities,
+      correlationId
+    );
   }
 
   const payload: Record<string, unknown> = {
     doctor_id: input.doctorId,
     staff_user_id: input.staffUserId,
-    role: 'receptionist',
+    role: roleForCapabilities(capabilities),
     status,
+    capabilities,
   };
   if (input.displayName !== undefined) {
     payload.display_name = input.displayName;
@@ -184,7 +210,7 @@ export async function upsertClinicStaffLink(
   const { data, error } = await admin
     .from('clinic_staff')
     .upsert(payload, { onConflict: 'staff_user_id' })
-    .select('id, doctor_id, staff_user_id, role, status')
+    .select(LINK_COLUMNS)
     .single();
 
   if (error || !data) {
@@ -209,14 +235,19 @@ export async function setClinicStaffStatus(
     if (!existing) {
       throw new NotFoundError('Staff account is not linked to a practice');
     }
-    await suspendOtherActiveStaff(existing.doctorId, staffUserId, correlationId);
+    await suspendConflictingActiveStaff(
+      existing.doctorId,
+      staffUserId,
+      existing.capabilities,
+      correlationId
+    );
   }
 
   const { data, error } = await admin
     .from('clinic_staff')
     .update({ status })
     .eq('staff_user_id', staffUserId)
-    .select('id, doctor_id, staff_user_id, role, status')
+    .select(LINK_COLUMNS)
     .maybeSingle();
 
   if (error) {
@@ -241,7 +272,7 @@ export async function listClinicStaffRows(
 
   const { data, error } = await admin
     .from('clinic_staff')
-    .select('id, doctor_id, staff_user_id, role, status, display_name, created_at')
+    .select('id, doctor_id, staff_user_id, role, status, capabilities, display_name, created_at')
     .order('created_at', { ascending: false });
 
   if (error) {
@@ -264,7 +295,7 @@ export async function setClinicStaffStatusById(
 
   const { data: current, error: readError } = await admin
     .from('clinic_staff')
-    .select('id, doctor_id, staff_user_id, role, status')
+    .select(LINK_COLUMNS)
     .eq('id', id)
     .maybeSingle();
 
@@ -278,7 +309,12 @@ export async function setClinicStaffStatusById(
 
   const row = current as ClinicStaffRow;
   if (status === 'active') {
-    await suspendOtherActiveStaff(row.doctor_id, row.staff_user_id, correlationId);
+    await suspendConflictingActiveStaff(
+      row.doctor_id,
+      row.staff_user_id,
+      toLink(row).capabilities,
+      correlationId
+    );
   }
 
   let query = admin
@@ -290,7 +326,7 @@ export async function setClinicStaffStatusById(
   }
 
   const { data, error } = await query
-    .select('id, doctor_id, staff_user_id, role, status')
+    .select(LINK_COLUMNS)
     .maybeSingle();
 
   if (error) {
@@ -301,6 +337,55 @@ export async function setClinicStaffStatusById(
     throw new NotFoundError('Staff account is not linked to a practice');
   }
 
+  return toLink(data as ClinicStaffRow);
+}
+
+export async function updateClinicStaffCapabilities(
+  id: string,
+  capabilities: string[],
+  correlationId: string,
+  opts?: { doctorId: string }
+): Promise<ClinicStaffLink> {
+  const admin = getSupabaseAdminClient();
+  if (!admin) {
+    throw new InternalError('Service role client not available');
+  }
+
+  const next = normalizeStaffCapabilities(capabilities);
+  const { data: current, error: readError } = await admin
+    .from('clinic_staff')
+    .select(LINK_COLUMNS)
+    .eq('id', id)
+    .maybeSingle();
+
+  if (readError) {
+    handleSupabaseError(readError, correlationId);
+  }
+
+  if (!current || (opts?.doctorId && (current as ClinicStaffRow).doctor_id !== opts.doctorId)) {
+    throw new NotFoundError('Staff account is not linked to a practice');
+  }
+
+  const row = current as ClinicStaffRow;
+  if (row.status === 'active') {
+    await suspendConflictingActiveStaff(row.doctor_id, row.staff_user_id, next, correlationId);
+  }
+
+  let query = admin
+    .from('clinic_staff')
+    .update({ capabilities: next, role: roleForCapabilities(next) })
+    .eq('id', id);
+  if (opts?.doctorId) {
+    query = query.eq('doctor_id', opts.doctorId);
+  }
+
+  const { data, error } = await query.select(LINK_COLUMNS).maybeSingle();
+  if (error) {
+    handleSupabaseError(error, correlationId);
+  }
+  if (!data) {
+    throw new NotFoundError('Staff account is not linked to a practice');
+  }
   return toLink(data as ClinicStaffRow);
 }
 
@@ -317,7 +402,7 @@ export async function updateClinicStaffDisplayName(
 
   const { data: current, error: readError } = await admin
     .from('clinic_staff')
-    .select('id, doctor_id, staff_user_id, role, status')
+    .select(LINK_COLUMNS)
     .eq('id', id)
     .maybeSingle();
 
@@ -338,7 +423,7 @@ export async function updateClinicStaffDisplayName(
   }
 
   const { data, error } = await query
-    .select('id, doctor_id, staff_user_id, role, status')
+    .select(LINK_COLUMNS)
     .maybeSingle();
 
   if (error) {

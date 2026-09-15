@@ -245,6 +245,10 @@ export const COCKPIT_TEMPLATE_OVERRIDE_VALUES = [
 ] as const;
 export type CockpitTemplateOverride = (typeof COCKPIT_TEMPLATE_OVERRIDE_VALUES)[number];
 
+/** clinic-path P2 (migration 232). Keep in sync with the CHECK constraint. */
+export const SOCIAL_ENQUIRIES_VALUES = ['yes', 'not_yet'] as const;
+export type SocialEnquiries = (typeof SOCIAL_ENQUIRIES_VALUES)[number];
+
 export interface DoctorSettingsRow {
   doctor_id: string;
   /**
@@ -271,6 +275,11 @@ export interface DoctorSettingsRow {
   booking_buffer_minutes: number | null;
   welcome_message: string | null;
   specialty: string | null;
+  /**
+   * clinic-path P2 (migration 232): whether patients message this doctor on
+   * Instagram or Facebook. `yes` keeps Instagram required for go-live.
+   */
+  social_enquiries: SocialEnquiries;
   address_summary: string | null;
   consultation_types: string | null;
   /**

@@ -40,10 +40,7 @@ import {
   updateSessionStatus,
 } from './consultation-session-service';
 import type { AppointmentConsultationSessionSummary } from './consultation-session-service';
-import {
-  generateConsultationToken,
-  verifyConsultationToken,
-} from '../utils/consultation-token';
+import { generateConsultationToken, verifyConsultationToken } from '../utils/consultation-token';
 import {
   sendConsultationLinkToPatient,
   sendConsultationReadyToPatient,
@@ -67,6 +64,11 @@ import { assertSlotJoinAllowedForPatient } from './opd/opd-policy-service';
 import { recordOpdBookingTotal } from './opd/opd-metrics';
 import { syncCareEpisodeLifecycleOnAppointmentCompleted } from './care-episode-service';
 import { ensurePatientMrnIfEligible } from './patient-service';
+import {
+  deskPrepFlagsFromEmbeds,
+  isDeskPrepRelationError,
+  rowHasDeskPrepEmbeds,
+} from './desk-prep-flags';
 
 const SLOT_INTERVAL_MS = env.SLOT_INTERVAL_MINUTES * 60 * 1000;
 
@@ -100,9 +102,7 @@ async function enrichAppointmentWithSession(appointment: Appointment): Promise<A
   return attachConsultationSession(appointment, summary);
 }
 
-async function enrichAppointmentsWithSessions(
-  appointments: Appointment[]
-): Promise<Appointment[]> {
+async function enrichAppointmentsWithSessions(appointments: Appointment[]): Promise<Appointment[]> {
   if (appointments.length === 0) return appointments;
   const ids = appointments.map((a) => a.id);
   const summaries = await findLatestAppointmentSessionSummariesBulk(ids);
@@ -216,8 +216,8 @@ interface EmbeddedOpdQueueJoin {
 function enrichRowWithDemographics(row: Record<string, unknown>): Appointment {
   const rawPatient = row.patient as EmbeddedPatientJoin | EmbeddedPatientJoin[] | null | undefined;
   const patientRow: EmbeddedPatientJoin | null = Array.isArray(rawPatient)
-    ? rawPatient[0] ?? null
-    : rawPatient ?? null;
+    ? (rawPatient[0] ?? null)
+    : (rawPatient ?? null);
 
   // CS-03: opd_queue_entries is one-to-many with appointments at the
   // PostgREST schema level (the FK lives on the child), so the embed comes
@@ -233,8 +233,8 @@ function enrichRowWithDemographics(row: Record<string, unknown>): Appointment {
     | null
     | undefined;
   const opdEntry: EmbeddedOpdQueueJoin | null = Array.isArray(rawOpdEntry)
-    ? rawOpdEntry[rawOpdEntry.length - 1] ?? null
-    : rawOpdEntry ?? null;
+    ? (rawOpdEntry[rawOpdEntry.length - 1] ?? null)
+    : (rawOpdEntry ?? null);
 
   // CS-03 (post-fix): `opd_queue_event_type` is projected from the *presence*
   // of an `opd_queue_entries` row, not from a real column (the column does
@@ -253,8 +253,14 @@ function enrichRowWithDemographics(row: Record<string, unknown>): Appointment {
     opd_queue_event_type: opdEntry ? 'token' : null,
     opd_token_number: opdEntry?.token_number ?? null,
   };
+  if (rowHasDeskPrepEmbeds(row)) {
+    Object.assign(enriched, deskPrepFlagsFromEmbeds(row));
+  }
   delete enriched.patient;
   delete enriched.opd_queue_entry;
+  delete enriched.patient_vitals;
+  delete enriched.patient_history_submissions;
+  delete enriched.visit_documents;
   return enriched as unknown as Appointment;
 }
 
@@ -289,20 +295,24 @@ function enrichRowsWithDemographics(rows: Record<string, unknown>[]): Appointmen
 const APPOINTMENT_SELECT_WITH_DEMOGRAPHICS =
   `*, patient:patients(date_of_birth, gender, age, guardian_name, guardian_relation, medical_record_number), opd_queue_entry:opd_queue_entries(token_number)` as const;
 
+/** Dated list only — presence embeds, no PHI columns. */
+const APPOINTMENT_SELECT_WITH_DESK_PREP =
+  `${APPOINTMENT_SELECT_WITH_DEMOGRAPHICS}, patient_vitals(id, archived_at), patient_history_submissions(id), visit_documents(id)` as const;
+
 /**
  * Create a new appointment
- * 
+ *
  * Creates appointment record for a doctor.
- * 
+ *
  * @param data - Appointment data to insert
  * @param correlationId - Request correlation ID
  * @param userId - Authenticated user ID (doctor)
  * @returns Created appointment
- * 
+ *
  * @throws ValidationError if appointment date is in the past
  * @throws ForbiddenError if doctor_id doesn't match userId
  * @throws InternalError if database operation fails
- * 
+ *
  * Note: Uses user role client (respects RLS)
  */
 export async function createAppointment(
@@ -334,13 +344,7 @@ export async function createAppointment(
   const row = appointment as unknown as Record<string, unknown>;
 
   // Audit log
-  await logDataModification(
-    correlationId,
-    userId,
-    'create',
-    'appointment',
-    row.id as string
-  );
+  await logDataModification(correlationId, userId, 'create', 'appointment', row.id as string);
 
   return enrichRowWithDemographics(row);
 }
@@ -380,9 +384,7 @@ export async function bookAppointment(
   const status = data.freeOfCost ? 'confirmed' : 'pending';
   const bookingOrigin =
     data.bookingOrigin ??
-    (data.opdEventType === 'return_after_completed'
-      ? 'return_after_completed'
-      : 'booked');
+    (data.opdEventType === 'return_after_completed' ? 'return_after_completed' : 'booked');
 
   const insertData: InsertAppointment = {
     doctor_id: data.doctorId,
@@ -441,11 +443,7 @@ export async function bookAppointment(
 
   // Desk / authenticated booked+walk-in: one open or completed visit per session day.
   // Webhook (no userId) and return-after-completed keep the existing bot path.
-  if (
-    userId &&
-    data.patientId &&
-    (bookingOrigin === 'walk_in' || bookingOrigin === 'booked')
-  ) {
+  if (userId && data.patientId && (bookingOrigin === 'walk_in' || bookingOrigin === 'booked')) {
     const existing = await findBlockingAppointmentOnSessionDate(
       data.doctorId,
       data.patientId,
@@ -492,7 +490,12 @@ export async function bookAppointment(
     }
   } else if (enforcesClockSlot(opdMode, bookingOrigin)) {
     const slotEnd = new Date(appointmentDate.getTime() + SLOT_INTERVAL_MS);
-    const hasConflict = await checkSlotConflict(data.doctorId, appointmentDate, slotEnd, correlationId);
+    const hasConflict = await checkSlotConflict(
+      data.doctorId,
+      appointmentDate,
+      slotEnd,
+      correlationId
+    );
     if (hasConflict) {
       throw new ConflictError('This time slot is no longer available');
     }
@@ -663,7 +666,10 @@ export async function hasAppointmentOnDate(
   if (patientId) {
     query = query.eq('patient_id', patientId);
   } else {
-    query = query.is('patient_id', null).eq('patient_name', patientName).eq('patient_phone', patientPhone);
+    query = query
+      .is('patient_id', null)
+      .eq('patient_name', patientName)
+      .eq('patient_phone', patientPhone);
   }
 
   const { data: existing, error } = await query.limit(1);
@@ -728,7 +734,10 @@ export async function findBlockingAppointmentOnSessionDate(
         id: string;
         status: AppointmentStatus;
         patient_checked_in_at?: string | Date | null;
-        opd_queue_entry?: { token_number?: number | null } | { token_number?: number | null }[] | null;
+        opd_queue_entry?:
+          | { token_number?: number | null }
+          | { token_number?: number | null }[]
+          | null;
       }
     | undefined;
   if (!row) return null;
@@ -853,18 +862,18 @@ export async function getAppointmentById(
 
 /**
  * Get all appointments for a doctor
- * 
+ *
  * Retrieves appointments for a specific doctor, with optional filters.
- * 
+ *
  * @param doctorId - Doctor ID
  * @param correlationId - Request correlation ID
  * @param userId - Authenticated user ID (must match doctorId)
  * @param filters - Optional filters (status, startDate, endDate)
  * @returns Array of appointments
- * 
+ *
  * @throws ForbiddenError if doctor_id doesn't match userId
  * @throws InternalError if database operation fails
- * 
+ *
  * Note: Uses user role client (respects RLS)
  */
 export async function getDoctorAppointments(
@@ -972,24 +981,43 @@ export async function listAppointmentsForDoctor(
     throw new InternalError('Service role client not available for list');
   }
 
-  let query = admin
-    .from('appointments')
-    .select(APPOINTMENT_SELECT_WITH_DEMOGRAPHICS)
-    .eq('doctor_id', doctorId);
-
-  if (options?.patientId) {
-    query = query.eq('patient_id', options.patientId);
-  }
-
+  let dateRange: { start: string; end: string } | undefined;
   if (options?.date) {
     const timezone = await getDoctorTimezone(doctorId);
-    const { start, end } = localDayUtcRange(options.date, timezone);
-    query = query.gte('appointment_date', start).lt('appointment_date', end);
+    dateRange = localDayUtcRange(options.date, timezone);
   }
 
-  const { data: appointments, error } = await query.order('appointment_date', {
-    ascending: true,
-  });
+  const runList = async (
+    select: string
+  ): Promise<{
+    data: Record<string, unknown>[] | null;
+    error: { code?: string; message?: string } | null;
+  }> => {
+    let query = admin.from('appointments').select(select).eq('doctor_id', doctorId);
+    if (options?.patientId) {
+      query = query.eq('patient_id', options.patientId);
+    }
+    if (dateRange) {
+      query = query.gte('appointment_date', dateRange.start).lt('appointment_date', dateRange.end);
+    }
+    const result = await query.order('appointment_date', { ascending: true });
+    return {
+      data: (result.data as Record<string, unknown>[] | null) ?? null,
+      error: result.error,
+    };
+  };
+
+  const listSelect = dateRange
+    ? APPOINTMENT_SELECT_WITH_DESK_PREP
+    : APPOINTMENT_SELECT_WITH_DEMOGRAPHICS;
+  let { data: appointments, error } = await runList(listSelect);
+
+  if (error && dateRange && isDeskPrepRelationError(error)) {
+    logger.warn({ correlationId, code: error.code }, 'desk_prep_list_embed_unavailable');
+    const retry = await runList(APPOINTMENT_SELECT_WITH_DEMOGRAPHICS);
+    appointments = retry.data;
+    error = retry.error;
+  }
 
   if (error) {
     handleSupabaseError(error, correlationId);
@@ -1007,18 +1035,18 @@ export async function listAppointmentsForDoctor(
 
 /**
  * Update appointment status
- * 
+ *
  * Updates appointment status (e.g., pending, confirmed, cancelled, completed).
- * 
+ *
  * @param id - Appointment ID
  * @param status - New appointment status
  * @param correlationId - Request correlation ID
  * @param userId - Authenticated user ID (doctor)
  * @returns Updated appointment
- * 
+ *
  * @throws ForbiddenError if appointment doesn't belong to user
  * @throws InternalError if database operation fails
- * 
+ *
  * Note: Uses user role client (respects RLS)
  */
 export async function updateAppointmentStatus(
@@ -1064,7 +1092,12 @@ export async function updateAppointmentStatus(
 
   const updatedAppt = enrichRowWithDemographics(updated as unknown as Record<string, unknown>);
   if (status === 'completed' && previousStatus !== 'completed') {
-    await syncCareEpisodeLifecycleOnAppointmentCompleted(admin, updatedAppt, previousStatus, correlationId);
+    await syncCareEpisodeLifecycleOnAppointmentCompleted(
+      admin,
+      updatedAppt,
+      previousStatus,
+      correlationId
+    );
   }
 
   return updatedAppt;
@@ -1127,7 +1160,9 @@ export async function updateAppointment(
         ? null
         : String(updates.clinical_notes).trim();
     if (notes !== null && notes.length > CLINICAL_NOTES_MAX_LEN) {
-      throw new ValidationError(`clinical_notes must be at most ${CLINICAL_NOTES_MAX_LEN} characters`);
+      throw new ValidationError(
+        `clinical_notes must be at most ${CLINICAL_NOTES_MAX_LEN} characters`
+      );
     }
     dbUpdates.clinical_notes = notes;
   }
@@ -1147,7 +1182,14 @@ export async function updateAppointment(
     handleSupabaseError(error, correlationId);
   }
 
-  await logDataModification(correlationId, userId, 'update', 'appointment', id, Object.keys(dbUpdates) as string[]);
+  await logDataModification(
+    correlationId,
+    userId,
+    'update',
+    'appointment',
+    id,
+    Object.keys(dbUpdates) as string[]
+  );
 
   if (updates.status !== undefined) {
     await syncOpdQueueEntryOnAppointmentStatus(id, updates.status, correlationId);
@@ -1159,7 +1201,12 @@ export async function updateAppointment(
     updates.status === 'completed' &&
     previousStatus !== 'completed'
   ) {
-    await syncCareEpisodeLifecycleOnAppointmentCompleted(admin, updatedAppt, previousStatus, correlationId);
+    await syncCareEpisodeLifecycleOnAppointmentCompleted(
+      admin,
+      updatedAppt,
+      previousStatus,
+      correlationId
+    );
   }
 
   return updatedAppt;
@@ -1396,7 +1443,13 @@ export async function updateAppointmentDateForPatient(
   );
 
   if (opdMode === 'queue') {
-    await createQueueEntryAfterBooking(appointmentId, doctorId, newSlotStart, timezone, correlationId);
+    await createQueueEntryAfterBooking(
+      appointmentId,
+      doctorId,
+      newSlotStart,
+      timezone,
+      correlationId
+    );
   }
 
   return enrichRowWithDemographics(updated as unknown as Record<string, unknown>);
@@ -1618,7 +1671,13 @@ export async function wrapUpAppointment(
       resourceId: appointmentId,
       status: 'success',
       metadata: {
-        changedFields: ['diagnosis_text', 'diagnosis_tags', 'followup_date', 'followup_kind', 'status'],
+        changedFields: [
+          'diagnosis_text',
+          'diagnosis_tags',
+          'followup_date',
+          'followup_kind',
+          'status',
+        ],
         tagCount: updatePayload.diagnosis_tags.length,
         hasFollowup: updatePayload.followup_kind !== null && updatePayload.followup_kind !== 'none',
         sessionEnded: latestSession?.status === 'live',
@@ -1681,7 +1740,7 @@ export async function getRecentDiagnosisTags(
 
   return Array.from(counts.entries())
     .map(([tag, uses]) => ({ tag, uses }))
-    .sort((a, b) => (b.uses - a.uses) || a.tag.localeCompare(b.tag))
+    .sort((a, b) => b.uses - a.uses || a.tag.localeCompare(b.tag))
     .slice(0, limit);
 }
 
@@ -1816,14 +1875,9 @@ export async function startConsultation(
     companion = session.companion;
     activeSessionIdForPromotion = session.id;
 
-    await logDataModification(
-      correlationId,
-      userId,
-      'create',
-      'consultation_session',
-      session.id,
-      ['provider_session_id']
-    );
+    await logDataModification(correlationId, userId, 'create', 'consultation_session', session.id, [
+      'provider_session_id',
+    ]);
   } else if (existingSession) {
     // Idempotent rejoin: surface a minimal companion handle so the
     // doctor's `<VideoRoom>` can mount the chat side-panel after a
@@ -1834,10 +1888,10 @@ export async function startConsultation(
     // long comment on `StartConsultationResult.companion` for the
     // full contract.
     companion = {
-      sessionId:      existingSession.id,
+      sessionId: existingSession.id,
       patientJoinUrl: null,
-      patientToken:   null,
-      expiresAt:      existingSession.expectedEndAt.toISOString(),
+      patientToken: null,
+      expiresAt: existingSession.expectedEndAt.toISOString(),
     };
     activeSessionIdForPromotion = existingSession.id;
   }
@@ -1904,7 +1958,7 @@ export async function startConsultation(
           sessionId: activeSessionIdForPromotion,
           error: err instanceof Error ? err.message : String(err),
         },
-        'Consultation-ready fan-out failed (doctor can copy link)',
+        'Consultation-ready fan-out failed (doctor can copy link)'
       );
     }
   } else if (patientJoinUrl) {
@@ -2005,14 +2059,9 @@ export async function startVoiceConsultation(
     companion = session.companion;
     activeSessionIdForPromotion = session.id;
 
-    await logDataModification(
-      correlationId,
-      userId,
-      'create',
-      'consultation_session',
-      session.id,
-      ['provider_session_id']
-    );
+    await logDataModification(correlationId, userId, 'create', 'consultation_session', session.id, [
+      'provider_session_id',
+    ]);
   } else if (existingSession) {
     // Idempotent rejoin: surface a minimal companion handle so the
     // doctor's `<VoiceConsultRoom>` can mount the chat side-panel
@@ -2020,10 +2069,10 @@ export async function startVoiceConsultation(
     // above — see `StartConsultationResult.companion` for the full
     // rationale on why patientJoinUrl/patientToken stay null.
     companion = {
-      sessionId:      existingSession.id,
+      sessionId: existingSession.id,
       patientJoinUrl: null,
-      patientToken:   null,
-      expiresAt:      existingSession.expectedEndAt.toISOString(),
+      patientToken: null,
+      expiresAt: existingSession.expectedEndAt.toISOString(),
     };
     activeSessionIdForPromotion = existingSession.id;
   }
@@ -2074,7 +2123,7 @@ export async function startVoiceConsultation(
           sessionId: activeSessionIdForPromotion,
           error: err instanceof Error ? err.message : String(err),
         },
-        'Voice consultation-ready fan-out failed (doctor can copy link)',
+        'Voice consultation-ready fan-out failed (doctor can copy link)'
       );
     }
   } else if (patientJoinUrl) {
@@ -2171,9 +2220,7 @@ export async function getConsultationToken(
         ? new Date(appointment.appointment_date as string).toISOString()
         : null,
       consultationType:
-        typeof appointment.consultation_type === 'string'
-          ? appointment.consultation_type
-          : null,
+        typeof appointment.consultation_type === 'string' ? appointment.consultation_type : null,
     };
   }
 

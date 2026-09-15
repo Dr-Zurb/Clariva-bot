@@ -12,7 +12,11 @@ import {
   type PaneDefinition,
 } from "@/lib/patient-profile/v3/foundation";
 import { paneTreeToFlat } from "@/lib/patient-profile/v3/foundation";
-import { resolveSeedLayout } from "@/lib/patient-profile/v3/default-layouts";
+import {
+  resolveSeedLayout,
+  type DefaultLayoutId,
+} from "@/lib/patient-profile/v3/default-layouts";
+import { DestinationFlashProvider } from "@/lib/patient-profile/v3/destination-flash";
 import {
   maxComfortableColumns,
   maxRowsPerColumn,
@@ -26,8 +30,11 @@ import { toastOnCapRejection } from "@/lib/patient-profile/v3/cockpit-cap-toast"
 import { trackCockpitV3DragDrop } from "@/lib/patient-profile/telemetry";
 import { CallStageChromeProvider } from "@/components/consultation/CallStageChromeContext";
 import {
+  CONSULT_STAGE_SIZE_PCT,
+  CONSULT_THUMBNAIL_SIZE_PCT,
   consultAlreadyRoomyForChat,
-  withConsultChatMinSize,
+  resizeConsultBodyColumn,
+  withConsultBodyMinSize,
 } from "@/lib/call/consult-chat-layout";
 import CockpitCanvas from "./CockpitCanvas";
 import CockpitDndContext, {
@@ -60,6 +67,11 @@ export interface CockpitV3ShellProps {
    * (in-call chat min-width / Focus widen). DOM still portals into the body slot.
    */
   consultSurfaceHost?: ReactNode;
+  /**
+   * First-open seed for the full 5-pane registry. In-clinic defaults to
+   * Write (`document`); live tele passes `consult` (Call). Walk-in 2-tab stays blank.
+   */
+  seedLayoutId?: DefaultLayoutId;
   /** Other PatientProfileShell props are accepted but ignored in Phase 1. */
   [key: string]: unknown;
 }
@@ -87,18 +99,25 @@ export default function CockpitV3Shell({
   actionDock,
   token,
   consultSurfaceHost = null,
+  seedLayoutId,
 }: CockpitV3ShellProps) {
   void _consultActive;
   const isLg = useMediaQuery("(min-width: 1024px)", true);
 
   /**
-   * In-call chat raises Consult's splitter floor so Subjective cannot
+   * In-call chat raises Consult's splitter floor so neighbours cannot
    * drag below video+chat mins. Reported from `<VideoRoom>` via chrome.
    */
   const [consultChatOpen, setConsultChatOpen] = useState(false);
+  const [consultThumbnail, setConsultThumbnail] = useState(false);
+  const [consultStagePinned, setConsultStagePinned] = useState(false);
   const canvasPanes = useMemo(
-    () => withConsultChatMinSize(panes, consultChatOpen),
-    [panes, consultChatOpen]
+    () =>
+      withConsultBodyMinSize(panes, {
+        chatOpen: consultChatOpen,
+        thumbnail: consultThumbnail && !consultChatOpen,
+      }),
+    [panes, consultChatOpen, consultThumbnail]
   );
 
   const { paneById: paneByIdRecord } = useMemo(
@@ -106,7 +125,10 @@ export default function CockpitV3Shell({
     [canvasPanes]
   );
   const { paneOrder } = useMemo(() => flattenPaneDefinitions(panes), [panes]);
-  const seedLayout = useMemo(() => resolveSeedLayout(panes), [panes]);
+  const seedLayout = useMemo(
+    () => resolveSeedLayout(panes, seedLayoutId),
+    [panes, seedLayoutId]
+  );
   const defaultFlat = useMemo(
     () => paneTreeToFlat(seedLayout.paneTree),
     [seedLayout]
@@ -210,6 +232,79 @@ export default function CockpitV3Shell({
     if (ok) chatFocusOwnedRef.current = true;
   }, [layout]);
 
+  const applyConsultBodySize = useCallback(
+    (sizePct: number) => {
+      if (layout.isFocused) return;
+      const sizes = resizeConsultBodyColumn(layout.paneTree, sizePct);
+      if (sizes) layout.setGroupSizes("__root__", sizes);
+    },
+    [layout],
+  );
+
+  const restoreConsultStage = useCallback(() => {
+    setConsultThumbnail(false);
+    applyConsultBodySize(CONSULT_STAGE_SIZE_PCT);
+  }, [applyConsultBodySize]);
+
+  const shrinkConsultToThumbnail = useCallback(() => {
+    if (consultStagePinned || consultChatOpen || layout.isFocused) return;
+    setConsultThumbnail(true);
+    applyConsultBodySize(CONSULT_THUMBNAIL_SIZE_PCT);
+  }, [
+    applyConsultBodySize,
+    consultChatOpen,
+    consultStagePinned,
+    layout.isFocused,
+  ]);
+
+  const pinConsultStage = useCallback(
+    (pinned: boolean) => {
+      setConsultStagePinned(pinned);
+      if (pinned) restoreConsultStage();
+    },
+    [restoreConsultStage],
+  );
+
+  useEffect(() => {
+    if (consultChatOpen) setConsultThumbnail(false);
+  }, [consultChatOpen]);
+
+  useEffect(() => {
+    const root = canvasMeasureRef.current;
+    if (!root) return;
+    let timer: number | undefined;
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      const pane = target?.closest("[data-cockpit-pane-id]");
+      const paneId = pane?.getAttribute("data-cockpit-pane-id");
+      if (!paneId || paneId === "body") return;
+      if (consultStagePinned || consultChatOpen || layout.isFocused) return;
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        shrinkConsultToThumbnail();
+      }, 700);
+    };
+    const onClick = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.closest("[data-cockpit-pane-id='body']")) {
+        restoreConsultStage();
+      }
+    };
+    root.addEventListener("keydown", onKeyDown, true);
+    root.addEventListener("click", onClick);
+    return () => {
+      root.removeEventListener("keydown", onKeyDown, true);
+      root.removeEventListener("click", onClick);
+      window.clearTimeout(timer);
+    };
+  }, [
+    consultChatOpen,
+    consultStagePinned,
+    layout.isFocused,
+    restoreConsultStage,
+    shrinkConsultToThumbnail,
+  ]);
+
   const handleDrop = useCallback(
     (route: CockpitDropMovePayload) => {
       const res = route.gutter
@@ -272,7 +367,12 @@ export default function CockpitV3Shell({
       onReleaseConsultAfterChat={releaseConsultAfterChat}
       onEscalateConsultForChat={escalateConsultForChat}
       onConsultChatOpenChange={setConsultChatOpen}
+      consultStagePinned={consultStagePinned}
+      consultThumbnail={consultThumbnail}
+      onPinConsultStage={pinConsultStage}
+      onRestoreConsultStage={restoreConsultStage}
     >
+      <DestinationFlashProvider>
       {isLg ? (
         <div
           data-testid="p1-cockpit-v3-shell-desktop"
@@ -339,6 +439,7 @@ export default function CockpitV3Shell({
       {process.env.NODE_ENV === "test" ? null : (
         <RxFocusDeepLinkHost layout={layout} />
       )}
+      </DestinationFlashProvider>
     </CallStageChromeProvider>
   );
 

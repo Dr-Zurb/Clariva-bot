@@ -91,6 +91,12 @@ export const queryKeys = {
       [...queryKeys.consult(appointmentId).all, "last-visit-summary"] as const,
     deskVitals: () =>
       [...queryKeys.consult(appointmentId).all, "desk-vitals"] as const,
+    deskDocuments: () =>
+      [...queryKeys.consult(appointmentId).all, "desk-documents"] as const,
+    labOrders: () =>
+      [...queryKeys.consult(appointmentId).all, "lab-orders"] as const,
+    historySubmission: () =>
+      [...queryKeys.consult(appointmentId).all, "history-submission"] as const,
   }),
   clinicStaff: {
     all: ["clinic-staff"] as const,
@@ -112,5 +118,6 @@ export const queryKeys = {
       [...queryKeys.desk.all, "today", dateIso] as const,
     hisab: (dateIso: string) =>
       [...queryKeys.desk.all, "hisab", dateIso] as const,
+    labPending: () => [...queryKeys.desk.all, "lab-pending"] as const,
   },
 } as const;

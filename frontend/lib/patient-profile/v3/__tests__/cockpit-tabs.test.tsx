@@ -143,6 +143,10 @@ describe('buildCockpitTabs — flat registry shape (cv3t-01)', () => {
     );
     expect(assessment?.naturalSizePct).toBeGreaterThan(20);
     expect(assessment?.minSizePx).toBeGreaterThan(100);
+    const plan = buildCockpitTabs(fixtureCtx(), 'telemed-video').find(
+      (t) => t.id === 'plan',
+    );
+    expect(plan?.minSizePx).toBe(520);
     const { container } = render(assessment!.render!());
     expect(
       container.querySelector('[data-testid="pane-assessment-editor"]'),

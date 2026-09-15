@@ -1,12 +1,23 @@
 import Link from "next/link";
-import { ArrowRight, CalendarCheck, Check, MessageCircle } from "lucide-react";
+import {
+  ArrowRight,
+  CalendarCheck,
+  Check,
+  ClipboardList,
+  MessageCircle,
+} from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { DEMO_HREF, SIGNUP_HREF, haloPrimaryButton } from "./constants";
+import {
+  CLINICS_HREF,
+  DEMO_HREF,
+  SIGNUP_HREF,
+  haloPrimaryButton,
+} from "./constants";
 
 /**
- * Landing hero — headline, sub, dual CTA, and a DM→booking mock visual built
- * from primitives (no raster asset). Copy lifted from the brand creatives.
+ * Landing hero — headline, sub, dual CTA, and a DM→visit mock visual built
+ * from primitives (no raster asset).
  */
 export function Hero() {
   return (
@@ -18,17 +29,30 @@ export function Hero() {
       <div className="mx-auto grid max-w-6xl items-center gap-12 px-4 py-20 sm:px-6 lg:grid-cols-2 lg:py-28">
         {/* Copy */}
         <div>
-          <span className="inline-flex items-center gap-2 rounded-full border border-[hsl(var(--halo-blue))]/20 bg-white px-3 py-1 text-xs font-medium text-[hsl(var(--halo-navy))]">
-            <span className="h-1.5 w-1.5 rounded-full bg-[hsl(var(--halo-sky))]" aria-hidden />
-            Built for doctors on social media
-          </span>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+            <span className="inline-flex items-center gap-2 rounded-full border border-[hsl(var(--halo-blue))]/20 bg-white px-3 py-1 text-xs font-medium text-[hsl(var(--halo-navy))]">
+              <span
+                className="h-1.5 w-1.5 rounded-full bg-[hsl(var(--halo-sky))]"
+                aria-hidden
+              />
+              Built for doctors on social media
+            </span>
+            <Link
+              href={CLINICS_HREF}
+              className="inline-flex items-center gap-1 text-xs font-medium text-[hsl(var(--halo-blue))] underline-offset-4 hover:underline"
+            >
+              Not yet on social media? Halo Aid for clinics
+              <ArrowRight className="h-3 w-3" aria-hidden />
+            </Link>
+          </div>
           <h1 className="mt-5 text-4xl font-bold leading-[1.1] tracking-tight text-[hsl(var(--halo-navy))] sm:text-5xl">
-            Turn patient DMs and comments into{" "}
-            <span className="text-[hsl(var(--halo-blue))]">booked consultations</span>.
+            Turn your audience into{" "}
+            <span className="text-[hsl(var(--halo-blue))]">your practice</span>.
           </h1>
           <p className="mt-5 max-w-lg text-lg text-[hsl(var(--halo-ink))]/70">
-            Halo Aid captures patient messages from Instagram, replies instantly,
-            and books the visit — so you never lose a lead in your inbox again.
+            More patients seen — Halo Aid answers every DM and comment, books
+            the visit — teleconsult or in-clinic — then keeps the record, the
+            prescription, and the follow-up in one place.
           </p>
           <div className="mt-8 flex flex-wrap items-center gap-3">
             <Button asChild size="lg" className={haloPrimaryButton}>
@@ -48,7 +72,7 @@ export function Hero() {
           </div>
         </div>
 
-        {/* Visual: DM → booking */}
+        {/* Visual: DM → booked visit → record */}
         <div className="relative mx-auto w-full max-w-md">
           <div
             aria-hidden
@@ -80,10 +104,32 @@ export function Hero() {
               </span>
               <div className="flex-1">
                 <p className="text-sm font-semibold text-[hsl(var(--halo-navy))]">
-                  Consultation booked
+                  Visit booked
                 </p>
                 <p className="text-xs text-[hsl(var(--halo-ink))]/60">
                   Thursday · 4:30 PM · Video
+                </p>
+              </div>
+              <span
+                aria-hidden
+                className="flex h-6 w-6 items-center justify-center rounded-full bg-emerald-500 text-white"
+              >
+                <Check className="h-3.5 w-3.5" />
+              </span>
+            </div>
+            <div className="flex items-center gap-3 rounded-xl border border-[hsl(var(--halo-blue))]/15 bg-white p-3">
+              <span
+                aria-hidden
+                className="flex h-10 w-10 items-center justify-center rounded-lg bg-[hsl(var(--halo-blue))]/10 text-[hsl(var(--halo-blue))]"
+              >
+                <ClipboardList className="h-5 w-5" />
+              </span>
+              <div className="flex-1">
+                <p className="text-sm font-semibold text-[hsl(var(--halo-navy))]">
+                  Record saved
+                </p>
+                <p className="text-xs text-[hsl(var(--halo-ink))]/60">
+                  Follow-up in 2 weeks
                 </p>
               </div>
               <span

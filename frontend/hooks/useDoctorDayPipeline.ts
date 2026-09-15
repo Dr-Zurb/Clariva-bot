@@ -11,12 +11,19 @@
  *   - doctor_settings.opd_mode === 'queue'  → wraps useOpdSnapshot (pf-06)
  *   - anything else / unset                 → wraps useTodaysAppointments
  *
+ * Session day:
+ *   `?date=` from the cockpit URL, else `opts.sessionDate`, else today.
+ *   Past completed visits still belong on that day's list so prev/next work.
+ *
  * @see docs/Work/Daily-plans/May 2026/07-05-2026/Tasks/task-pf-07-doctor-day-pipeline-hook.md
  */
 
 import { useMemo } from "react";
+import { useSearchParams } from "next/navigation";
 import { useOpdSnapshot } from "@/hooks/useOpdSnapshot";
 import { useTodaysAppointments } from "@/components/dashboard/cockpit/useTodaysAppointments";
+import { COCKPIT_DATE_PARAM } from "@/lib/cockpit/back-target";
+import { resolveSessionDate } from "@/lib/dates";
 import type { DoctorQueueSessionRow } from "@/types/opd-doctor";
 import type { Appointment, ConsultationModality } from "@/types/appointment";
 
@@ -78,11 +85,18 @@ export interface UseDoctorDayPipelineResult {
   source: "queue" | "schedule";
   isLoading: boolean;
   error: Error | null;
+  /** YYYY-MM-DD the pipeline was loaded for (URL `date`, else fallback, else today). */
+  sessionDate: string;
 }
 
 export interface UseDoctorDayPipelineOpts {
   token: string;
   currentAppointmentId?: string | null;
+  /**
+   * Visit calendar day (YYYY-MM-DD) used when `?date=` is absent.
+   * The cockpit URL `date` still wins so OPD navigation stays authoritative.
+   */
+  sessionDate?: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -148,11 +162,16 @@ export function useDoctorDayPipeline(
 ): UseDoctorDayPipelineResult {
   const token = opts?.token ?? "";
   const currentAppointmentId = opts?.currentAppointmentId;
+  const searchParams = useSearchParams();
+  const sessionDate = resolveSessionDate(
+    searchParams.get(COCKPIT_DATE_PARAM),
+    opts?.sessionDate,
+  );
 
   // Both hooks are always called — hooks must not be called conditionally.
   // Only one source's output is used in the final result (selected by opd_mode).
-  const opdSnap = useOpdSnapshot(token);
-  const schedule = useTodaysAppointments(token);
+  const opdSnap = useOpdSnapshot(token, sessionDate);
+  const schedule = useTodaysAppointments(token, sessionDate);
 
   // isOpdEnabled: null while settings load; true = queue; false = slot/telemed.
   const settingsLoaded = opdSnap.isOpdEnabled !== null;
@@ -263,5 +282,6 @@ export function useDoctorDayPipeline(
     source,
     isLoading,
     error,
+    sessionDate,
   };
 }

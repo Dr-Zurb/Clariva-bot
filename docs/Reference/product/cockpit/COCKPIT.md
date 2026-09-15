@@ -62,7 +62,7 @@ Regression-test those separately.
 **Shell:** `frontend/components/patient-profile/v3/CockpitV3Shell.tsx`  
 **Tab registry:** `frontend/lib/patient-profile/v3/cockpit-tabs.tsx` (`buildCockpitTabs`, `buildWalkInCockpitTabs`)  
 **Layout hook:** `useCockpitV3Layout` → `useShellLayout` (same `PaneTreeNode` v5 shape)  
-**Persistence key:** `patient-profile/v4-tree-layout::<storageKey>` — default `patient-profile/v4-tree-layout::telemed-video` (`TELEMED_VIDEO_LAYOUT_STORAGE_KEY`); walk-in uses `WALKIN_LAYOUT_STORAGE_KEY`.
+**Persistence key:** `patient-profile/v5-tree-layout::<storageKey>` — default `patient-profile/v5-tree-layout::telemed-video` (`TELEMED_VIDEO_LAYOUT_STORAGE_KEY`); walk-in uses `WALKIN_LAYOUT_STORAGE_KEY`.
 
 ### Interaction model (always on — no customize mode)
 
@@ -102,22 +102,23 @@ fires `sendAndFinish` regardless of where the `plan` tab is dragged.
 ├──────────────────────────────────────────────────────────────────────────┤
 │ SafetyStickyStrip (anchored — never in the tree)                          │
 ├──────────────────────────────────────────────────────────────────────────┤
-│ Palette: [describe…] [S][O][A][P] [Layouts] [undo][redo] [fullscreen]     │
+│ Palette: [describe…] [S][O][A][P] [Layouts] [undo][redo] [fullscreen] │
 ├───────────────────────────┬──────────────────────────────────────────────┤
-│ ┌ Snapshot │ History │     │ ┌ Consult │ Subjective │ [SOAP chrome] │     │
-│ │  (tabs)  │         │     │ │  (tabs) │            │ expand/clear… │     │
-│ ├──────────┴─────────┤     │ ├─────────┴────────────┴───────────────┤     │
-│ │  active pane body  │     │ │  active pane body (no in-pane toolbar)│     │
-│ └────────────────────┘     │ └──────────────────────────────────────┘     │
+│ ┌ Snapshot │ History │     │ ┌ Consult │ Subjective │ [section chrome] │   │
+│ │  (tabs)  │         │     │ │  (tabs) │            │ expand/clear…    │   │
+│ ├──────────┴─────────┤     │ ├─────────┴────────────┴──────────────────┤   │
+│ │  active pane body  │     │ │  active pane body (no in-pane toolbar)  │   │
+│ └────────────────────┘     │ └─────────────────────────────────────────┘   │
 ├───────────────────────────┴──────────────────────────────────────────────┤
 │ PlanActionFooter (anchored): Saved · Treating · 12:04   [Send Rx & finish] │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
-SOAP S/O/A/P tab chrome (expand / collapse / clear / templates / manage
+Clinical section chrome (expand / collapse / clear / templates / manage
 sections) portals into the leaf tab strip (`SoapPaneChromePortal` →
 `SoapPaneChromeSlot` in `CockpitLeafView` trailing actions). Isolated section
-tests have no host and keep the toolbar in-flow.
+tests have no host and keep the toolbar in-flow. Palette glyphs are S · O · A ·
+P (pane ids stay `subjective|objective|assessment|plan`).
 
 ### Mobile (`<lg`, v3-DL-8)
 
@@ -148,6 +149,19 @@ wrappers). Bodies are **ported by reference** from the v2 template factories.
 | `subjective` | Subjective | `SubjectivePane` |
 | `objective` | Objective | `ObjectivePane` |
 
+**Built-in presets** (`default-layouts.ts`; ids stable, hotkeys `mod+shift+1..4`):
+
+| id | Label | Tree |
+|---|---|---|
+| `consult` | Call | Tele default — Consult dock ~22% + Plan ~78%. SOAP hidden. |
+| `read` | Notes | Subjective + Objective; Consult, Plan, Assessment hidden. |
+| `document` | Write | In-clinic default — Subjective ~30% + Plan ~70%. Consult / O / A hidden. |
+| `review` | After | Visit summary strip over Plan (vertical 18/82). SOAP hidden. |
+
+**First-open seed:** full 5-pane registry seeds **Write/`document`**. Tele (video/voice/text) passes `seedLayoutId="consult"`. Walk-in 2-tab (`body`+`plan`) stays a blank canvas. Persistence still wins when `localStorage` already has a tree (key prefix `v5-tree-layout`).
+
+Plan/Rx splitter floor is `minSizePx: 520` so four skinny SOAP columns stay unreachable. Consult can dock to a ~220px thumbnail while the doctor types in a clinical pane (pin in the call header blocks auto-shrink; in-call chat still applies `MIN_CONSULT_WIDTH_FOR_SIDE_CHAT_PX`).
+
 **Template dispatch** still uses `mapStateToTemplate(state, modality, override)`
 → `buildCockpitTabs(ctx, templateId)` picks body variant + tab subset. Doctor
 override: `doctor_settings.cockpit_template_override` (migration 106).
@@ -156,8 +170,9 @@ override: `doctor_settings.cockpit_template_override` (migration 106).
 `InvestigationsAutoMerge` container-query marriage on the v3 path). Both still
 write the shared `investigationsOrders` field in `RxFormContext`.
 
-**Deferred seed (V3-Q1):** First open is a **blank canvas** the doctor builds
-via the palette; no automatic 8-pane pre-fill on the v3 path.
+**First-open seed:** the full registry seeds the Write/`document` tree (or Call
+for tele). Walk-in stays a blank 2-tab canvas. Doctors can still rebuild via the
+palette.
 
 ---
 
@@ -234,7 +249,7 @@ Unified empty-state when all five chart signals empty; per-pane disclosure chevr
 
 | Layer | Shape | Notes |
 |---|---|---|
-| Browser | `PaneTreeNode` v5 in `localStorage` | Key: `patient-profile/v4-tree-layout::<storageKey>` |
+| Browser | `PaneTreeNode` v5 in `localStorage` | Key: `patient-profile/v5-tree-layout::<storageKey>` |
 | Server presets | `doctor_settings.cockpit_layout_presets` | Migration 112; tree JSONB; max 5 custom presets |
 
 v3 reuses the pane-freedom layout model (v3-DL-10). Layouts saved under the

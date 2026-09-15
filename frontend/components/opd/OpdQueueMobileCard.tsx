@@ -43,16 +43,6 @@ export interface OpdQueueMobileCardProps {
 // Helpers
 // ---------------------------------------------------------------------------
 
-const STATUS_DOT_BG: Record<string, string> = {
-  waiting: "bg-muted-foreground/50",
-  called: "bg-blue-500",
-  in_consultation: "bg-green-500",
-  completed: "bg-green-500",
-  missed: "bg-destructive",
-  skipped: "bg-muted-foreground/40",
-  cancelled: "bg-destructive",
-};
-
 const STATUS_BAR_BG: Record<string, string> = {
   waiting: "bg-muted",
   called: "bg-blue-300 dark:bg-blue-700",
@@ -192,10 +182,6 @@ export function OpdQueueMobileCard({
     entry.queueStatus === "waiting" || entry.queueStatus === "called";
   const isLongWait = showWaited && waitedMinutes > 30;
 
-  const dotBg =
-    isInConsult && steppedAway
-      ? "bg-amber-500"
-      : (STATUS_DOT_BG[entry.queueStatus] ?? "bg-muted-foreground/40");
   const barBg = showNextUp
     ? "bg-primary"
     : (STATUS_BAR_BG[entry.queueStatus] ?? "bg-muted");
@@ -248,15 +234,6 @@ export function OpdQueueMobileCard({
             <span className="tabular-nums text-muted-foreground">
               #{String(entry.tokenNumber).padStart(2, "0")}
             </span>
-
-            <span
-              aria-hidden
-              className={cn(
-                "inline-block h-1.5 w-1.5 shrink-0 rounded-full",
-                dotBg,
-                isActiveConsult && "animate-pulse"
-              )}
-            />
 
             <span className="font-medium text-foreground">{statusLabel}</span>
 

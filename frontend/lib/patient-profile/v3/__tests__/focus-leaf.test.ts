@@ -13,11 +13,43 @@ import {
   PRIMARY_FOCUS_PCT,
   SPLIT_RATIO_PCTS,
 } from "@/lib/patient-profile/v3/focus-leaf";
-import { getDefaultLayoutTree } from "@/lib/patient-profile/v3/default-layouts";
 import {
   serialiseTree,
   type PaneTreeNode,
 } from "@/lib/patient-profile/layout-tree";
+
+/** Prior Call preset (3 visible columns). Focus/rail tests need a rich tree. */
+function threeColumnConsult(): PaneTreeNode {
+  return {
+    id: "__root__",
+    sizePct: 100,
+    hidden: false,
+    direction: "horizontal",
+    children: [
+      {
+        id: "body",
+        sizePct: 26,
+        hidden: false,
+        paneIds: ["body"],
+        activeTabId: "body",
+      },
+      {
+        id: "consult-notes",
+        sizePct: 24,
+        hidden: false,
+        paneIds: ["assessment", "subjective", "objective"],
+        activeTabId: "assessment",
+      },
+      {
+        id: "plan",
+        sizePct: 50,
+        hidden: false,
+        paneIds: ["plan"],
+        activeTabId: "plan",
+      },
+    ],
+  };
+}
 
 function findNode(root: PaneTreeNode, id: string): PaneTreeNode | null {
   if (root.id === id) return root;
@@ -120,7 +152,7 @@ function tabsLeafTree(): PaneTreeNode {
 
 describe("clonePaneTree", () => {
   it("deep-clones so mutations do not touch the original", () => {
-    const original = getDefaultLayoutTree("consult");
+    const original = threeColumnConsult();
     const cloned = clonePaneTree(original);
     expect(serialiseTree(cloned)).toBe(serialiseTree(original));
     expect(cloned).not.toBe(original);
@@ -134,7 +166,7 @@ describe("clonePaneTree", () => {
 
 describe("focusLeafInTree", () => {
   it("focuses plan on consult tree — only plan visible; ancestor sizes 100", () => {
-    const consult = getDefaultLayoutTree("consult");
+    const consult = threeColumnConsult();
     const result = focusLeafInTree(consult, "plan");
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -146,35 +178,31 @@ describe("focusLeafInTree", () => {
     expect(root.hidden).toBe(false);
     expect(visibleChildrenSizeSum(root)).toBe(100);
 
-    const colMid = findNode(result.tree, "col-mid")!;
-    expect(colMid.hidden).toBe(false);
-    expect(colMid.sizePct).toBe(100);
-    expect(visibleChildrenSizeSum(colMid)).toBe(100);
-
     const plan = findNode(result.tree, "plan")!;
     expect(plan.hidden).toBe(false);
     expect(plan.sizePct).toBe(100);
     expect(plan.paneIds).toEqual(["plan"]);
     expect(plan.activeTabId).toBe("plan");
 
-    const colRight = findNode(result.tree, "col-right")!;
-    expect(colRight.hidden).toBe(true);
     expect(findNode(result.tree, "body")!.hidden).toBe(true);
-    expect(findNode(result.tree, "assessment")!.hidden).toBe(true);
+    expect(findNode(result.tree, "consult-notes")!.hidden).toBe(true);
     // Off-path leaves keep identity (not removed).
-    expect(findNode(result.tree, "subjective")).not.toBeNull();
-    expect(findNode(result.tree, "objective")).not.toBeNull();
+    expect(findNode(result.tree, "consult-notes")!.paneIds).toEqual([
+      "assessment",
+      "subjective",
+      "objective",
+    ]);
   });
 
   it("does not mutate the input tree", () => {
-    const consult = getDefaultLayoutTree("consult");
+    const consult = threeColumnConsult();
     const before = serialiseTree(consult);
     focusLeafInTree(consult, "plan");
     expect(serialiseTree(consult)).toBe(before);
   });
 
   it("restore via prior clone equals original serialisation", () => {
-    const consult = getDefaultLayoutTree("consult");
+    const consult = threeColumnConsult();
     const prior = clonePaneTree(consult);
     const focused = focusLeafInTree(consult, "assessment");
     expect(focused.ok).toBe(true);
@@ -216,7 +244,7 @@ describe("focusLeafInTree", () => {
   });
 
   it("returns not-found for unknown id", () => {
-    const consult = getDefaultLayoutTree("consult");
+    const consult = threeColumnConsult();
     expect(focusLeafInTree(consult, "ghost-pane")).toEqual({
       ok: false,
       reason: "not-found",
@@ -224,7 +252,7 @@ describe("focusLeafInTree", () => {
   });
 
   it("is stable when focusing an already-focused tree (idempotent)", () => {
-    const consult = getDefaultLayoutTree("consult");
+    const consult = threeColumnConsult();
     const first = focusLeafInTree(consult, "plan");
     expect(first.ok).toBe(true);
     if (!first.ok) return;
@@ -236,20 +264,21 @@ describe("focusLeafInTree", () => {
   });
 
   it("focusing structural leaf id (body) hides sibling columns", () => {
-    const consult = getDefaultLayoutTree("consult");
+    const consult = threeColumnConsult();
     const result = focusLeafInTree(consult, "body");
     expect(result.ok).toBe(true);
     if (!result.ok) return;
 
     expect(collectVisibleLeafIds(result.tree)).toEqual(["body"]);
-    expect(findNode(result.tree, "col-mid")!.sizePct).toBe(100);
-    expect(findNode(result.tree, "col-right")!.hidden).toBe(true);
+    expect(findNode(result.tree, "body")!.sizePct).toBe(100);
+    expect(findNode(result.tree, "consult-notes")!.hidden).toBe(true);
+    expect(findNode(result.tree, "plan")!.hidden).toBe(true);
   });
 });
 
 describe("primaryLeafInTree (CTF-D23 snap rail)", () => {
   it("plan wide: plan is a root column at 67%; every other pane joins a 33% rail", () => {
-    const consult = getDefaultLayoutTree("consult");
+    const consult = threeColumnConsult();
     const result = primaryLeafInTree(consult, "plan");
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -265,8 +294,7 @@ describe("primaryLeafInTree (CTF-D23 snap rail)", () => {
 
     // Focused leaf is lifted to a root-level column; old columns are gone.
     expect(rootChildIds(result.tree)).toEqual(["plan", FOCUS_RAIL_ID]);
-    expect(findNode(result.tree, "col-mid")).toBeNull();
-    expect(findNode(result.tree, "col-right")).toBeNull();
+    expect(findNode(result.tree, "consult-notes")).not.toBeNull();
 
     const plan = findNode(result.tree, "plan")!;
     expect(plan.sizePct).toBe(PRIMARY_FOCUS_PCT);
@@ -276,34 +304,27 @@ describe("primaryLeafInTree (CTF-D23 snap rail)", () => {
     expect(rail.sizePct).toBe(33);
     expect(rail.direction).toBe("vertical");
     // Rail rows follow original DFS order (minus the focused leaf).
-    expect(railRowIds(result.tree)).toEqual([
-      "body",
-      "assessment",
-      "subjective",
-      "objective",
-    ]);
-    expect(rail.children!.every((c) => c.sizePct === 25)).toBe(true);
+    expect(railRowIds(result.tree)).toEqual(["body", "consult-notes"]);
+    expect(rail.children!.every((c) => c.sizePct === 50)).toBe(true);
     expect(visibleChildrenSizeSum(rail)).toBe(100);
     expect(visibleChildrenSizeSum(result.tree)).toBe(100);
   });
 
   it("subjective wide: 67/33 with the rail carrying the other four panes", () => {
-    const consult = getDefaultLayoutTree("consult");
+    const consult = threeColumnConsult();
     const result = primaryLeafInTree(consult, "subjective");
     expect(result.ok).toBe(true);
     if (!result.ok) return;
 
-    expect(rootChildIds(result.tree)).toEqual(["subjective", FOCUS_RAIL_ID]);
-    expect(findNode(result.tree, "subjective")!.sizePct).toBe(
+    expect(rootChildIds(result.tree)).toEqual(["consult-notes", FOCUS_RAIL_ID]);
+    expect(findNode(result.tree, "consult-notes")!.sizePct).toBe(
       PRIMARY_FOCUS_PCT,
     );
+    expect(findNode(result.tree, "consult-notes")!.activeTabId).toBe(
+      "subjective",
+    );
     expect(findNode(result.tree, FOCUS_RAIL_ID)!.sizePct).toBe(33);
-    expect(railRowIds(result.tree)).toEqual([
-      "body",
-      "assessment",
-      "plan",
-      "objective",
-    ]);
+    expect(railRowIds(result.tree)).toEqual(["body", "plan"]);
   });
 
   it("crowded flat layout: focused pane still gets a real 67% of the screen", () => {
@@ -386,7 +407,7 @@ describe("primaryLeafInTree (CTF-D23 snap rail)", () => {
   });
 
   it("is stable when applied twice (idempotent)", () => {
-    const consult = getDefaultLayoutTree("consult");
+    const consult = threeColumnConsult();
     const first = primaryLeafInTree(consult, "plan");
     expect(first.ok).toBe(true);
     if (!first.ok) return;
@@ -397,7 +418,7 @@ describe("primaryLeafInTree (CTF-D23 snap rail)", () => {
   });
 
   it("returns not-found for unknown leaf", () => {
-    expect(primaryLeafInTree(getDefaultLayoutTree("consult"), "ghost")).toEqual(
+    expect(primaryLeafInTree(threeColumnConsult(), "ghost")).toEqual(
       {
         ok: false,
         reason: "not-found",
@@ -408,7 +429,7 @@ describe("primaryLeafInTree (CTF-D23 snap rail)", () => {
 
 describe("peekLeafInTree (CTF-D23 snap rail)", () => {
   it("plan even: plan 50% root column; rail 50% carries the other four", () => {
-    const consult = getDefaultLayoutTree("consult");
+    const consult = threeColumnConsult();
     const result = peekLeafInTree(consult, "plan");
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -417,28 +438,21 @@ describe("peekLeafInTree (CTF-D23 snap rail)", () => {
     expect(rootChildIds(result.tree)).toEqual(["plan", FOCUS_RAIL_ID]);
     expect(findNode(result.tree, "plan")!.sizePct).toBe(PEEK_FOCUS_PCT);
     expect(findNode(result.tree, FOCUS_RAIL_ID)!.sizePct).toBe(50);
-    expect(railRowIds(result.tree)).toEqual([
-      "body",
-      "assessment",
-      "subjective",
-      "objective",
-    ]);
+    expect(railRowIds(result.tree)).toEqual(["body", "consult-notes"]);
   });
 
   it("subjective even: 50/50 split into the rail", () => {
-    const consult = getDefaultLayoutTree("consult");
+    const consult = threeColumnConsult();
     const result = peekLeafInTree(consult, "subjective");
     expect(result.ok).toBe(true);
     if (!result.ok) return;
 
-    expect(findNode(result.tree, "subjective")!.sizePct).toBe(PEEK_FOCUS_PCT);
+    expect(findNode(result.tree, "consult-notes")!.sizePct).toBe(PEEK_FOCUS_PCT);
+    expect(findNode(result.tree, "consult-notes")!.activeTabId).toBe(
+      "subjective",
+    );
     expect(findNode(result.tree, FOCUS_RAIL_ID)!.sizePct).toBe(50);
-    expect(railRowIds(result.tree)).toEqual([
-      "body",
-      "assessment",
-      "plan",
-      "objective",
-    ]);
+    expect(railRowIds(result.tree)).toEqual(["body", "plan"]);
   });
 
   it("falls back to Focus when sole visible sibling", () => {
@@ -457,7 +471,7 @@ describe("peekLeafInTree (CTF-D23 snap rail)", () => {
   });
 
   it("differs from Wide sizes on the same leaf", () => {
-    const consult = getDefaultLayoutTree("consult");
+    const consult = threeColumnConsult();
     const peek = peekLeafInTree(consult, "plan");
     const primary = primaryLeafInTree(consult, "plan");
     expect(peek.ok && primary.ok).toBe(true);
@@ -470,7 +484,7 @@ describe("peekLeafInTree (CTF-D23 snap rail)", () => {
 
 describe("narrowLeafInTree (CTF-D23 snap rail)", () => {
   it("plan narrow: plan 33% root column; rail 67% carries the other four", () => {
-    const consult = getDefaultLayoutTree("consult");
+    const consult = threeColumnConsult();
     const result = narrowLeafInTree(consult, "plan");
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -482,19 +496,19 @@ describe("narrowLeafInTree (CTF-D23 snap rail)", () => {
   });
 
   it("subjective narrow: 33/67 into the rail", () => {
-    const consult = getDefaultLayoutTree("consult");
+    const consult = threeColumnConsult();
     const result = narrowLeafInTree(consult, "subjective");
     expect(result.ok).toBe(true);
     if (!result.ok) return;
 
-    expect(findNode(result.tree, "subjective")!.sizePct).toBe(NARROW_FOCUS_PCT);
+    expect(findNode(result.tree, "consult-notes")!.sizePct).toBe(
+      NARROW_FOCUS_PCT,
+    );
+    expect(findNode(result.tree, "consult-notes")!.activeTabId).toBe(
+      "subjective",
+    );
     expect(findNode(result.tree, FOCUS_RAIL_ID)!.sizePct).toBe(67);
-    expect(railRowIds(result.tree)).toEqual([
-      "body",
-      "assessment",
-      "plan",
-      "objective",
-    ]);
+    expect(railRowIds(result.tree)).toEqual(["body", "plan"]);
   });
 
   it("falls back to Focus when sole visible sibling", () => {
@@ -513,7 +527,7 @@ describe("narrowLeafInTree (CTF-D23 snap rail)", () => {
   });
 
   it("differs from Wide and Even sizes on the same leaf", () => {
-    const consult = getDefaultLayoutTree("consult");
+    const consult = threeColumnConsult();
     const narrow = narrowLeafInTree(consult, "plan");
     const primary = primaryLeafInTree(consult, "plan");
     const peek = peekLeafInTree(consult, "plan");
@@ -527,7 +541,7 @@ describe("narrowLeafInTree (CTF-D23 snap rail)", () => {
   });
 
   it("splitLeafByRatio('narrow') matches narrowLeafInTree", () => {
-    const consult = getDefaultLayoutTree("consult");
+    const consult = threeColumnConsult();
     const a = narrowLeafInTree(consult, "plan");
     const b = splitLeafByRatio(consult, "plan", "narrow");
     expect(a.ok && b.ok).toBe(true);
@@ -539,7 +553,7 @@ describe("narrowLeafInTree (CTF-D23 snap rail)", () => {
 
 describe("listShowHereCandidates (CTF-D18)", () => {
   it("includes other hosts + Consult/body for assessment", () => {
-    const consult = getDefaultLayoutTree("consult");
+    const consult = threeColumnConsult();
     const candidates = listShowHereCandidates(consult, "assessment");
     expect(candidates).toContain("body");
     expect(candidates).toContain("plan");

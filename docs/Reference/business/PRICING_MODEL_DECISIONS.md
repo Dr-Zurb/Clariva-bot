@@ -18,15 +18,23 @@
    (see "Two payment modes" below).
 3. **The doctor pays us on a separate monthly GST invoice**, via UPI AutoPay mandate, from their business
    account — like rent or staff salary. Nothing is ever deducted from a patient's payment.
-4. **One rate regardless of modality.** No per-consult price that changes with a clinical decision.
-5. **Billed on the completed consult**, never on the booking. Cancellations and no-shows are free.
-6. **Invoice wording is technology, not commission** — "Platform subscription and usage — N consultations,
-   {month}". Never "commission" or "share of consultation revenue".
-7. **The standard bill is capped.** One published monthly maximum, identical for every doctor — derived
-   from the UPI AutoPay ceiling and the cost of the human alternative, never negotiated per doctor
-   (derivation in "The plan" below). Growth must never feel dangerous.
+4. **One rate across text, voice, and video.** No per-consult price that changes with a clinical
+   decision (chat vs video). The in-clinic exception is locked #10 — a cost axis, not a clinical one.
+5. **Billed on the completed teleconsult**, never on the booking. Cancellations, no-shows, and
+   in-clinic visits are free.
+6. **Invoice wording is technology, not commission** — "Platform subscription and usage — N
+   teleconsultations, {month}". Never "commission" or "share of consultation revenue".
+7. **The standard bill is capped.** One published monthly maximum per practice, identical for every
+   account — derived from the UPI AutoPay ceiling and the cost of the human alternative, never
+   negotiated per doctor (derivation in "The plan" below). Growth must never feel dangerous.
 8. **Above fair use, custom plans come from a formula, not a negotiation.** Same shape — base + included
    volume + overage + its own cap — rate from the published ladder, billed on e-NACH.
+9. **The base is per doctor. Desk and front-office logins are free.** An extra clinician pays another
+   ₹999 and gets their own 20 included teleconsults. Capability (who practises) prices on the base;
+   usage (teleconsults) prices on the meter. Charging for a receptionist seat would discourage the
+   behaviour that makes us hard to remove.
+10. **In-clinic visits never meter.** The ₹49 meter counts completed teleconsults only (text, voice,
+    video — one rate, locked #4). The base covers the clinic.
 
 ### The two-factor test behind #1 and #2
 
@@ -53,31 +61,44 @@ aggregator" and "don't take a percentage" are the same decision wearing two hats
 > Published volume tiers, the uncapped flat meter, the ₹99 meter, and the ₹25 "simple division"
 > meter were considered and killed — entries in **Ruled out** below.
 
-**₹999/month including the first 20 consults. ₹49 per completed consult after.
-The bill can never exceed ₹12,499/month.** Monthly, no lock-in. GST extra. All channels included.
-Cap binds at **~255 consults**.
+**₹999 per doctor per month covers the clinic — every in-clinic visit, unlimited — plus that
+doctor's first 20 teleconsults. ₹49 per completed teleconsult after. The bill can never exceed
+₹12,499/month per practice.** Monthly, no lock-in. GST extra. All channels included. Cap binds at
+**~255 teleconsults**.
+
+The sentence you say:
+
+> ₹999 a month covers your clinic — every in-clinic visit, unlimited — plus your first 20
+> teleconsults. ₹49 per teleconsult after that. Your bill can never cross ₹12,499.
 
 Never billed, at any volume:
 
-- **No-shows and cancellations** — a consult bills only when it actually happened.
-- **Everything the bot handles alone** — timings, fees, directions, booking links.
+- **In-clinic visits** — the clinic is what the base is for, however busy the OPD gets.
+- **No-shows and cancellations** — a teleconsult bills only when it actually happened.
+- **Everything Halo Aid handles alone** — timings, fees, directions, booking links.
 - **Documentation** — prescriptions, notes, records. We never charge a doctor for practising safely.
-- **Reconnects** — one consult, not two (idempotent flag; common on Indian mobile networks).
+- **Reconnects** — one teleconsult, not two (idempotent flag; common on Indian mobile networks).
+- **Follow-up messaging inside an already-billed visit** — answering a patient you already saw
+  does not create a new meter event (open Q21 for the window).
 
-Async consults are billable when the **doctor** sends a clinical reply. One rate for every modality
-(locked #4). Multi-doctor practices and staff seats get priced on the **base** as add-ons when they
-arrive — never on the meter (usage and capability are separate axes).
+A *new* async consult — clinical advice to someone this doctor has not billed for — bills at ₹49
+when the **doctor** sends a clinical reply. One rate for text, voice, and video (locked #4). Extra
+doctors pay another base (locked #9). Desk and front-office logins are free.
 
 ### Worked examples — the pricing page IS this table
 
-| The doctor's month | Bill (ex-GST) | Effective ₹/consult | % of ₹700-fee revenue |
+Teleconsult counts only. In-clinic volume does not appear.
+
+| The doctor's month | Bill (ex-GST) | Effective ₹/teleconsult | % of ₹700-fee revenue |
 |---|---|---|---|
-| 20 consults | ₹999 | ₹50.0 | 7.1% |
-| 60 consults | ₹2,959 | ₹49.3 | 7.0% |
-| 100 consults | ₹4,919 | ₹49.2 | 7.0% |
-| 130 consults | ₹6,389 | ₹49.1 | 7.0% |
-| 200 consults | ₹9,819 | ₹49.1 | 7.0% |
-| 255 → 500 consults | **₹12,499, flat** | ₹49 → ₹25 | falling |
+| Any in-clinic volume, 0 teleconsults | ₹999 | — | — |
+| 20 teleconsults | ₹999 | ₹50.0 | 7.1% |
+| 60 teleconsults | ₹2,959 | ₹49.3 | 7.0% |
+| 100 teleconsults | ₹4,919 | ₹49.2 | 7.0% |
+| 130 teleconsults | ₹6,389 | ₹49.1 | 7.0% |
+| 200 teleconsults | ₹9,819 | ₹49.1 | 7.0% |
+| 255 → 500 teleconsults | **₹12,499, flat** | ₹49 → ₹25 | falling |
+| 600 in-clinic + 100 teleconsults | ₹4,919 | — | clinic is in the base |
 
 That constant ~7% column is the property the 21 Aug rewrite was for: **about ₹49 a patient whoever
 you are, cheaper once you're big** — flat-then-falling, no hump. Tiers as illustration, meter as
@@ -198,17 +219,35 @@ capped months first. Pick the framing before the first such call (open Q17).
 
 ### Founding ten
 
-Base waived for 3 months — the doctor pays only ₹49 per completed consult, cap applies. Price locked for
-12 months. **In exchange for a case study and two warm intros — never for nothing.** After ten doctors
-the offer is gone and never returns.
+Base waived for 3 months — the doctor pays only ₹49 per completed teleconsult, cap applies.
+In-clinic stays included. Price locked for 12 months. **In exchange for a case study and two warm
+intros — never for nothing.** After ten doctors the offer is gone and never returns.
 
 ### The pitch, in order
 
+One product, two openers. The price sheet is the same.
+
+**Creator (ICP #1):**
+
+1. **The category:** "Turn your audience into your practice."
+2. **The price:** "₹999 a month covers the clinic and your first 20 teleconsults. ₹49 after that.
+   Patient doesn't show — you pay nothing."
+3. **The promise:** "Whatever happens — 200 teleconsults, 500 teleconsults — your bill can never
+   cross ₹12,499."
+4. **The proof:** "If it recovers one patient in twenty that you'd have lost in your DMs, it's paid
+   for itself."
+
+**Clinic (ICP #2):**
+
 1. **Anchor on the human:** "A receptionist costs ₹15,000 a month and sleeps at night. This doesn't."
-2. **The price:** "₹999 a month, ₹49 per completed consult. Patient doesn't show — you pay nothing."
-3. **The promise:** "Whatever happens — 200 consults, 500 consults — your bill can never cross ₹12,499."
-4. **The proof:** "If it recovers one patient in twenty that you'd have lost in your DMs, it's paid for
-   itself."
+2. **The price:** "₹999 a month covers every in-clinic visit. Teleconsults meter at ₹49 after the
+   first 20. Desk logins are free." Same sheet whether they came from Instagram or not.
+3. **The promise:** same cap sentence.
+4. **The proof:** the receptionist arithmetic in [`ICP_AND_FIRST_CUSTOMER.md`](./ICP_AND_FIRST_CUSTOMER.md).
+
+The public `/clinics` page no longer prints this sheet in the hero — it is a records pitch.
+The sentence above is still the one you say on a call. The in-product disclosure lands when
+they add teleconsult hours (Q24).
 
 Never lead with the cap number — it's the safety line, not the headline. Never anchor on EMR prices
 (cost-centre products; see Ruled out). What to watch in the first five conversations: **where they
@@ -218,8 +257,9 @@ in Ruled out). Plus actual consult durations and DM → booked → completed con
 
 ### Why the base fee includes consults instead of sitting on top
 
-A ₹999 platform fee *plus* ₹49 per consult reads as being charged twice. The same money framed as
-"₹999 includes your first 20 consults" reads as a plan. Nobody thinks a phone plan is double-dipping.
+A ₹999 platform fee *plus* ₹49 per teleconsult reads as being charged twice. The same money framed as
+"₹999 covers the clinic and your first 20 teleconsults" reads as a plan. Nobody thinks a phone plan
+is double-dipping.
 
 The base is load-bearing regardless of framing: fixed monthly costs are ₹12,000–20,000, so ~15 doctors
 on the base alone covers the month. Pure per-consult pricing leaves low-volume doctors costing more in
@@ -236,8 +276,58 @@ chat ≈ ₹17 (AI + WhatsApp + Razorpay) against video ≈ ₹36. After the 31 
 ≈ ₹2.50 and a 6-minute video consult ≈ ₹6.55 — the gap that once made modality pricing tempting has
 mostly closed on its own.
 
-The closed gap also dissolved the DM-only plan question (open Q15): one plan, one rate, all modalities —
-there is no longer a cost reason for a cheaper text-only variant.
+The closed gap also dissolved the DM-only plan question (open Q15): one plan, one rate, all
+teleconsult modalities — there is no longer a cost reason for a cheaper text-only variant.
+
+### Why in-clinic is included and text is not free (locked 2026-09-12)
+
+An in-clinic visit costs us almost nothing to run (no room, recording, composition, STT, or DM-engine
+tokens on that visit). A clinic doing 20 patients a day would hit the ₹12,499 cap around day 13 if
+those visits metered — the meter would be theatre, and the arithmetic would scare them off the
+signature. The base covers the clinic; the meter covers the thing with real marginal cost.
+
+Free text vs metered video is the *other* direction and stays ruled out. Today's stack: chat ≈ ₹17,
+video ≈ ₹36. After Gate 1: text ≈ ₹2.50, video ≈ ₹6.55. Restructuring the sheet around a ₹4 gap
+the roadmap is deleting would also put a price on a clinical decision (locked #4) — a doctor
+picking chat to save ₹49 is choosing modality for a commercial reason. Messaging *inside* an
+already-billed visit is the generosity that stays (never-billed list).
+
+A second product (EHR-only SKU against EkaCare / Practo Ray) is also ruled out. Same codebase,
+second onboarding path — Instagram is not required to go live. One brand, two pitches.
+
+**Implementation integrity.** If in-clinic is free and teleconsult is metered, declared
+`consultation_type` cannot be the source of truth — a video session labelled in-clinic would never
+bill. Derive billable modality from whether a consultation session existed (open Q20). The ledger
+already records `in_person` via `doctor_wrapup` in `appointment-service.ts`; the rollup must count
+only teleconsult rows into `billableCount`. **Q20 is now a precondition of the first clinic doctor
+who enables teleconsult hours**, not only of the first mixed-modality invoice — a clinic doctor's
+default label is in-clinic, so a video session in a teleconsult block would otherwise never meter.
+See [`plan-teleconsult-hours.md`](../../Work/Product%20plans/plan-teleconsult-hours.md).
+
+### Why the teleconsult rate does not change for a clinic with no social (locked 2026-09-12)
+
+The meter prices the **teleconsult**, not the channel the patient arrived on. A doctor who said
+"Not yet" on Instagram pays the same ₹999 / 20 included / ₹49 / ₹12,499 as a creator. A cheaper
+clinic-only teleconsult rate would be a second sheet (ruled out as the EHR SKU). A more expensive
+one would charge more for the identical clinical event.
+
+Cost, if anything, runs the other way. Today's ₹36.46 per 6-minute consult is roughly ₹15 of AI
+that scales with DMs, not consults, sitting on ~₹21 of room, recording, composition, and STT. A
+doctor with no Instagram generates none of that DM-engine load, so their consult is cheaper to
+serve — the base absorbs less un-metered AI. Treat ~₹21 as a direction, not a measured number
+(open Q1 / Q23). Do not cut the rate on that guess.
+
+What *does* change is volume. A creator's teleconsult count is an output of DM conversion. A
+clinic doctor who blocks dedicated teleconsult hours turns volume into a **scheduling decision**
+— they will fill those blocks from an existing patient list. Three hours a day at ~6 minutes is
+~30/day, ~650/month on 22 working days: past the cap (~255) and past the 500 fair-use line.
+On today's stack that doctor costs ~₹24,000 against ₹12,499 of revenue. After Gate 1 (₹6.55)
+it is fine. This is the scenario that makes Gate 1 urgent and the custom formula a real
+conversation (open Q23).
+
+The 20 included consults are a genuine teleconsult trial for clinic doctors. Clinic ARPU is
+₹999 until they commit hours, then it steps up. Disclose the meter at the moment they add the
+first teleconsult block — `/clinics` no longer prints ₹49 (open Q24).
 
 ---
 
@@ -414,6 +504,43 @@ promise. Removing the zone by pricing at the floor pays ~50% of mid-zone revenue
 **₹25 stays what it already is: the rate you sell in exchange for a 500-consult commitment.** Not
 the rate you give away at the door.
 
+### Free text / metered video (or any teleconsult-modality split)
+
+Attacked 2026-09-12 as "genuine pricing" — video costs more to record and store, so charge video
+and give text away. Dies on three independent grounds:
+
+1. **The expensive line is the DM engine, not recording.** Today's ₹36.46 is ₹15 AI (scales with
+   DMs, not consults) against ₹4.58 room + ₹4.58 recording + ₹5.73 composition. Text is ≈ ₹17
+   today, not ₹0. After Gate 1 the text/video gap is ≈ ₹4.
+2. **It reopens locked #4 in the unsafe direction.** A doctor picking chat to save ₹49 is choosing
+   modality for a commercial reason. If a case goes wrong, that price tag is discoverable.
+3. **The generosity already exists.** Messaging inside an already-billed visit is free. A *new*
+   async consult bills like any other teleconsult.
+
+Capture video's extra cost in the **level** on a future cohort (Q9), not in a second meter.
+
+### A separate EHR SKU for physical clinics
+
+Attacked 2026-09-12 as a second product to fight EkaCare / Practo Ray. Dies because those prices
+are venture-subsidised loss leaders (already Ruled out under EMR benchmarking), because it inverts
+the thesis (EMR = cost-centre; we sell a revenue-centre), and because it volunteers onto the
+incumbents' turf. The prize — a paying clinic before Meta unblocks Instagram — is a **second
+onboarding path**, not a second product. Instagram is not required to go live. Same brand, two
+pitches (see "The pitch, in order").
+
+### A cheaper teleconsult rate for doctors not on social
+
+Attacked 2026-09-12 as "clinic path, no DM engine, so charge less." Dies because the meter
+prices the consult, not its origin — a second number is a second sheet (the EHR SKU again).
+Their consults are cheaper to serve (no DM-engine tokens), which is an argument against
+raising the rate, not for cutting it. Same ₹999 / 20 / ₹49 / ₹12,499. See the lock above.
+
+### Metering in-clinic visits
+
+A clinic at 20 patients/day hits the ₹12,499 cap around day 13. The revenue difference between
+metering those visits and including them in the base is close to zero, and the scary arithmetic
+(₹49 × 800) is the attack line competitors already use against per-booking meters. Locked #10.
+
 ---
 
 ## Legal basis — get this citation right
@@ -528,18 +655,21 @@ Other rules:
   positive signals; never as the sole trigger.
 - **No patient-side confirmation as a billing gate.** Survey response rates are low and it makes revenue
   depend on someone with no stake. Keep patient feedback for quality, not metering.
-- **Async equivalent:** billable when the *doctor* sends a clinical reply. Bot-only administrative
-  messages (timings, location, fees, booking link) are free forever.
-- **Every completed consult bills at ₹49, including follow-ups the doctor gives away free** (Q4, resolved
-  2026-08-22). Our meter counts consults our software delivered; it does not read the doctor's fee schedule.
-  See "Follow-ups bill at full rate" below.
+- **Async equivalent:** a *new* teleconsult bills when the *doctor* sends a clinical reply.
+  Bot-only administrative messages (timings, location, fees, booking link) are free forever.
+  A clinical reply *inside an already-billed visit* is free (never-billed list; open Q21).
+- **Every completed teleconsult bills at ₹49, including follow-ups the doctor gives away free**
+  (Q4, resolved 2026-08-22; restated 2026-09-12 as teleconsult-only). Our meter counts
+  teleconsults our software delivered; it does not read the doctor's fee schedule. In-clinic
+  follow-ups are included in the base. See "Follow-ups bill at full rate" below.
 - Reconnects are one consult, not two — idempotent flag on the appointment. Common on Indian mobile networks.
 - Errored/failed sessions → `void`, flagged for review. Under-bill rather than look dishonest.
 
 ### Follow-ups bill at full rate
 
-> Resolved 2026-08-22, settling Q4. **Every completed consult bills ₹49, whatever the doctor charged
-> the patient — including ₹0.**
+> Resolved 2026-08-22, settling Q4; restated 2026-09-12 as teleconsult-only. **Every completed
+> teleconsult bills ₹49, whatever the doctor charged the patient — including ₹0.** In-clinic
+> follow-ups are included in the base (locked #10).
 
 What the product already lets a doctor configure is much richer than "free or paid". `followUpPolicyV1Schema`
 in `backend/src/utils/service-catalog-schema.ts` accepts five discount types (`none`, `percent`, `flat_off`,
@@ -555,9 +685,9 @@ Three reasons we do not mirror any of that:
 2. **The schema permits an unbounded hole.** `free` + `max_followups: 100` + a 3,650-day window is a valid
    configuration. Exempting free follow-ups means ₹0 revenue against a real ~₹36.46 cost per consult, and a
    generous paediatrician gets there without trying.
-3. **It is one sentence.** "₹49 per completed consult, every consult" survives a WhatsApp explanation.
-   "₹49 unless it is an eligible follow-up inside your configured window under your configured tier" does not,
-   and every ambiguity becomes an invoice dispute.
+3. **It is one sentence.** "₹49 per completed teleconsult, every teleconsult" survives a WhatsApp
+   explanation. "₹49 unless it is an eligible follow-up inside your configured window under your
+   configured tier" does not, and every ambiguity becomes an invoice dispute.
 
 **The concession was already made twice, at both ends.** Assuming a third of consults are follow-ups:
 
@@ -869,7 +999,7 @@ LiveKit Build + Groq free tiers knock another ~₹0.95 off the first ~400 consul
 | 4 | OTP → WhatsApp auth template | S | Low | **Parked 4 Sep** — no WABA / no WA channel; still Twilio SMS; ₹0.6 / OTP when live |
 | 5 | English → Groq Turbo | M | Low | **Shipped 4 Sep** — apply 227 + `GROQ_API_KEY`; ₹3.1 |
 | 6 | Nova-2 → Nova-3 Multilingual | S | Low | **Shipped 4 Sep** — apply 228; −₹0.5 quality |
-| 7 | Stop composing | M | **High** | **Rollout 8 Sep** — ₹5.7; raw-track STT on locally; hook still on |
+| 7 | Stop composing | M | **High** | **Rollout 12 Sep** — ₹5.7; both flags on locally; hook still on |
 | 8 | Twilio Video → LiveKit | L | **High** | **Blocked, not queued** — ₹8.0; see the BAA note below |
 | 9 | Storage → R2 | M | Med | **Unblocked from 8** — ₹1.7; needs a Cloudflare DPA |
 
@@ -953,6 +1083,11 @@ Derm and cosmetic dominate doctor-creator Instagram, so plan for a long tail eve
 
 ### Volume: the binding constraint is the doctor's hours, not DM supply
 
+That sentence is true for a **creator** — teleconsult volume is an output of DM conversion. A
+clinic doctor who publishes dedicated teleconsult hours turns volume into a scheduling
+decision (open Q23). The table below still holds as a capacity ceiling; do not treat it as
+"clinic doctors will not reach it."
+
 At 6–8 minutes a consult:
 
 | Daily teleconsult window | At 6 min | At 8 min |
@@ -975,11 +1110,13 @@ On the shape of the market:
 
 ### Where the segments land on the plan
 
-| Segment | Consults/month | Zone | Monthly bill (ex-GST) |
+| Segment | Teleconsults/month | Zone | Monthly bill (ex-GST) |
 |---|---|---|---|
+| Solo clinic, in-clinic only | 0 | Base | ₹999 (any OPD volume) |
 | Small creator converting DMs | 20–60 | Meter | ₹999–₹2,959 |
 | Growing | 60–200 | Meter, reaching the cap ~255 | ₹2,959–₹9,819 |
 | Established virtual practice | 400–800 | Cap → custom formula from 500 | ₹12,499 → ~₹17–20k custom |
+| 3-doctor clinic + light teleconsult | 0–60 | Base × 3 | ₹2,997 + meter after 60 included |
 
 Two things the research changed: margins are *better* than modelled, because cost per consult was
 overstated. And the custom band is not an edge case — it is where a successful doctor creator
@@ -1008,7 +1145,7 @@ row in a table.)*
 | 1 | **Ship the cost-cut stack** (LiveKit + Groq + Luna + stop composing) | On today's stack (₹36.46/consult) the cap breaks even at **343 consults** — inside the researched 400–800 range for an established practice. Marginal margin is **26%** until the stack lands (87% after). The bootstrapping rule (every customer gross-margin-positive from month one, per `PRICING_AND_UNIT_ECONOMICS.md`) fails exactly on the best customers. Non-negotiable before the first paid invoice. Items 1–4 of the order table are half the saving and do not need the video rewrite. |
 | 2 | **Billable ≠ verified fix** | No-show exclusion + the token-mode explicit-end signal (open Q10), in `consultation-verification-service.ts`. Without it the first invoice can contain a billed ghost. |
 | 3 | **AI cost query** | `audit_logs` where `action = 'ai_classification'` — decides whether the ₹5 fixed component is real (open Q1). |
-| 4 | **Mandate + paper** | UPI AutoPay setup, GST invoice wording, [`PILOT_AGREEMENT.md`](./PILOT_AGREEMENT.md), and the standing lawyer sign-off on the fee-splitting reading before any pricing page goes public. |
+| 4 | **Mandate + paper** | UPI AutoPay setup, GST invoice wording, [`PILOT_AGREEMENT.md`](./PILOT_AGREEMENT.md), and the standing lawyer sign-off on the fee-splitting reading before any pricing page goes public. An in-clinic-only first invoice has almost no session COGS (~₹2), so Gate 1 is not the blocker for that segment — Gate 4 still is. |
 
 ---
 
@@ -1035,6 +1172,11 @@ row in a table.)*
 | 17 | Custom-plan outreach trigger | Current rule: sustain 300+ for two months, then we reach out. Under ₹49 the cap binds at ~255, so that call lands ~45 consults after they first hit the ceiling. Decide before the first such doctor: keep 300 and frame as a 500-fair-use heads-up (no quote unless they ask), or nudge the trigger to sustained ~400 so they get a few capped months first. |
 | 18 | Does LiveKit Ship ($50) satisfy our DPDP / recording posture, or do we need Scale ($500) for SOC 2 / BAA? | Counsel + LiveKit plan sheet. Same question exists on Twilio today (Security / Enterprise). Can erase part of the video saving. |
 | 19 | WhatsApp service-message billing from 1 Oct 2026 | Confirm the India utility rate still ₹0.115 and whether in-window utility templates stay free until that date. Instrument conversation-start channel (Click-to-WhatsApp vs cold template) before October. |
+| 20 | Billable modality from session, not label | If `consultation_type` is `in_clinic` but a video/voice/text session existed, the row must meter. **Precondition of the first clinic doctor who enables teleconsult hours** (they are mixed-modality by construction). `usage-ledger-service.ts` already normalises `in_clinic`/`in_person` to `in_person` — a labelled in-clinic video session would silently drop. See [`plan-teleconsult-hours.md`](../../Work/Product%20plans/plan-teleconsult-hours.md). |
+| 21 | Same-episode messaging window | A clinical reply inside an already-billed visit is free. `SAME_ENCOUNTER_MAX_SECONDS` (120s) is a reconnect rule, not a two-day follow-up. Pick a care-episode window and put it on the pricing page before invoice one. |
+| 22 | Extra-doctor base | Locked #9 is ₹999 per additional clinician, same included 20. Confirm in the first multi-doctor conversation that this, not a discounted second seat, is the number they hear. |
+| 23 | Teleconsult-hours volume | A doctor who blocks dedicated teleconsult hours fills them from an existing list, not a DM funnel. ~650/month is reachable (3h × ~6 min × 22 days), which clears the cap and the 500 fair-use line. On today's stack that doctor is gross-margin negative at the cap. Settle by measuring the first clinic doctor who enables it; then amend the "binding constraint is the doctor's hours" claim and Q17's outreach trigger if needed. |
+| 24 | Meter disclosure point | `/clinics` no longer prints ₹49. Name the in-product moment that does. Leaning: the first time they add a teleconsult availability block — "Your plan includes 20 teleconsults a month. ₹49 each after that, only when the consult happens." Must land before they can publish those hours. |
 
 ---
 
@@ -1071,12 +1213,13 @@ Reconciling this touches payments, spans several files, and probably needs a mig
 
 ## Related
 
-[`PRICING_AND_UNIT_ECONOMICS.md`](./PRICING_AND_UNIT_ECONOMICS.md) · [`PRODUCT_PHASES.md`](./PRODUCT_PHASES.md) · [`ICP_AND_FIRST_CUSTOMER.md`](./ICP_AND_FIRST_CUSTOMER.md) · [`LAUNCH_READINESS_CHECKLIST.md`](./LAUNCH_READINESS_CHECKLIST.md) · [`PILOT_AGREEMENT.md`](./PILOT_AGREEMENT.md) · [`COST_TRACKER.md`](./COST_TRACKER.md) · [Cost-cut stack canvas](/Users/abhisheksahil/.cursor/projects/Users-abhisheksahil-Desktop-Clariva-Bot/canvases/cost-cut-stack.canvas.tsx) · [`plan-00-billing-roadmap.md`](../../Work/Product%20plans/billing/plan-00-billing-roadmap.md) — implementation
+[`PRICING_AND_UNIT_ECONOMICS.md`](./PRICING_AND_UNIT_ECONOMICS.md) · [`PRODUCT_PHASES.md`](./PRODUCT_PHASES.md) · [`ICP_AND_FIRST_CUSTOMER.md`](./ICP_AND_FIRST_CUSTOMER.md) · [`LAUNCH_READINESS_CHECKLIST.md`](./LAUNCH_READINESS_CHECKLIST.md) · [`PILOT_AGREEMENT.md`](./PILOT_AGREEMENT.md) · [`COST_TRACKER.md`](./COST_TRACKER.md) · [Cost-cut stack canvas](/Users/abhisheksahil/.cursor/projects/Users-abhisheksahil-Desktop-Clariva-Bot/canvases/cost-cut-stack.canvas.tsx) · [`plan-00-billing-roadmap.md`](../../Work/Product%20plans/billing/plan-00-billing-roadmap.md) — implementation · [`plan-teleconsult-hours.md`](../../Work/Product%20plans/plan-teleconsult-hours.md) — clinic teleconsult hours (Drafted)
 
 **Status:** Structure `Locked` — flat fee + separate invoice (2026-08-18); **cap + custom formula
-(2026-08-20)**; **refund rail + two payment modes (2026-08-21)**. Levels (₹999 incl. 20 / ₹49 /
-₹12,499, cap binds ~255) `Hypothesis` — selling begins on this sheet; validate in the first five
-conversations, then copy into `PRICING_AND_UNIT_ECONOMICS.md`.
+(2026-08-20)**; **refund rail + two payment modes (2026-08-21)**; **in-clinic included + base per
+doctor + one teleconsult rate (2026-09-12)**. Levels (₹999 / doctor incl. 20 teleconsults / ₹49 /
+₹12,499 per practice, cap binds ~255 teleconsults) `Hypothesis` — selling begins on this sheet;
+validate in the first five conversations, then copy into `PRICING_AND_UNIT_ECONOMICS.md`.
 History: tiers + optimised cost basis + volume/duration benchmarks added 2026-08-19; tiers replaced by
 one-rate-plus-cap 2026-08-20 after the both-directions test; cancellations/refunds structure locked and
 Q7 resolved 2026-08-21; gateway made optional (bookings-only vs prepaid) the same day; ₹99 meter
@@ -1085,7 +1228,12 @@ replaced by ₹49 the same evening after the regressivity test; custom ladder co
 meter ruled out the same evening (₹25 is the committed-volume rate, not the walk-in rate);
 AutoPay and DM auto-refund parked 2026-08-22 (founder: why) — B-Q8;
 cost-cut stack researched 2026-08-31 (today ₹36.46, after ₹6.55, FX ₹95.5; `gpt-5.2` shutdown
-11 Dec 2026; Q3 answered in code; Q18/Q19 opened).
+11 Dec 2026; Q3 answered in code; Q18/Q19 opened);
+in-clinic visits taken off the meter, base made per doctor, desk seats free, free-text /
+separate-EHR-SKU / in-clinic-meter ruled out 2026-09-12 (Q20–Q22 opened);
+teleconsult rate confirmed channel-independent (clinic / no-social pays the same sheet),
+cheaper-clinic-rate ruled out, Q20 promoted to teleconsult-hours precondition, Q23–Q24
+opened 2026-09-12.
 
 **Not legal advice.** The fee-splitting reading needs sign-off from an Indian health-tech lawyer before any
 pricing page or pilot agreement goes out. The structure was chosen so that it does not *depend* on winning

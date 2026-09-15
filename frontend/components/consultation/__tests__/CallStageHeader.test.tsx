@@ -50,6 +50,23 @@ describe("CallStageHeader", () => {
     );
   });
 
+  it("pins Consult at stage size when the toggle is provided", () => {
+    const onPin = vi.fn();
+    render(
+      <CallStageHeader
+        counterpartyName="Patient"
+        connectedAt={null}
+        remoteNetworkLevel={null}
+        status="live"
+        onToggleConsultStagePin={onPin}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("call-stage-pin"));
+    expect(onPin).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: "Pin video at stage size" })).toBeInTheDocument();
+  });
+
   it("shows Exit when expanded", () => {
     const onExit = vi.fn();
     render(

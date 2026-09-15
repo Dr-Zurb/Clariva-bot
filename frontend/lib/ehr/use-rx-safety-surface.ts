@@ -21,9 +21,11 @@ import { useRxForm } from "@/components/cockpit/rx/RxFormContext";
 import { usePrescriptionFormShell } from "@/components/cockpit/rx/PrescriptionFormShellContext";
 import { ackKeyForAllergyMatch } from "@/components/ehr/AllergyClashBanner";
 import { ackKeyForDdi } from "@/components/ehr/InteractionChips";
+import type { DeskReportedAllergy } from "@/lib/ehr/desk-reported-allergies";
 import {
   matchAllergens,
   type AllergyMatch,
+  type MatchableAllergy,
   type MatchableMedicine,
 } from "@/lib/ehr/match-allergens";
 import { useAcknowledgements } from "@/lib/ehr/use-acknowledgements";
@@ -38,28 +40,37 @@ export interface UseRxSafetySurfaceArgs {
 export interface RxSafetySurfaceValue {
   matchableMedicines: MatchableMedicine[];
   medicineInstanceIds: string[];
-  allergies: ReadonlyArray<PatientAllergy>;
+  allergies: ReadonlyArray<MatchableAllergy>;
   drugMasterIndex: ReadonlyMap<string, DrugMasterRow>;
   setDrugMasterIndex: React.Dispatch<
     React.SetStateAction<ReadonlyMap<string, DrugMasterRow>>
   >;
   ddiInteractions: InteractionRow[];
   formAllergyMatches: AllergyMatch[];
+  unacceptedDeskAllergies: ReadonlyArray<DeskReportedAllergy>;
   isAcked: (key: string) => boolean;
   onAcknowledge: (keys: string[]) => void;
   onAckDdi: (key: string) => void;
+  onAckDeskAllergy: (id: string) => void;
   /** True when at least one unacked allergy match or DDI chip would render. */
   visible: boolean;
   clashesCount: number;
   ddiCount: number;
+  deskAllergyCount: number;
 }
 
 export function computeRxSafetyStripVisible(inputs: {
   formAllergyMatches: AllergyMatch[];
   medicineInstanceIds: ReadonlyArray<string>;
   ddiInteractions: ReadonlyArray<InteractionRow>;
+  unacceptedDeskAllergies?: ReadonlyArray<{ id: string }>;
   isAcked: (key: string) => boolean;
-}): { visible: boolean; clashesCount: number; ddiCount: number } {
+}): {
+  visible: boolean;
+  clashesCount: number;
+  ddiCount: number;
+  deskAllergyCount: number;
+} {
   const unackedClashes = inputs.formAllergyMatches.filter((m) => {
     const instanceId = inputs.medicineInstanceIds[m.medicineIndex];
     const key = instanceId
@@ -74,6 +85,7 @@ export function computeRxSafetyStripVisible(inputs: {
     visible: unackedClashes.length > 0 || unackedDdi.length > 0,
     clashesCount: unackedClashes.length,
     ddiCount: unackedDdi.length,
+    deskAllergyCount: 0,
   };
 }
 
@@ -175,12 +187,14 @@ export function useRxSafetySurface({
     [medicines],
   );
 
+  const matcherAllergies = useMemo<MatchableAllergy[]>(() => [...allergies], [allergies]);
+
   const formAllergyMatches = useMemo<AllergyMatch[]>(
-    () => matchAllergens(matchableMedicines, allergies, drugMasterIndex),
-    [matchableMedicines, allergies, drugMasterIndex],
+    () => matchAllergens(matchableMedicines, matcherAllergies, drugMasterIndex),
+    [matchableMedicines, matcherAllergies, drugMasterIndex],
   );
 
-  const { visible, clashesCount, ddiCount } = useMemo(
+  const { visible, clashesCount, ddiCount, deskAllergyCount } = useMemo(
     () =>
       computeRxSafetyStripVisible({
         formAllergyMatches,
@@ -199,16 +213,19 @@ export function useRxSafetySurface({
   return {
     matchableMedicines,
     medicineInstanceIds,
-    allergies,
+    allergies: matcherAllergies,
     drugMasterIndex,
     setDrugMasterIndex,
     ddiInteractions,
     formAllergyMatches,
+    unacceptedDeskAllergies: [] as ReadonlyArray<DeskReportedAllergy>,
     isAcked: acknowledgements.isAcked,
     onAcknowledge: acknowledgements.ackMany,
     onAckDdi: acknowledgements.ack,
+    onAckDeskAllergy: () => undefined,
     visible,
     clashesCount,
     ddiCount,
+    deskAllergyCount,
   };
 }

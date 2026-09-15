@@ -7,6 +7,7 @@ import { Request, Response } from 'express';
 import { DateTime } from 'luxon';
 import { asyncHandler } from '../utils/async-handler';
 import { successResponse } from '../utils/response';
+import { DEFAULT_STAFF_CAPABILITIES } from '../auth/staff-capabilities';
 import { requireResolvedDoctor } from '../middleware/resolve-acting-doctor';
 import { getDoctorTimezone } from '../services/doctor-settings-service';
 
@@ -22,6 +23,10 @@ export const getClinicStaffMeHandler = asyncHandler(async (req: Request, res: Re
         actorKind: req.actorKind ?? 'doctor',
         timezone,
         today,
+        capabilities:
+          req.actorKind === 'staff'
+            ? (req.staffCapabilities ?? [])
+            : [...DEFAULT_STAFF_CAPABILITIES],
       },
       req
     )

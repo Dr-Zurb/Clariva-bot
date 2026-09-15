@@ -4,8 +4,8 @@
  * Read-only go-live checklist derived from existing data — no new table.
  * Returns booleans only (never raw settings / availability / IG rows).
  *
- * Signals (ONB-D2):
- *   - Instagram: doctor_instagram row exists
+ * Signals (ONB-D2 + clinic-path P2):
+ *   - Instagram: doctor_instagram row exists (required unless social_enquiries is not_yet)
  *   - Practice: doctor_settings.practice_name non-empty
  *   - Pricing: catalog_mode set + fee (single_fee) or ≥1 offering (multi_service)
  *   - Availability: ≥1 availability row
@@ -22,6 +22,8 @@ import type { DoctorSettingsRow } from '../types/doctor-settings';
 
 export interface OnboardingStatus {
   instagramConnected: boolean;
+  /** False when the doctor said patients do not message them on Instagram/Facebook. */
+  instagramRequired: boolean;
   practiceInfoSet: boolean;
   pricingSet: boolean;
   availabilitySet: boolean;
@@ -31,6 +33,13 @@ export interface OnboardingStatus {
 export interface GetOnboardingStatusInput {
   doctorId: string;
   correlationId?: string;
+}
+
+/** Instagram is required unless the doctor answered Not yet. Missing/yes → required. */
+export function isInstagramRequired(
+  socialEnquiries: string | null | undefined
+): boolean {
+  return socialEnquiries !== 'not_yet';
 }
 
 /** Non-empty trimmed practice name. */
@@ -99,15 +108,17 @@ export async function getOnboardingStatus(
   ]);
 
   const instagramConnected = ig.connected === true;
+  const instagramRequired = isInstagramRequired(settings?.social_enquiries);
   const practiceInfoSet = isPracticeInfoSet(settings?.practice_name);
   const pricingSet = isPricingSet(settings);
+  const setupReady = practiceInfoSet && pricingSet && availabilitySet;
 
   return {
     instagramConnected,
+    instagramRequired,
     practiceInfoSet,
     pricingSet,
     availabilitySet,
-    complete:
-      instagramConnected && practiceInfoSet && pricingSet && availabilitySet,
+    complete: setupReady && (instagramRequired ? instagramConnected : true),
   };
 }

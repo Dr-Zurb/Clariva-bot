@@ -229,6 +229,14 @@ export interface Appointment {
   /** T=0 starting-now stamp (migration 195). */
   patient_start_notified_at?: Date | string | null;
   /**
+   * Desk visit-prep flags on dated GET /api/v1/appointments (dvp P3).
+   * Presence only — not stored on `appointments`. Omitted on non-list reads.
+   */
+  has_desk_vitals?: boolean;
+  has_history_submission?: boolean;
+  visit_document_count?: number;
+  has_visit_documents?: boolean;
+  /**
    * CS-03: projected from the *presence* of an `opd_queue_entries` row joined
    * by `appointment_id`. Today the schema only supports token-style queue
    * entries (migration 028 has no `event_type` column on `opd_queue_entries`),
@@ -798,7 +806,10 @@ export type InsertAuditLog = Omit<AuditLog, 'id' | 'created_at'>;
  * Insert shape for visit_narrative_provenance.
  * Append-only — there is no UpdateVisitNarrativeProvenance.
  */
-export type InsertVisitNarrativeProvenance = Omit<VisitNarrativeProvenance, 'id' | 'accepted_at'> & {
+export type InsertVisitNarrativeProvenance = Omit<
+  VisitNarrativeProvenance,
+  'id' | 'accepted_at'
+> & {
   accepted_at?: Date;
 };
 

@@ -24,6 +24,8 @@ export interface RibbonAllergyChip {
   name: string;
   reaction?: string | null;
   severity?: "mild" | "moderate" | "severe" | null;
+  /** Named in this visit's desk submission. */
+  fromDesk?: boolean;
 }
 
 export interface RibbonChronicChip {

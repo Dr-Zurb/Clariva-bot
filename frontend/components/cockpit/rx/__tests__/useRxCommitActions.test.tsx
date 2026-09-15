@@ -7,6 +7,10 @@ import {
   useRxCommitActions,
 } from "@/components/cockpit/rx/useRxCommitActions";
 import {
+  isPrintAdvanceHeld,
+  resetPrintAdvanceHoldForTests,
+} from "@/lib/cockpit/rx-print-advance";
+import {
   RxFormProvider,
   createEmptyComplaint,
   createEmptyRxFormFields,
@@ -140,6 +144,18 @@ function installPrintIframe(
   objectUrl = "blob:rx"
 ) {
   const afterPrintHandlers: Array<() => void> = [];
+  const mediaListeners: Array<(event: { matches: boolean }) => void> = [];
+  const media = {
+    matches: false,
+    addEventListener: (_event: string, cb: (event: { matches: boolean }) => void) => {
+      mediaListeners.push(cb);
+    },
+    addListener: (cb: (event: { matches: boolean }) => void) => {
+      mediaListeners.push(cb);
+    },
+    removeEventListener: vi.fn(),
+    removeListener: vi.fn(),
+  };
   const loadObserver = new MutationObserver(() => {
     printIframes().forEach((el) => {
       if (el.dataset.loadFired === "1") return;
@@ -163,6 +179,7 @@ function installPrintIframe(
     .mockReturnValue({
       focus: vi.fn(),
       print,
+      matchMedia: () => media,
       addEventListener: (event: string, cb: () => void) => {
         if (event === "afterprint") afterPrintHandlers.push(cb);
       },
@@ -174,6 +191,10 @@ function installPrintIframe(
     createObjectURL,
     revokeObjectURL,
     fireAfterPrint: () => afterPrintHandlers.forEach((cb) => cb()),
+    firePrintMedia: (matches: boolean) => {
+      media.matches = matches;
+      mediaListeners.forEach((cb) => cb({ matches }));
+    },
     restore: () => {
       loadObserver.disconnect();
       fetchSpy.mockRestore();
@@ -192,10 +213,12 @@ describe("useRxCommitActions", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     sessionStorage.clear();
+    resetPrintAdvanceHoldForTests();
   });
 
   afterEach(() => {
     printIframes().forEach((el) => el.remove());
+    resetPrintAdvanceHoldForTests();
   });
 
   it("opens preview without Plan pane mounted", async () => {
@@ -496,19 +519,18 @@ describe("useRxCommitActions", () => {
       expect(print).toHaveBeenCalledTimes(1);
     });
     expect(openSpy).not.toHaveBeenCalled();
+    expect(isPrintAdvanceHeld()).toBe(true);
+    expect(sessionStorage.getItem("pf11_cancelled_appt-1")).toBe("1");
+    printStub.firePrintMedia(true);
+    printStub.firePrintMedia(false);
+    expect(isPrintAdvanceHeld()).toBe(false);
     expect(sessionStorage.getItem("pf11_cancelled_appt-1")).toBeNull();
     printStub.restore();
     openSpy.mockRestore();
   });
 
-  it("clears a stale print-only advance block when finishing", async () => {
-    const { getPrescriptionPdfUrl, sendPrescriptionToPatient } =
-      await import("@/lib/api");
-    vi.mocked(getPrescriptionPdfUrl).mockResolvedValue({
-      success: true,
-      data: { signedUrl: "https://storage.example/rx.pdf?sig=1" },
-      meta: { timestamp: "", requestId: "" },
-    });
+  it("clears a stale print-only advance block when finishing without print", async () => {
+    const { sendPrescriptionToPatient } = await import("@/lib/api");
     vi.mocked(sendPrescriptionToPatient).mockResolvedValue({
       success: true,
       data: { sent: true, channels: { email: true } },
@@ -517,11 +539,7 @@ describe("useRxCommitActions", () => {
     // An earlier Print on this visit parked the next-patient advance.
     sessionStorage.setItem("pf11_cancelled_appt-1", "1");
 
-    const print = vi.fn();
-    const printStub = installPrintIframe(print);
-    const onFinish = vi.fn(() => {
-      window.history.pushState({}, "", "/dashboard/appointments/next-b");
-    });
+    const onFinish = vi.fn();
     const fields = createEmptyRxFormFields();
     fields.medicines[0] = { ...fields.medicines[0]!, medicineName: "Aspirin" };
 
@@ -539,13 +557,13 @@ describe("useRxCommitActions", () => {
     );
 
     await act(async () => {
-      result.current.sendFinishAndPrint();
+      result.current.sendAndFinish();
     });
     await waitFor(() => {
-      expect(print).toHaveBeenCalled();
+      expect(onFinish).toHaveBeenCalledTimes(1);
     });
     expect(sessionStorage.getItem("pf11_cancelled_appt-1")).toBeNull();
-    printStub.restore();
+    expect(isPrintAdvanceHeld()).toBe(false);
   });
 
   it("opens print as soon as the PDF is ready, without waiting for wrap-up", async () => {
@@ -606,9 +624,9 @@ describe("useRxCommitActions", () => {
     });
     const print = vi.fn();
     const printStub = installPrintIframe(print);
-    let iframesAtFinish = -1;
+    let holdAtFinish = false;
     const onFinish = vi.fn(() => {
-      iframesAtFinish = printIframes().length;
+      holdAtFinish = isPrintAdvanceHeld();
     });
     const fields = createEmptyRxFormFields();
     fields.medicines[0] = { ...fields.medicines[0]!, medicineName: "Aspirin" };
@@ -632,12 +650,13 @@ describe("useRxCommitActions", () => {
     await waitFor(() => {
       expect(onFinish).toHaveBeenCalledTimes(1);
     });
-    // The print frame must already be mounted when wrap-up runs, or the
-    // next-patient jump beats the dialog.
-    expect(iframesAtFinish).toBe(1);
+    // Wrap-up may remount the cockpit; the next-patient jump must stay
+    // parked until the dialog is handed off.
+    expect(holdAtFinish).toBe(true);
     await waitFor(() => {
       expect(print).toHaveBeenCalledTimes(1);
     });
+    expect(isPrintAdvanceHeld()).toBe(true);
     printStub.restore();
   });
 
@@ -986,6 +1005,7 @@ describe("useRxCommitActions rxl-25", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     sessionStorage.clear();
+    resetPrintAdvanceHoldForTests();
   });
 
   it("opens the reason dialog instead of sending an issued note", async () => {

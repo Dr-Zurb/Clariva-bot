@@ -214,6 +214,49 @@ export interface LabPdfExtractFromAttachmentResult {
 }
 
 /**
+ * MIME dispatch shared by prescription attachments and desk visit pages.
+ * Suggestion-only — caller must still verify before applying.
+ */
+export async function extractLabFromBytes(
+  args: {
+    sourceId: string;
+    bytes: Buffer;
+    fileType: string | null;
+    correlationId: string;
+  },
+  deps: ExtractLabPdfFromAttachmentDeps = {}
+): Promise<LabPdfExtractFromAttachmentResult> {
+  const mime = (args.fileType ?? '').trim().toLowerCase();
+
+  if (LAB_VISION_MIME.has(mime)) {
+    const extractImage = deps.extractImage ?? extractLabRowsFromImage;
+    const extracted = await extractImage(args.bytes, mime, { correlationId: args.correlationId });
+    return {
+      attachmentId: args.sourceId,
+      rows: boundRawExtractedRows(extracted.rows),
+      // A photo is one page, and the vision reader has no notion of a page it
+      // refused to read — it fails soft with zero rows instead.
+      pageCount: 1,
+      skippedPageIndexes: [],
+      source: 'vision',
+    };
+  }
+
+  if (mime && !PDF_MIME.has(mime)) {
+    throw new ValidationError('Extraction supports PDF or photo reports only');
+  }
+
+  const extracted = await extractLabRowsFromPdf(args.bytes, { readPageItems: deps.readPageItems });
+  return {
+    attachmentId: args.sourceId,
+    rows: boundRawExtractedRows(extracted.rows),
+    pageCount: extracted.pageCount,
+    skippedPageIndexes: extracted.skippedPageIndexes,
+    source: 'pdf_text',
+  };
+}
+
+/**
  * Own the attachment, pull bytes via service-role, extract verbatim rows.
  * Suggestion-only — caller must still verify before applying.
  *
@@ -239,32 +282,13 @@ export async function extractLabPdfFromAttachment(
     args.userId
   );
 
-  const mime = (fileType ?? '').trim().toLowerCase();
-
-  if (LAB_VISION_MIME.has(mime)) {
-    const extractImage = deps.extractImage ?? extractLabRowsFromImage;
-    const extracted = await extractImage(bytes, mime, { correlationId: args.correlationId });
-    return {
-      attachmentId,
-      rows: boundRawExtractedRows(extracted.rows),
-      // A photo is one page, and the vision reader has no notion of a page it
-      // refused to read — it fails soft with zero rows instead.
-      pageCount: 1,
-      skippedPageIndexes: [],
-      source: 'vision',
-    };
-  }
-
-  if (mime && !PDF_MIME.has(mime)) {
-    throw new ValidationError('Extraction supports PDF or photo reports only');
-  }
-
-  const extracted = await extractLabRowsFromPdf(bytes, { readPageItems: deps.readPageItems });
-  return {
-    attachmentId,
-    rows: boundRawExtractedRows(extracted.rows),
-    pageCount: extracted.pageCount,
-    skippedPageIndexes: extracted.skippedPageIndexes,
-    source: 'pdf_text',
-  };
+  return extractLabFromBytes(
+    {
+      sourceId: attachmentId,
+      bytes,
+      fileType,
+      correlationId: args.correlationId,
+    },
+    deps
+  );
 }

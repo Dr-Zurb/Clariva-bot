@@ -661,7 +661,12 @@ export default function VideoRoom({
   const patientStageBoxRef = useRef<HTMLDivElement>(null);
   const [fullscreenActive, setFullscreenActive] = useState(false);
   const [cockpitPaneWidth, setCockpitPaneWidth] = useState(0);
-  const { fillTabActive, exitFillTab } = useCallStageChrome();
+  const {
+    fillTabActive,
+    exitFillTab,
+    consultStagePinned,
+    pinConsultStage,
+  } = useCallStageChrome();
 
   const openInCallChat = useCallback(() => {
     setShowInCallChat(true);
@@ -5017,6 +5022,12 @@ export default function VideoRoom({
           fullscreenActive={fullscreenActive}
           onExitExpand={
             fillTabActive || fullscreenActive ? handleExitExpand : undefined
+          }
+          consultStagePinned={isCockpit ? consultStagePinned : false}
+          onToggleConsultStagePin={
+            isCockpit
+              ? () => pinConsultStage(!consultStagePinned)
+              : undefined
           }
         />
       ) : null}

@@ -12,13 +12,69 @@ import {
   getDeskHisab,
   leaveDeskAppointment,
   listDeskAppointments,
+  listDeskLabPending,
+  type DeskLabPendingItem,
 } from "@/lib/desk/api";
 import type { DeskPaymentMethod, DeskReturnMethod } from "@/lib/desk/payment";
+import {
+  deskShowsLabsPending,
+  hasDeskCapability,
+  isDeskLabsOnly,
+} from "@/lib/desk/capabilities";
+import { deskPrepFromFlags, type DeskTodayRow } from "@/lib/desk/prep";
 import { countDeskQueue, isOpenDeskAppointment } from "@/lib/desk/queue";
 import { queryKeys } from "@/lib/query/keys";
 import { POLL_INTERVAL, pollingOptions } from "@/lib/query/polling";
+import type { Appointment } from "@/types/appointment";
 
-export function useDeskTodayQuery(token: string, date?: string) {
+function asAppointmentStatus(value: string): Appointment["status"] {
+  if (
+    value === "pending" ||
+    value === "confirmed" ||
+    value === "cancelled" ||
+    value === "completed" ||
+    value === "no_show"
+  ) {
+    return value;
+  }
+  return "completed";
+}
+
+function asPatientSex(value: string | null): Appointment["patient_sex"] {
+  if (value === "male" || value === "female" || value === "other") return value;
+  return null;
+}
+
+function deskTodayRowFromLabPending(item: DeskLabPendingItem): DeskTodayRow {
+  return {
+    id: item.appointmentId,
+    doctor_id: "",
+    patient_id: item.patientId,
+    patient_name: item.patientName ?? "",
+    patient_phone: item.patientPhone,
+    patient_mrn: item.patientMrn,
+    patient_age: item.patientAge,
+    patient_sex: asPatientSex(item.patientSex),
+    appointment_date: item.appointmentDate,
+    status: asAppointmentStatus(item.status),
+    patient_checked_in_at: item.patientCheckedInAt,
+    created_at: item.appointmentDate,
+    updated_at: item.appointmentDate,
+    deskPrep: deskPrepFromFlags({
+      has_visit_documents: item.hasVisitDocuments,
+      visit_document_count: item.visitDocumentCount,
+    }),
+    daysPending: item.daysPending,
+    reportUploaded: item.reportUploaded,
+    labOrders: item.orders,
+  };
+}
+
+export function useDeskTodayQuery(
+  token: string,
+  date?: string,
+  options?: { labsPendingMode?: boolean }
+) {
   const queryClient = useQueryClient();
 
   const contextQuery = useQuery({
@@ -33,6 +89,12 @@ export function useDeskTodayQuery(token: string, date?: string) {
   const clinicToday = contextQuery.data?.today;
   const selectedDate = date && date.length > 0 ? date : clinicToday;
   const timezone = contextQuery.data?.timezone ?? "Asia/Kolkata";
+  const capabilities = contextQuery.data?.capabilities;
+  const canBill = hasDeskCapability(capabilities, "front_desk");
+  const canLabs = deskShowsLabsPending(capabilities);
+  const labsOnly = isDeskLabsOnly(capabilities);
+  const labsPendingMode =
+    labsOnly || (Boolean(options?.labsPendingMode) && canLabs);
 
   const listQuery = useQuery({
     queryKey: queryKeys.desk.today(selectedDate ?? ""),
@@ -40,7 +102,17 @@ export function useDeskTodayQuery(token: string, date?: string) {
       const list = await listDeskAppointments(token, selectedDate!);
       return list.data.appointments.filter(isOpenDeskAppointment);
     },
-    enabled: Boolean(token) && Boolean(selectedDate),
+    enabled: Boolean(token) && Boolean(selectedDate) && !labsOnly,
+    ...pollingOptions(POLL_INTERVAL.COUNTS),
+  });
+
+  const pendingQuery = useQuery({
+    queryKey: queryKeys.desk.labPending(),
+    queryFn: async () => {
+      const res = await listDeskLabPending(token);
+      return res.data.items;
+    },
+    enabled: Boolean(token) && contextQuery.isSuccess && canLabs,
     ...pollingOptions(POLL_INTERVAL.COUNTS),
   });
 
@@ -50,7 +122,7 @@ export function useDeskTodayQuery(token: string, date?: string) {
       const res = await getDeskHisab(token, selectedDate!);
       return res.data.hisab;
     },
-    enabled: Boolean(token) && Boolean(selectedDate),
+    enabled: Boolean(token) && Boolean(selectedDate) && canBill,
     ...pollingOptions(POLL_INTERVAL.COUNTS),
   });
 
@@ -109,35 +181,60 @@ export function useDeskTodayQuery(token: string, date?: string) {
     },
   });
 
-  const rows = listQuery.data ?? [];
+  const dateRows: DeskTodayRow[] = useMemo(
+    () =>
+      (listQuery.data ?? []).map((row) => ({
+        ...row,
+        deskPrep: deskPrepFromFlags(row),
+      })),
+    [listQuery.data]
+  );
+  const pendingRows: DeskTodayRow[] = useMemo(
+    () => (pendingQuery.data ?? []).map(deskTodayRowFromLabPending),
+    [pendingQuery.data]
+  );
+  const outstandingRows = useMemo(
+    () => pendingRows.filter((row) => !row.reportUploaded),
+    [pendingRows]
+  );
+  const rows = labsOnly
+    ? pendingRows
+    : labsPendingMode
+      ? outstandingRows
+      : dateRows;
   const counts = useMemo(
     () => countDeskQueue(listQuery.data ?? []),
     [listQuery.data]
   );
+  const labsPendingCount = outstandingRows.length;
 
   const error = contextQuery.error
     ? deskErrorMessage(contextQuery.error, "Could not load today")
-    : listQuery.error
-      ? deskErrorMessage(listQuery.error, "Could not load today")
-      : hisabQuery.error
-        ? deskErrorMessage(
-            hisabQuery.error,
-            "Could not load today's collection"
-          )
-        : arriveMutation.error
-          ? deskErrorMessage(arriveMutation.error, "Could not check in")
-          : collectMutation.error
-            ? deskErrorMessage(
-                collectMutation.error,
-                "Could not record payment"
-              )
-            : leaveMutation.error
-              ? deskErrorMessage(leaveMutation.error, "Could not mark left")
-              : null;
+    : labsPendingMode && pendingQuery.error
+      ? deskErrorMessage(pendingQuery.error, "Could not load labs pending")
+      : !labsPendingMode && listQuery.error
+        ? deskErrorMessage(listQuery.error, "Could not load today")
+        : canBill && hisabQuery.error
+          ? deskErrorMessage(
+              hisabQuery.error,
+              "Could not load today's collection"
+            )
+          : arriveMutation.error
+            ? deskErrorMessage(arriveMutation.error, "Could not check in")
+            : collectMutation.error
+              ? deskErrorMessage(
+                  collectMutation.error,
+                  "Could not record payment"
+                )
+              : leaveMutation.error
+                ? deskErrorMessage(leaveMutation.error, "Could not mark left")
+                : null;
 
   const loading =
     (contextQuery.isPending && !contextQuery.data) ||
-    (Boolean(selectedDate) && listQuery.isPending && !listQuery.data);
+    (labsPendingMode
+      ? pendingQuery.isPending && !pendingQuery.data
+      : Boolean(selectedDate) && listQuery.isPending && !listQuery.data);
 
   return {
     doctorId: contextQuery.data?.doctorId ?? "",
@@ -148,9 +245,17 @@ export function useDeskTodayQuery(token: string, date?: string) {
     counts,
     error,
     loading,
-    hisab: hisabQuery.data ?? null,
+    capabilities,
+    canBill,
+    canLabs,
+    labsOnly,
+    labsPendingCount,
+    hisab: canBill ? hisabQuery.data ?? null : null,
     refreshing:
-      contextQuery.isFetching || listQuery.isFetching || hisabQuery.isFetching,
+      contextQuery.isFetching ||
+      listQuery.isFetching ||
+      hisabQuery.isFetching ||
+      pendingQuery.isFetching,
     arriveMutation,
     collectMutation,
     cancelMutation,
@@ -159,6 +264,7 @@ export function useDeskTodayQuery(token: string, date?: string) {
       void contextQuery.refetch();
       void listQuery.refetch();
       void hisabQuery.refetch();
+      void pendingQuery.refetch();
     },
   };
 }

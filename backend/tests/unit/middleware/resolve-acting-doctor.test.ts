@@ -50,11 +50,13 @@ describe('resolveActingDoctor', () => {
       staffUserId: STAFF_ID,
       role: 'receptionist',
       status: 'active',
+      capabilities: ['front_desk', 'previsit'],
     });
 
     const req = {
       user: { id: STAFF_ID, app_metadata: { role: 'receptionist' } },
       correlationId: 'cid',
+      requiredCapabilities: ['front_desk'],
     } as unknown as Request;
 
     const { error } = await run(req);
@@ -64,7 +66,78 @@ describe('resolveActingDoctor', () => {
     expect(req.actorId).toBe(STAFF_ID);
     expect(req.actorKind).toBe('staff');
     expect(req.staffRole).toBe('receptionist');
+    expect(req.staffCapabilities).toEqual(['front_desk', 'previsit']);
     expect(findStaffLink).toHaveBeenCalledWith(STAFF_ID, 'cid');
+  });
+
+  it('403s when a staff-allowed route declared no capability', async () => {
+    findStaffLink.mockResolvedValue({
+      id: 'link-1',
+      doctorId: DOCTOR_ID,
+      staffUserId: STAFF_ID,
+      role: 'receptionist',
+      status: 'active',
+      capabilities: ['front_desk', 'previsit'],
+    });
+
+    const req = {
+      user: { id: STAFF_ID, app_metadata: { role: 'receptionist' } },
+      correlationId: 'cid',
+    } as unknown as Request;
+
+    const { error } = await run(req);
+
+    expect(error).toBeInstanceOf(ForbiddenError);
+    expect((error as ForbiddenError).message).toBe(
+      'Staff account cannot perform this action'
+    );
+  });
+
+  it('403s when staff lack the required capability', async () => {
+    findStaffLink.mockResolvedValue({
+      id: 'link-1',
+      doctorId: DOCTOR_ID,
+      staffUserId: STAFF_ID,
+      role: 'assistant',
+      status: 'active',
+      capabilities: ['previsit'],
+    });
+
+    const req = {
+      user: { id: STAFF_ID, app_metadata: { role: 'receptionist' } },
+      correlationId: 'cid',
+      requiredCapabilities: ['front_desk'],
+    } as unknown as Request;
+
+    const { error } = await run(req);
+
+    expect(error).toBeInstanceOf(ForbiddenError);
+    expect((error as ForbiddenError).message).toBe(
+      'Staff account cannot perform this action'
+    );
+  });
+
+  it('skips capability checks for the session bootstrap', async () => {
+    findStaffLink.mockResolvedValue({
+      id: 'link-1',
+      doctorId: DOCTOR_ID,
+      staffUserId: STAFF_ID,
+      role: 'assistant',
+      status: 'active',
+      capabilities: ['previsit'],
+    });
+
+    const req = {
+      user: { id: STAFF_ID, app_metadata: { role: 'receptionist' } },
+      correlationId: 'cid',
+      staffSessionOnly: true,
+    } as unknown as Request;
+
+    const { error } = await run(req);
+
+    expect(error).toBeUndefined();
+    expect(req.actingDoctorId).toBe(DOCTOR_ID);
+    expect(req.staffCapabilities).toEqual(['previsit']);
   });
 
   it('403s when staff have no clinic_staff row', async () => {

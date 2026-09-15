@@ -38,6 +38,13 @@ export interface CallStageChromeValue {
    * `minSizePx` floor for the splitter.
    */
   setConsultChatOpen: (open: boolean) => void;
+  /** True while the doctor pinned Consult at stage size (blocks auto-thumbnail). */
+  consultStagePinned: boolean;
+  /** True while Consult is docked at thumbnail width. */
+  consultThumbnail: boolean;
+  pinConsultStage: (pinned: boolean) => void;
+  /** Restore Consult from thumbnail (click video / explicit restore). */
+  restoreConsultStage: () => void;
 }
 
 const CallStageChromeContext = createContext<CallStageChromeValue | null>(null);
@@ -51,6 +58,10 @@ export function CallStageChromeProvider({
   onReleaseConsultAfterChat,
   onEscalateConsultForChat,
   onConsultChatOpenChange,
+  consultStagePinned = false,
+  consultThumbnail = false,
+  onPinConsultStage,
+  onRestoreConsultStage,
 }: {
   children: ReactNode;
   fillTabActive: boolean;
@@ -60,6 +71,10 @@ export function CallStageChromeProvider({
   onReleaseConsultAfterChat: () => void;
   onEscalateConsultForChat: () => void;
   onConsultChatOpenChange: (open: boolean) => void;
+  consultStagePinned?: boolean;
+  consultThumbnail?: boolean;
+  onPinConsultStage?: (pinned: boolean) => void;
+  onRestoreConsultStage?: () => void;
 }): JSX.Element {
   const enterFillTab = useCallback(() => {
     onEnterFillTab();
@@ -82,6 +97,15 @@ export function CallStageChromeProvider({
     },
     [onConsultChatOpenChange],
   );
+  const pinConsultStage = useCallback(
+    (pinned: boolean) => {
+      onPinConsultStage?.(pinned);
+    },
+    [onPinConsultStage],
+  );
+  const restoreConsultStage = useCallback(() => {
+    onRestoreConsultStage?.();
+  }, [onRestoreConsultStage]);
   const value = useMemo(
     () => ({
       fillTabActive,
@@ -91,6 +115,10 @@ export function CallStageChromeProvider({
       releaseConsultAfterChat,
       escalateConsultForChat,
       setConsultChatOpen,
+      consultStagePinned,
+      consultThumbnail,
+      pinConsultStage,
+      restoreConsultStage,
     }),
     [
       fillTabActive,
@@ -100,6 +128,10 @@ export function CallStageChromeProvider({
       releaseConsultAfterChat,
       escalateConsultForChat,
       setConsultChatOpen,
+      consultStagePinned,
+      consultThumbnail,
+      pinConsultStage,
+      restoreConsultStage,
     ],
   );
   return (
@@ -120,6 +152,10 @@ export function useCallStageChrome(): CallStageChromeValue {
       releaseConsultAfterChat: () => {},
       escalateConsultForChat: () => {},
       setConsultChatOpen: () => {},
+      consultStagePinned: false,
+      consultThumbnail: false,
+      pinConsultStage: () => {},
+      restoreConsultStage: () => {},
     };
   }
   return ctx;

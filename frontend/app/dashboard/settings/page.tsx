@@ -1,4 +1,4 @@
-import { Building2, CreditCard, Headset, IndianRupee, Plug, UserRound } from "lucide-react";
+import { Building2, CreditCard, IndianRupee, Plug, UserRound, Users } from "lucide-react";
 import { redirect } from "next/navigation";
 import { PracticeSetupCard } from "@/components/settings/PracticeSetupCard";
 
@@ -18,9 +18,9 @@ const cards = [
   },
   {
     href: "/dashboard/settings/front-desk",
-    label: "Front desk",
-    description: "Receptionist logins — only one active at a time",
-    icon: <Headset className="h-6 w-6" aria-hidden />,
+    label: "Staff",
+    description: "Clinic logins and what each person may do",
+    icon: <Users className="h-6 w-6" aria-hidden />,
   },
   {
     href: "/dashboard/settings/integrations",

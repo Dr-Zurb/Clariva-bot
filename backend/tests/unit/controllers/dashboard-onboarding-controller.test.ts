@@ -25,6 +25,7 @@ const OTHER_DOCTOR_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 
 const STATUS_DTO = {
   instagramConnected: false,
+  instagramRequired: true,
   practiceInfoSet: true,
   pricingSet: false,
   availabilitySet: false,

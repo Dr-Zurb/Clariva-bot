@@ -1,10 +1,20 @@
 import { describe, expect, it } from "vitest";
 import {
+  deskVisitYmd,
   formatDeskWeekday,
   walkInAppointmentIso,
   walkInAppointmentIsoOnDay,
   zonedLocalIso,
 } from "@/lib/desk/format";
+
+describe("deskVisitYmd", () => {
+  it("returns the clinic calendar day", () => {
+    expect(deskVisitYmd("2026-09-13T18:30:00.000Z", "Asia/Kolkata")).toBe(
+      "2026-09-14"
+    );
+    expect(deskVisitYmd("not-a-date", "Asia/Kolkata")).toBeNull();
+  });
+});
 
 describe("formatDeskWeekday", () => {
   it("prints a short weekday date in the clinic timezone", () => {

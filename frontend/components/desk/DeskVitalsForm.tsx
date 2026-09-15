@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { Button } from "@/components/ui/button";
@@ -19,6 +19,7 @@ import {
   type DeskVitalsFields,
 } from "@/lib/desk/vitals";
 import { deskVitalsSeedFromReading } from "@/lib/cockpit/desk-vitals-query";
+import { useDeskSectionOpen } from "@/lib/desk/use-section-open";
 import { queryKeys } from "@/lib/query/keys";
 import { cn } from "@/lib/utils";
 
@@ -72,18 +73,30 @@ export function DeskVitalsForm({
   appointmentId,
   onFinished,
   skipFetch = false,
+  open: openProp,
+  onOpenChange,
+  saveLabel = "Save vitals",
+  emptySummary = "Skipped",
 }: {
   token: string;
   appointmentId: string;
-  /** After a fresh check-in: Save or Skip returns the desk to empty search. */
+  /** After a fresh check-in: Save or Skip continues the intake sequence. */
   onFinished?: () => void;
   /** Fresh check-in — skip the empty GET so the form opens immediately. */
   skipFetch?: boolean;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  saveLabel?: string;
+  emptySummary?: string;
 }) {
   const queryClient = useQueryClient();
+  const { open, setOpen, controlled } = useDeskSectionOpen(openProp, onOpenChange, true);
+  const controlledRef = useRef(controlled);
+  const setOpenRef = useRef(setOpen);
+  controlledRef.current = controlled;
+  setOpenRef.current = setOpen;
   const [fields, setFields] = useState<DeskVitalsFields>(EMPTY_DESK_VITALS);
   const [saved, setSaved] = useState<DeskVitalsFields | null>(null);
-  const [open, setOpen] = useState(true);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -108,11 +121,11 @@ export function DeskVitalsForm({
           const next = deskVitalsFromReading(res.data.vitals);
           setFields(next);
           setSaved(next);
-          setOpen(false);
+          if (!controlledRef.current) setOpenRef.current(false);
         } else {
           setFields(EMPTY_DESK_VITALS);
           setSaved(null);
-          setOpen(true);
+          if (!controlledRef.current) setOpenRef.current(true);
         }
       } catch (err) {
         if (!cancelled)
@@ -124,6 +137,8 @@ export function DeskVitalsForm({
     return () => {
       cancelled = true;
     };
+    // Open state is applied through refs so a parent re-render does not refetch.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setOpen via ref
   }, [token, appointmentId, skipFetch]);
 
   function patch<K extends keyof DeskVitalsFields>(
@@ -178,7 +193,7 @@ export function DeskVitalsForm({
             Vitals
           </p>
           <p className="mt-0.5 truncate text-sm text-foreground">
-            {saved ? summaryLine(saved) : "Skipped"}
+            {saved ? summaryLine(saved) : emptySummary}
           </p>
         </div>
         <Button
@@ -296,7 +311,7 @@ export function DeskVitalsForm({
           disabled={saving}
           onClick={() => void onSave()}
         >
-          {saving ? "Saving…" : "Save vitals"}
+          {saving ? "Saving…" : saveLabel}
         </Button>
       </div>
     </div>

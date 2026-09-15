@@ -2,7 +2,7 @@ import { DeskPageHeader } from "@/components/desk/DeskPageHeader";
 import { PasswordPanel } from "@/components/settings/PasswordPanel";
 import { requireDeskAuth } from "@/lib/auth/server-user";
 
-export const metadata = { title: "Account · Front desk" };
+export const metadata = { title: "Account · Staff" };
 
 export default async function DeskAccountPage() {
   await requireDeskAuth();

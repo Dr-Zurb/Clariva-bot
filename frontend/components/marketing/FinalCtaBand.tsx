@@ -10,10 +10,10 @@ export function FinalCtaBand() {
     <section className="px-4 py-16 sm:px-6 sm:py-20">
       <div className="halo-gradient mx-auto max-w-6xl overflow-hidden rounded-3xl px-6 py-14 text-center shadow-xl sm:py-16">
         <h2 className="text-3xl font-bold tracking-tight text-white sm:text-4xl">
-          Stop losing patients in your inbox.
+          They&apos;re already in your inbox.
         </h2>
         <p className="mx-auto mt-4 max-w-xl text-white/90">
-          Turn every DM and comment into a booked consultation with Halo Aid.
+          Give them a practice to book into.
         </p>
         <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
           <Button

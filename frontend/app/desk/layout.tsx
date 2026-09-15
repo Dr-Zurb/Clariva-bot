@@ -6,8 +6,9 @@
 import { DeskShell } from "@/components/desk/DeskShell";
 import { QueryProvider } from "@/components/providers/QueryProvider";
 import { requireDeskAuth } from "@/lib/auth/server-user";
+import { getDeskClinicContext } from "@/lib/desk/api";
 
-export const metadata = { title: "Front desk · Halo Aid" };
+export const metadata = { title: "Staff · Halo Aid" };
 
 export default async function DeskLayout({
   children,
@@ -21,7 +22,15 @@ export default async function DeskLayout({
   const named = [meta.display_name, meta.full_name, meta.name].find(
     (value): value is string => typeof value === "string" && value.trim().length > 0
   );
-  const profileName = named?.trim() || (actorKind === "doctor" ? "Doctor" : "Receptionist");
+  const profileName = named?.trim() || (actorKind === "doctor" ? "Doctor" : "Staff");
+
+  let capabilities: string[] | undefined;
+  try {
+    const context = await getDeskClinicContext(token);
+    capabilities = context.data.capabilities;
+  } catch {
+    // Treat as full access for nav until the page-level probe renders.
+  }
 
   return (
     <QueryProvider>
@@ -30,6 +39,7 @@ export default async function DeskLayout({
         profileName={profileName}
         profileEmail={user.email ?? null}
         token={token}
+        capabilities={capabilities}
       >
         {children}
       </DeskShell>

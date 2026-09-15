@@ -24,9 +24,9 @@ import { MAX_LEAVES, type PaneTreeNode } from "@/lib/patient-profile/v3/foundati
 
 /**
  * Minimum width (px) we consider "comfortable" for a single column. The widest
- * clinical panes (Plan / Rx) declare `minSizePx: 280`; 340 keeps that content
- * plus the resize-handle gutter and a little breathing room before we stop
- * adding columns and start stacking rows.
+ * clinical panes (Plan / Rx) declare `minSizePx: 520`; 340 is the budget for
+ * leftover notes columns plus the resize-handle gutter before we stop adding
+ * columns and start stacking rows.
  */
 export const MIN_COMFORTABLE_COLUMN_PX = 340;
 

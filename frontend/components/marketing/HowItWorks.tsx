@@ -1,29 +1,40 @@
-import { CalendarCheck, MessageCircle, MonitorPlay, Sparkles } from "lucide-react";
+import {
+  CalendarCheck,
+  MessageCircle,
+  RefreshCw,
+  Sparkles,
+  Video,
+} from "lucide-react";
 
 const STEPS = [
   {
     icon: MessageCircle,
-    title: "Patient DMs & Comments",
-    body: "Patients reach out on Instagram — in your DMs and under your posts.",
+    title: "They message you",
+    body: "Patients reach out on Instagram — in your DMs and under your posts, day or night.",
   },
   {
     icon: Sparkles,
-    title: "Smart Capture & Response",
-    body: "Halo Aid reads the intent and replies instantly with the right next step.",
+    title: "Halo Aid answers",
+    body: "Halo Aid reads the intent and replies instantly, in your voice.",
   },
   {
     icon: CalendarCheck,
-    title: "Booking Confirmed",
-    body: "The visit is scheduled and confirmed — no back-and-forth, no missed leads.",
+    title: "The visit is booked",
+    body: "The visit is scheduled and confirmed — teleconsult or in-clinic.",
   },
   {
-    icon: MonitorPlay,
-    title: "Consultation Happens",
-    body: "Meet your patient over text, voice, or video, right inside Halo Aid.",
+    icon: Video,
+    title: "You see the patient",
+    body: "Video, voice, text, or in your OPD — with their history already in front of you.",
+  },
+  {
+    icon: RefreshCw,
+    title: "They come back",
+    body: "Follow-ups, reminders, and a record that remembers.",
   },
 ] as const;
 
-/** The 4-step "how it works" flow from the brand infographic. */
+/** The 5-step "how it works" flow from first message to follow-up. */
 export function HowItWorks() {
   return (
     <section id="how-it-works" className="scroll-mt-20 bg-white py-20 sm:py-24">
@@ -33,10 +44,10 @@ export function HowItWorks() {
             How Halo Aid works
           </h2>
           <p className="mt-4 text-lg text-[hsl(var(--halo-ink))]/70">
-            Turn patient DMs and comments into booked consultations — in four steps.
+            From the first message to the follow-up — in five steps.
           </p>
         </div>
-        <ol className="mt-14 grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
+        <ol className="mt-14 grid gap-6 sm:grid-cols-2 xl:grid-cols-5">
           {STEPS.map((step, index) => {
             const Icon = step.icon;
             return (

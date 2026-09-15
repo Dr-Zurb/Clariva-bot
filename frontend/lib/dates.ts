@@ -76,7 +76,19 @@ export function formatOpdSessionDateLabel(
 export function parseOpdSessionDateParam(
   value: string | null | undefined,
 ): string {
-  if (value && ISO_DATE_RE.test(value)) return value;
+  return resolveSessionDate(value);
+}
+
+/**
+ * Prefer a YYYY-MM-DD session date, then a fallback, then today (local).
+ * Used by the cockpit rail so a past visit lists that day's OPD, not today's.
+ */
+export function resolveSessionDate(
+  preferred?: string | null,
+  fallback?: string | null,
+): string {
+  if (preferred && ISO_DATE_RE.test(preferred)) return preferred;
+  if (fallback && ISO_DATE_RE.test(fallback)) return fallback;
   return todayLocalIso();
 }
 

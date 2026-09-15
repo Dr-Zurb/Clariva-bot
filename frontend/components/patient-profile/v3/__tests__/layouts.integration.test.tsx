@@ -154,7 +154,7 @@ describe("cv3l-04: Phase 6 layouts integration", () => {
     cleanup();
   });
 
-  it("seeds Consult (all five panes visible) on first open", async () => {
+  it("seeds Write/Document (Consult hidden, Plan + Subjective visible) on first open", async () => {
     render(
       <CockpitV3Shell panes={productionRegistry()} storageKey="cv3l-04:seed" />,
     );
@@ -162,15 +162,45 @@ describe("cv3l-04: Phase 6 layouts integration", () => {
     await waitFor(() => {
       expect(screen.getByTestId("cockpit-v3-canvas")).toBeInTheDocument();
     });
-    for (const id of COCKPIT_TAB_ORDER) {
-      expect(
-        screen.getByRole("button", { name: `Remove ${labelFor(id)}` }),
-      ).toHaveAttribute("data-palette-on-canvas", "true");
-    }
+    expect(
+      screen.getByRole("button", { name: "Add Consult" }),
+    ).toHaveAttribute("data-palette-on-canvas", "false");
+    expect(
+      screen.getByRole("button", { name: "Remove Plan" }),
+    ).toHaveAttribute("data-palette-on-canvas", "true");
+    expect(
+      screen.getByRole("button", { name: "Remove Subjective" }),
+    ).toHaveAttribute("data-palette-on-canvas", "true");
+    expect(
+      screen.getByRole("button", { name: "Add Assessment" }),
+    ).toHaveAttribute("data-palette-on-canvas", "false");
     expect(screen.queryByTestId("cockpit-v3-empty-state")).not.toBeInTheDocument();
   });
 
-  it("switches to Read via mod+shift+2 and hides body/plan", async () => {
+  it("tele seedLayoutId keeps Consult and Plan visible, SOAP off-canvas", async () => {
+    render(
+      <CockpitV3Shell
+        panes={productionRegistry()}
+        storageKey="cv3l-04:tele-seed"
+        seedLayoutId="consult"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("cockpit-v3-canvas")).toBeInTheDocument();
+    });
+    expect(
+      screen.getByRole("button", { name: "Remove Consult" }),
+    ).toHaveAttribute("data-palette-on-canvas", "true");
+    expect(
+      screen.getByRole("button", { name: "Remove Plan" }),
+    ).toHaveAttribute("data-palette-on-canvas", "true");
+    expect(
+      screen.getByRole("button", { name: "Add Subjective" }),
+    ).toHaveAttribute("data-palette-on-canvas", "false");
+  });
+
+  it("switches to Notes via mod+shift+2 and hides body/plan", async () => {
     render(
       <CockpitV3Shell panes={productionRegistry()} storageKey="cv3l-04:read" />,
     );
@@ -185,14 +215,13 @@ describe("cv3l-04: Phase 6 layouts integration", () => {
         screen.getByRole("button", { name: "Add Consult" }),
       ).toHaveAttribute("data-palette-on-canvas", "false");
     });
-    // Read hides body, plan.
+    // Notes hides body, plan, assessment.
     expect(
       screen.getByRole("button", { name: "Add Plan" }),
     ).toHaveAttribute("data-palette-on-canvas", "false");
-    // Read keeps assessment/subjective/objective visible.
     expect(
-      screen.getByRole("button", { name: "Remove Assessment" }),
-    ).toHaveAttribute("data-palette-on-canvas", "true");
+      screen.getByRole("button", { name: "Add Assessment" }),
+    ).toHaveAttribute("data-palette-on-canvas", "false");
     expect(
       screen.getByRole("button", { name: "Remove Subjective" }),
     ).toHaveAttribute("data-palette-on-canvas", "true");
@@ -239,15 +268,15 @@ describe("cv3l-04: Phase 6 layouts integration", () => {
 
     fireEvent.click(screen.getByTestId("cockpit-v3-undo"));
 
-    // Back to Consult — all five visible again.
+    // Back to Write — Plan visible, Consult hidden.
     await waitFor(() => {
       expect(
         screen.getByRole("button", { name: "Remove Plan" }),
       ).toHaveAttribute("data-palette-on-canvas", "true");
     });
     expect(
-      screen.getByRole("button", { name: "Remove Consult" }),
-    ).toHaveAttribute("data-palette-on-canvas", "true");
+      screen.getByRole("button", { name: "Add Consult" }),
+    ).toHaveAttribute("data-palette-on-canvas", "false");
   });
 
   it("Layouts menu can return to Consult after switching to Document", async () => {

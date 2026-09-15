@@ -1,13 +1,11 @@
 /**
- * default-layouts.ts — v3-native intent-based workflow layouts (cv3l-01 / P6-DL-4).
+ * default-layouts.ts — v3-native intent-based workflow layouts.
  *
- * Four complete PaneTreeNode presets: Consult (seed + reset), Read, Document,
- * Review. Every tree contains all `COCKPIT_TAB_ORDER` pane ids (visible in
- * structure, or hidden as root leaves) so the palette can toggle any pane back on.
- *
- * Phase 2 (ribbon-expand): Snapshot / History retired from the registry — chart
- * + visit history live on the patient ribbon. Defaults are mid+right SOAP/Rx
- * layouts with no left chart column.
+ * Four complete PaneTreeNode presets. Ids stay consult / read / document /
+ * review (hotkeys). Labels are Call / Notes / Write / After. Every tree
+ * contains all `COCKPIT_TAB_ORDER` pane ids so the palette can toggle any
+ * pane back on. At most two leaves are visible — a third column is a
+ * palette click, not a default.
  */
 
 import { COCKPIT_TAB_ORDER } from "@/lib/patient-profile/v3/cockpit-tabs";
@@ -29,7 +27,11 @@ export interface DefaultLayoutEntry {
   tree: PaneTreeNode;
 }
 
-export const DEFAULT_SEED_ID: DefaultLayoutId = "consult";
+/** In-clinic / full-registry first-open seed (Write). Tele-live passes `"consult"`. */
+export const DEFAULT_SEED_ID: DefaultLayoutId = "document";
+
+/** Live teleconsult first-open seed (Call). */
+export const TELE_LIVE_SEED_ID: DefaultLayoutId = "consult";
 
 const ALL_PANE_IDS = [...COCKPIT_TAB_ORDER] as const;
 
@@ -53,16 +55,7 @@ function hiddenLeaf(paneId: string): PaneTreeNode {
   };
 }
 
-function split(
-  id: string,
-  sizePct: number,
-  direction: "horizontal" | "vertical",
-  children: PaneTreeNode[],
-): PaneTreeNode {
-  return { id, sizePct, hidden: false, direction, children };
-}
-
-/** Live visit — Consult/Assessment/Plan + Subjective/Objective (no chart rail). */
+/** Call — Consult dock + Plan. SOAP off-canvas. */
 function buildConsultTree(): PaneTreeNode {
   return {
     id: "__root__",
@@ -70,20 +63,16 @@ function buildConsultTree(): PaneTreeNode {
     hidden: false,
     direction: "horizontal",
     children: [
-      split("col-mid", 68, "vertical", [
-        visibleLeaf("body", 42),
-        visibleLeaf("assessment", 8),
-        visibleLeaf("plan", 50),
-      ]),
-      split("col-right", 32, "vertical", [
-        visibleLeaf("subjective", 50),
-        visibleLeaf("objective", 50),
-      ]),
+      visibleLeaf("body", 22),
+      visibleLeaf("plan", 78),
+      hiddenLeaf("subjective"),
+      hiddenLeaf("objective"),
+      hiddenLeaf("assessment"),
     ],
   };
 }
 
-/** Notes focus — Assessment + Subjective/Objective; body / plan hidden. */
+/** Notes — Subjective | Objective. Plan and Consult hidden. */
 function buildReadTree(): PaneTreeNode {
   return {
     id: "__root__",
@@ -91,18 +80,16 @@ function buildReadTree(): PaneTreeNode {
     hidden: false,
     direction: "horizontal",
     children: [
-      split("read-left", 28, "vertical", [visibleLeaf("assessment", 100)]),
-      split("read-right", 72, "vertical", [
-        visibleLeaf("subjective", 50),
-        visibleLeaf("objective", 50),
-      ]),
+      visibleLeaf("subjective", 50),
+      visibleLeaf("objective", 50),
+      hiddenLeaf("assessment"),
       hiddenLeaf("body"),
       hiddenLeaf("plan"),
     ],
   };
 }
 
-/** SOAP + Rx — Plan dominant; body hidden. */
+/** Write — Subjective | Plan. In-clinic default. */
 function buildDocumentTree(): PaneTreeNode {
   return {
     id: "__root__",
@@ -110,32 +97,28 @@ function buildDocumentTree(): PaneTreeNode {
     hidden: false,
     direction: "horizontal",
     children: [
-      split("doc-left", 14, "vertical", [visibleLeaf("assessment", 100)]),
-      split("doc-mid", 30, "vertical", [
-        visibleLeaf("subjective", 50),
-        visibleLeaf("objective", 50),
-      ]),
-      split("doc-right", 56, "vertical", [visibleLeaf("plan", 100)]),
+      visibleLeaf("subjective", 30),
+      visibleLeaf("plan", 70),
+      hiddenLeaf("objective"),
+      hiddenLeaf("assessment"),
       hiddenLeaf("body"),
     ],
   };
 }
 
-/** Post-visit calm reading — body + notes + plan. */
+/** After — visit summary strip over Plan. SOAP off-canvas. */
 function buildReviewTree(): PaneTreeNode {
   return {
     id: "__root__",
     sizePct: 100,
     hidden: false,
-    direction: "horizontal",
+    direction: "vertical",
     children: [
-      split("review-mid", 55, "vertical", [
-        visibleLeaf("body", 28),
-        visibleLeaf("assessment", 12),
-        visibleLeaf("subjective", 30),
-        visibleLeaf("objective", 30),
-      ]),
-      split("review-right", 45, "vertical", [visibleLeaf("plan", 100)]),
+      visibleLeaf("body", 18),
+      visibleLeaf("plan", 82),
+      hiddenLeaf("subjective"),
+      hiddenLeaf("objective"),
+      hiddenLeaf("assessment"),
     ],
   };
 }
@@ -148,29 +131,29 @@ const REVIEW_TREE = buildReviewTree();
 export const DEFAULT_LAYOUTS: readonly DefaultLayoutEntry[] = [
   {
     id: "consult",
-    label: "Consult",
-    description: "Live visit — Consult, SOAP notes, and Plan.",
+    label: "Call",
+    description: "Live tele — video dock, Plan fills the rest.",
     hotkey: "mod+shift+1",
     tree: CONSULT_TREE,
   },
   {
     id: "read",
-    label: "Read",
-    description: "Case review — Assessment and Subjective/Objective.",
+    label: "Notes",
+    description: "Subjective and Objective side by side.",
     hotkey: "mod+shift+2",
     tree: READ_TREE,
   },
   {
     id: "document",
-    label: "Document",
-    description: "SOAP + Rx — plan forward.",
+    label: "Write",
+    description: "In-clinic — complaints beside Plan.",
     hotkey: "mod+shift+3",
     tree: DOCUMENT_TREE,
   },
   {
     id: "review",
-    label: "Review",
-    description: "Post-visit read — calm full-note scan.",
+    label: "After",
+    description: "Post-visit — summary strip over Plan.",
     hotkey: "mod+shift+4",
     tree: REVIEW_TREE,
   },
@@ -199,15 +182,19 @@ export function isFullEightPaneRegistry(panes: PaneDefinition[]): boolean {
 }
 
 /**
- * Seed layout for CockpitV3Shell: Consult for the full registry, blank for
- * walk-in / partial subsets (Consult references all pane ids).
+ * Seed layout for CockpitV3Shell: Write/`document` for the full registry unless
+ * the caller passes a tele seed (`consult`). Walk-in / partial subsets stay
+ * a blank canvas (2-tab `body`+`plan` must not receive the five-pane tree).
  */
-export function resolveSeedLayout(panes: PaneDefinition[]): PatientProfileLayout {
+export function resolveSeedLayout(
+  panes: PaneDefinition[],
+  seedId: DefaultLayoutId = DEFAULT_SEED_ID,
+): PatientProfileLayout {
   assertFlatLeafRegistry(panes);
   if (isFullEightPaneRegistry(panes)) {
     return {
       version: LAYOUT_VERSION,
-      paneTree: getDefaultLayoutTree(DEFAULT_SEED_ID),
+      paneTree: getDefaultLayoutTree(seedId),
     };
   }
   return blankLayout(panes);

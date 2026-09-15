@@ -9,6 +9,7 @@
  */
 
 import type { NextFunction, Request, Response } from 'express';
+import { hasAnyStaffCapability } from '../auth/staff-capabilities';
 import { isStaffRole } from '../auth/staff-roles';
 import { findStaffLink } from '../services/clinic-staff-service';
 import { asyncHandler } from '../utils/async-handler';
@@ -42,10 +43,21 @@ export const resolveActingDoctor = asyncHandler(
       throw new ForbiddenError('Staff access has been suspended');
     }
 
+    if (!req.staffSessionOnly) {
+      const needed = req.requiredCapabilities;
+      if (!needed || needed.length === 0) {
+        throw new ForbiddenError('Staff account cannot perform this action');
+      }
+      if (!hasAnyStaffCapability(link.capabilities, needed)) {
+        throw new ForbiddenError('Staff account cannot perform this action');
+      }
+    }
+
     req.actingDoctorId = link.doctorId;
     req.actorId = user.id;
     req.actorKind = 'staff';
     req.staffRole = link.role;
+    req.staffCapabilities = link.capabilities;
     next();
   }
 );

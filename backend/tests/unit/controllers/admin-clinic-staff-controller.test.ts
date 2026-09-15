@@ -192,6 +192,7 @@ describe('patchAdminClinicStaffHandler', () => {
       staffUserId: ITEM.staffUserId,
       role: 'receptionist',
       status: 'suspended',
+      capabilities: ['front_desk', 'previsit'],
     });
     const req = {
       correlationId: 'c',
@@ -213,6 +214,7 @@ describe('patchAdminClinicStaffHandler', () => {
       staffUserId: ITEM.staffUserId,
       role: 'receptionist',
       status: 'active',
+      capabilities: ['front_desk', 'previsit'],
     });
     const req = {
       correlationId: 'c',

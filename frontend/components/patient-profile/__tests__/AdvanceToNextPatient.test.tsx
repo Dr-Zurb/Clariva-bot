@@ -3,6 +3,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, act, fireEvent } from "@testing-library/react";
 import { AdvanceToNextPatient } from "@/components/patient-profile/AdvanceToNextPatient";
+import {
+  beginPrintAdvanceHold,
+  endPrintAdvanceHold,
+  resetPrintAdvanceHoldForTests,
+} from "@/lib/cockpit/rx-print-advance";
 
 const push = vi.fn();
 const routerPrefetch = vi.fn();
@@ -39,6 +44,8 @@ function renderAdvance() {
 describe("AdvanceToNextPatient", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    sessionStorage.clear();
+    resetPrintAdvanceHoldForTests();
   });
 
   afterEach(() => {
@@ -212,5 +219,62 @@ describe("AdvanceToNextPatient", () => {
     expect(mockPrefetchNextConsult.mock.invocationCallOrder[0]!).toBeLessThan(
       push.mock.invocationCallOrder[0]!
     );
+  });
+
+  it("waits for an open print dialog before auto-advancing", async () => {
+    beginPrintAdvanceHold();
+    mockUseNextAppointmentRoute.mockReturnValue({
+      next: {
+        appointmentId: "appt-2",
+        patientId: "pat-2",
+        url: "/dashboard/appointments/appt-2",
+        label: "Mohit K (#5)",
+        modality: "in_clinic",
+        positionLabel: "#5 of 12",
+      },
+      isLoading: false,
+      error: null,
+      isLastInQueue: false,
+    });
+
+    renderAdvance();
+
+    expect(push).not.toHaveBeenCalled();
+    expect(screen.getByRole("status")).toHaveTextContent("Mohit K (#5)");
+
+    act(() => {
+      endPrintAdvanceHold();
+    });
+
+    await waitFor(() => {
+      expect(push).toHaveBeenCalledWith("/dashboard/appointments/appt-2");
+    });
+    expect(push).toHaveBeenCalledTimes(1);
+  });
+
+  it("lets the doctor leave while print is parked", async () => {
+    beginPrintAdvanceHold();
+    sessionStorage.setItem("pf11_cancelled_appt-1", "1");
+    mockUseNextAppointmentRoute.mockReturnValue({
+      next: {
+        appointmentId: "appt-2",
+        patientId: "pat-2",
+        url: "/dashboard/appointments/appt-2",
+        label: "Mohit K (#5)",
+        modality: "in_clinic",
+        positionLabel: "#5 of 12",
+      },
+      isLoading: false,
+      error: null,
+      isLastInQueue: false,
+    });
+
+    renderAdvance();
+    expect(push).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("status"));
+
+    expect(push).toHaveBeenCalledWith("/dashboard/appointments/appt-2");
+    expect(sessionStorage.getItem("pf11_cancelled_appt-1")).toBeNull();
   });
 });

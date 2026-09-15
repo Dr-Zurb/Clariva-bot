@@ -6,7 +6,7 @@
 
 import { Router } from 'express';
 import { authenticateToken } from '../../../middleware/auth';
-import { allowStaff } from '../../../middleware/allow-staff';
+import { allowStaffSession, staffCapability } from '../../../middleware/allow-staff';
 import { resolveActingDoctor } from '../../../middleware/resolve-acting-doctor';
 import { clinicStaffProvisionLimiter } from '../../../middleware/rate-limiters';
 import { getClinicStaffMeHandler } from '../../../controllers/clinic-staff-controller';
@@ -20,8 +20,8 @@ import {
 
 const router = Router();
 
-router.get('/me', allowStaff, authenticateToken, resolveActingDoctor, getClinicStaffMeHandler);
-router.get('/hisab', allowStaff, authenticateToken, resolveActingDoctor, getDeskHisabHandler);
+router.get('/me', allowStaffSession, authenticateToken, resolveActingDoctor, getClinicStaffMeHandler);
+router.get('/hisab', staffCapability('front_desk'), authenticateToken, resolveActingDoctor, getDeskHisabHandler);
 router.get('/', authenticateToken, listDoctorClinicStaffHandler);
 router.post(
   '/',

@@ -560,20 +560,21 @@ describe("in-clinic visit CTAs", () => {
     vi.clearAllMocks();
   });
 
-  it("ready × in_clinic shows Start visit and does not offer tele modalities", () => {
+  it("ready × in_clinic has no Start visit — Done lives on the footer", () => {
     renderHeader("ready", { consultation_type: "in_clinic" });
     expect(
-      screen.getByRole("button", { name: /start visit/i }),
-    ).toBeInTheDocument();
+      screen.queryByRole("button", { name: /start visit/i }),
+    ).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: /choose option/i }),
+      screen.queryByRole("button", { name: /start consult/i }),
     ).not.toBeInTheDocument();
   });
 
-  it("ready × in_clinic Start visit calls onStartConsult('in_clinic')", () => {
-    renderHeader("ready", { consultation_type: "in_clinic" });
-    fireEvent.click(screen.getByRole("button", { name: /start visit/i }));
-    expect(DEFAULT_HANDLERS.onStartConsult).toHaveBeenCalledWith("in_clinic");
+  it("ready × video has no Start consult — Done lives on the footer", () => {
+    renderHeader("ready", { consultation_type: "video" });
+    expect(
+      screen.queryByRole("button", { name: /start consult/i }),
+    ).not.toBeInTheDocument();
   });
 
   it("live × in_clinic has no header finish button", () => {

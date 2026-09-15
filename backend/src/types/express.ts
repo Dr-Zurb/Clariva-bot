@@ -53,10 +53,26 @@ declare global {
       staffRole?: string;
 
       /**
-       * Set by `allowStaff` before `authenticateToken` so staff JWTs are not
-       * denied on opted-in routes (DL-2 / DL-3).
+       * Set by `allowStaff` / `staffCapability` before `authenticateToken`
+       * so staff JWTs are not denied on opted-in routes (DL-2 / DL-3).
        */
       staffAllowed?: boolean;
+
+      /**
+       * Capabilities this route requires. Staff must have at least one.
+       * Set by `staffCapability`. Missing on a staff-allowed route → 403.
+       */
+      requiredCapabilities?: import('../auth/staff-capabilities').StaffCapability[];
+
+      /**
+       * `/clinic-staff/me` only — any linked staff may read their session.
+       */
+      staffSessionOnly?: boolean;
+
+      /**
+       * `clinic_staff.capabilities` when `actorKind === 'staff'`.
+       */
+      staffCapabilities?: string[];
 
       /**
        * Request start time (set by request-timing middleware)

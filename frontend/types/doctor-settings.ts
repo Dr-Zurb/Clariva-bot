@@ -128,6 +128,7 @@ export interface DoctorSettings {
   booking_buffer_minutes: number | null;
   welcome_message: string | null;
   specialty: string | null;
+  social_enquiries?: "yes" | "not_yet";
   address_summary: string | null;
   consultation_types: string | null;
   /** SFU-01/06: structured teleconsult pricing; null/omitted = legacy flat fee only. */
@@ -313,6 +314,7 @@ export type PatchDoctorSettingsPayload = Partial<{
   booking_buffer_minutes: number | null;
   welcome_message: string | null;
   specialty: string | null;
+  social_enquiries: "yes" | "not_yet";
   address_summary: string | null;
   consultation_types: string | null;
   qualifications?: string | null;

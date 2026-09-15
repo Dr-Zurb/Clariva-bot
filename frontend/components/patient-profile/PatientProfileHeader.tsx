@@ -33,7 +33,6 @@
 import { useRef, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { SplitStartButton } from "@/components/patient-profile/SplitStartButton";
 import {
   Check,
   Copy,
@@ -79,6 +78,7 @@ import type {
   ConsultationModality,
 } from "@/types/appointment";
 import { resendConsultationLink } from "@/lib/api";
+import { formatLocalIsoDate } from "@/lib/dates";
 import { formatDateTime, formatTime } from "@/lib/format-date";
 import {
   appendCockpitOriginFromSearchParams,
@@ -429,7 +429,7 @@ export default function CockpitHeader({
   onMarkNoShow,
   onFinishVisit,
   finishBusy: _finishBusy,
-  startBusy,
+  startBusy: _startBusy,
   nextSlotAt,
 }: CockpitHeaderProps) {
   const [visitDetailsOpen, setVisitDetailsOpen] = useState(false);
@@ -471,6 +471,9 @@ export default function CockpitHeader({
   const patientAge = appointment.patient_age;
   const patientSex = appointment.patient_sex;
   const demographics = formatDemographics(patientAge, patientSex);
+  const visitDate = appointment.appointment_date
+    ? formatLocalIsoDate(new Date(appointment.appointment_date))
+    : null;
 
   // ---------------------------------------------------------------------------
   // Handlers
@@ -537,54 +540,9 @@ export default function CockpitHeader({
   let primaryCta: React.ReactNode = null;
 
   if (state === "ready") {
-    if (bookedModality === "in_clinic") {
-      primaryCta = (
-        <Button
-          type="button"
-          variant="default"
-          size="sm"
-          onClick={handlePrimaryClick}
-          disabled={startBusy}
-          className="gap-1.5"
-        >
-          {startBusy && (
-            <RefreshCw className="h-3.5 w-3.5 animate-spin" aria-hidden />
-          )}
-          {startBusy ? "Starting…" : (cta?.label ?? "Start visit")}
-        </Button>
-      );
-    } else {
-      const startOptions = [
-        {
-          value: "text" as const,
-          label: "Text",
-          icon: <MessageSquare className="h-3.5 w-3.5" aria-hidden />,
-          disabled: !hasPatientPhone,
-          disabledReason: "Patient phone required for text consult",
-          booked: bookedModality === "text",
-        },
-        {
-          value: "voice" as const,
-          label: "Voice",
-          icon: <Mic className="h-3.5 w-3.5" aria-hidden />,
-          booked: bookedModality === "voice",
-        },
-        {
-          value: "video" as const,
-          label: "Video",
-          icon: <Video className="h-3.5 w-3.5" aria-hidden />,
-          booked: bookedModality === "video",
-        },
-      ];
-      primaryCta = (
-        <SplitStartButton
-          primary={bookedModality}
-          options={startOptions}
-          onAction={onStartConsult}
-          primaryIcon={<ModalityIcon modality={bookedModality} />}
-        />
-      );
-    }
+    // Start consult / Start visit were removed — Done on the footer
+    // is the only commit path, same as a live visit.
+    primaryCta = null;
   } else if (state === "lobby") {
     primaryCta = (
       <Button
@@ -680,6 +638,7 @@ export default function CockpitHeader({
               currentAppointmentId={appointment.id}
               state={state}
               token={token}
+              visitDate={visitDate}
               variant="inline"
               nowSlot={({ now, source }) => (
                 <IdentityTitle

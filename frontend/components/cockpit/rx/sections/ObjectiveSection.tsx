@@ -14,6 +14,7 @@ import { ExamSystemList } from "@/components/cockpit/rx/inputs/ExamSystemList";
 import { LastVisitObjectiveNotesStrip } from "@/components/cockpit/rx/last-visit/LastVisitParchiStrips";
 import { VitalsGrid } from "@/components/cockpit/rx/inputs/VitalsGrid";
 import { TestResultsList } from "@/components/cockpit/rx/objective/TestResultsList";
+import { DeskVisitDocumentsStrip } from "@/components/cockpit/rx/objective/DeskVisitDocumentsStrip";
 import { ObjectiveMediaStrip } from "@/components/cockpit/rx/objective/ObjectiveMediaStrip";
 import { useRxForm } from "@/components/cockpit/rx/RxFormContext";
 import { usePrescriptionFormShell } from "@/components/cockpit/rx/PrescriptionFormShellContext";
@@ -824,6 +825,7 @@ export function ObjectiveSection({
       test_results: (
         <div className="space-y-4">
           <TestResultsList disabled={disabled} />
+          <DeskVisitDocumentsStrip disabled={disabled} />
           <ObjectiveMediaStrip disabled={disabled} />
         </div>
       ),

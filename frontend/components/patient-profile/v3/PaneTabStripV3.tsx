@@ -19,6 +19,10 @@ import {
 } from "@/components/ui/dropdown-menu";
 import type { PaneDefinition } from "@/lib/patient-profile/v3/foundation";
 import { useCockpitDndState } from "@/components/patient-profile/v3/CockpitDndContext";
+import {
+  DESTINATION_FLASH_CLASS,
+  useDestinationFlash,
+} from "@/lib/patient-profile/v3/destination-flash";
 import { cn } from "@/lib/utils";
 
 export const VISIBLE_TAB_LIMIT = 4;
@@ -297,6 +301,7 @@ export default function PaneTabStripV3({
   isTabDraggable = () => true,
   trailingActions,
 }: PaneTabStripV3Props): React.JSX.Element | null {
+  const { flashingPaneIds } = useDestinationFlash();
   const visiblePaneIds = paneIds.slice(0, VISIBLE_TAB_LIMIT);
   const overflowPaneIds = paneIds.slice(VISIBLE_TAB_LIMIT);
   // Per-tab × only when the leaf hosts multiple tabs; single-tab leaves use the
@@ -562,6 +567,9 @@ export default function PaneTabStripV3({
                           aria-selected={isActive}
                           aria-controls={`pane-body-${paneId}`}
                           data-pane-tab-id={paneId}
+                          data-destination-flash={
+                            flashingPaneIds.has(paneId) ? "true" : "false"
+                          }
                           onClick={() => onActivateTab(paneId)}
                           onContextMenu={handleContextMenu(paneId)}
                           className={cn(
@@ -570,6 +578,7 @@ export default function PaneTabStripV3({
                             isActive
                               ? "font-semibold text-foreground shadow ring-border/60"
                               : "font-medium text-muted-foreground shadow-sm ring-border/50 hover:bg-muted/40 hover:text-foreground hover:shadow",
+                            flashingPaneIds.has(paneId) && DESTINATION_FLASH_CLASS,
                           )}
                         >
                           {Icon ? (

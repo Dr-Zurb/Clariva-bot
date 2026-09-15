@@ -76,7 +76,6 @@ export function CockpitRxActionDock({
         appointmentId={appointmentId}
         finishBusy={finishBusy}
         onReview={commit.openPreview}
-        onPreview={commit.openPreview}
         onPrewarm={commit.prewarmOnIntent}
         previewLoading={commit.previewLoading}
         sending={commit.saving}

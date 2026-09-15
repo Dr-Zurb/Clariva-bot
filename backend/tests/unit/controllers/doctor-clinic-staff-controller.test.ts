@@ -6,6 +6,7 @@ jest.mock('../../../src/services/doctor-clinic-staff-service', () => ({
   provisionDoctorClinicStaff: jest.fn(),
   setDoctorClinicStaffStatus: jest.fn(),
   updateDoctorClinicStaffDisplayName: jest.fn(),
+  updateDoctorClinicStaffCapabilities: jest.fn(),
   deleteDoctorClinicStaff: jest.fn(),
 }));
 
@@ -20,6 +21,7 @@ import {
   listDoctorClinicStaff,
   provisionDoctorClinicStaff,
   setDoctorClinicStaffStatus,
+  updateDoctorClinicStaffCapabilities,
   updateDoctorClinicStaffDisplayName,
 } from '../../../src/services/doctor-clinic-staff-service';
 import { UnauthorizedError, ValidationError } from '../../../src/utils/errors';
@@ -36,6 +38,9 @@ const mockedDelete = deleteDoctorClinicStaff as jest.MockedFunction<
 >;
 const mockedDisplayName = updateDoctorClinicStaffDisplayName as jest.MockedFunction<
   typeof updateDoctorClinicStaffDisplayName
+>;
+const mockedCapabilities = updateDoctorClinicStaffCapabilities as jest.MockedFunction<
+  typeof updateDoctorClinicStaffCapabilities
 >;
 
 const DOCTOR_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
@@ -120,6 +125,7 @@ describe('provisionDoctorClinicStaffHandler', () => {
         displayName: null,
         role: 'receptionist',
         status: 'active',
+        capabilities: ['front_desk', 'previsit'],
         createdAt: '2026-08-23T00:00:00Z',
       },
       created: true,
@@ -150,6 +156,7 @@ describe('patchDoctorClinicStaffHandler', () => {
       staffUserId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
       role: 'receptionist',
       status: 'suspended',
+      capabilities: ['front_desk', 'previsit'],
     });
     const req = {
       correlationId: 'c',
@@ -175,6 +182,34 @@ describe('patchDoctorClinicStaffHandler', () => {
     expect(err).toBeInstanceOf(ValidationError);
     expect(mockedStatus).not.toHaveBeenCalled();
     expect(mockedDisplayName).not.toHaveBeenCalled();
+    expect(mockedCapabilities).not.toHaveBeenCalled();
+  });
+
+  it('patches capabilities for the JWT doctor', async () => {
+    mockedCapabilities.mockResolvedValue({
+      id: LINK_ID,
+      doctorId: DOCTOR_ID,
+      staffUserId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+      role: 'assistant',
+      status: 'active',
+      capabilities: ['previsit'],
+    });
+    const req = {
+      correlationId: 'c',
+      user: { id: DOCTOR_ID },
+      params: { id: LINK_ID },
+      body: { capabilities: ['previsit'] },
+    } as unknown as Request;
+    const res = makeRes();
+    const err = await invoke(patchDoctorClinicStaffHandler, req, res);
+    expect(err).toBeUndefined();
+    expect(mockedCapabilities).toHaveBeenCalledWith(
+      DOCTOR_ID,
+      LINK_ID,
+      ['vitals', 'history', 'internal_labs', 'papers'],
+      'c'
+    );
+    expect(res.status).toHaveBeenCalledWith(200);
   });
 
   it('updates display name for the JWT doctor', async () => {
@@ -184,6 +219,7 @@ describe('patchDoctorClinicStaffHandler', () => {
       staffUserId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
       role: 'receptionist',
       status: 'active',
+      capabilities: ['front_desk', 'previsit'],
     });
     const req = {
       correlationId: 'c',

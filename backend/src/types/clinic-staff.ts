@@ -9,4 +9,5 @@ export interface ClinicStaffLink {
   staffUserId: string;
   role: string;
   status: 'active' | 'suspended';
+  capabilities: string[];
 }

@@ -133,6 +133,7 @@ describe('getOnboardingStatus', () => {
     const status = await getOnboardingStatus({ doctorId, correlationId });
     expect(status).toEqual({
       instagramConnected: false,
+      instagramRequired: true,
       practiceInfoSet: false,
       pricingSet: false,
       availabilitySet: false,
@@ -205,10 +206,50 @@ describe('getOnboardingStatus', () => {
     const status = await getOnboardingStatus({ doctorId, correlationId });
     expect(status).toEqual({
       instagramConnected: true,
+      instagramRequired: true,
       practiceInfoSet: true,
       pricingSet: true,
       availabilitySet: true,
       complete: true,
     });
+  });
+
+  it('complete without Instagram when social_enquiries is not_yet', async () => {
+    mockedSettings.getDoctorSettings.mockResolvedValue(
+      baseSettings({
+        practice_name: 'Halo Clinic',
+        catalog_mode: 'single_fee',
+        appointment_fee_minor: 50000,
+        social_enquiries: 'not_yet',
+      })
+    );
+    const { admin } = makeAvailabilityAdmin([{ id: 'av-1' }]);
+    mockedDb.getSupabaseAdminClient.mockReturnValue(
+      admin as unknown as ReturnType<typeof database.getSupabaseAdminClient>
+    );
+
+    const status = await getOnboardingStatus({ doctorId, correlationId });
+    expect(status.instagramConnected).toBe(false);
+    expect(status.instagramRequired).toBe(false);
+    expect(status.complete).toBe(true);
+  });
+
+  it('Yes without Instagram stays incomplete', async () => {
+    mockedSettings.getDoctorSettings.mockResolvedValue(
+      baseSettings({
+        practice_name: 'Halo Clinic',
+        catalog_mode: 'single_fee',
+        appointment_fee_minor: 50000,
+        social_enquiries: 'yes',
+      })
+    );
+    const { admin } = makeAvailabilityAdmin([{ id: 'av-1' }]);
+    mockedDb.getSupabaseAdminClient.mockReturnValue(
+      admin as unknown as ReturnType<typeof database.getSupabaseAdminClient>
+    );
+
+    const status = await getOnboardingStatus({ doctorId, correlationId });
+    expect(status.instagramRequired).toBe(true);
+    expect(status.complete).toBe(false);
   });
 });

@@ -43,6 +43,13 @@ export function clinicYmd(timezone: string, now = new Date()): string {
   }).format(now);
 }
 
+/** Clinic-calendar YYYY-MM-DD for an appointment timestamp, or null if invalid. */
+export function deskVisitYmd(iso: string, timezone: string): string | null {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return null;
+  return clinicYmd(timezone, date);
+}
+
 /** Wall-clock time in `timeZone` as a UTC ISO string. */
 export function zonedLocalIso(
   ymd: string,

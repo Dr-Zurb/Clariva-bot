@@ -7,6 +7,8 @@
 > **Status legend:** `Drafted` → `Selected` → `Committed` → `Shipped` / `Deferred` / `Killed`.
 >
 > **Out of this sitting:** desk payments, vitals capture, new bot intents, teleconsult polish, ambient walk-in (VN-DL-9 / Phase 3).
+>
+> **Relationship / hand-off (2026-09-12):** Phase 1 public form is superseded **in order** by [`plan-desk-visit-prep.md`](./plan-desk-visit-prep.md) — the desk is the first sidecar writer. Phase 2 "Desk send" is absorbed there. **Desk upsert now also writes the chart tables** (trusted staff, same as vitals). HL-DL-1 still binds the **patient form**: sidecar + accept, no silent write from an unauthenticated POST. Do not create a second sidecar.
 
 ---
 
@@ -80,6 +82,8 @@ After this plan ships:
 |---|---|---|---|---|---|
 | 1 | Form → reviewable evidence | `hl-01..06` | A booked patient can open a link, submit four fields, and the doctor sees them on the visit as accept-cards that write the real chart tables | **Drafted** | [`p1-form-to-chart/`](../Daily-plans/August%202026/31-08-2026/history-link/p1-form-to-chart/) |
 | 2 | Desk send | `hl-07..` | Walk-in at check-in gets the same link; booked no-submit is one tap to re-send | Deferred until Phase 1 gate | — |
+
+Phase 1 public form is **superseded in order** (desk writes the sidecar first). Phase 2 absorbed by [`plan-desk-visit-prep.md`](./plan-desk-visit-prep.md). HL-DL-* unchanged.
 
 **Prefix:** `hl`. Number continuously across phases.
 
@@ -156,4 +160,4 @@ Phase 1 ships the bot row. Desk mint is stubbed as a service function; the desk 
 ---
 
 **Created:** 2026-08-31.
-**Last Updated:** 2026-08-31 (drafted; recon folded — payment-confirmation send point, NKDA, `source='self'`)
+**Last Updated:** 2026-09-12 (order hand-off to desk-visit-prep; HL-DL-* unchanged)

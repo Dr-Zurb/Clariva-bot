@@ -6,6 +6,7 @@ Add new items **below** this line (or at the top of the list—stay consistent).
 
 ## Open items
 
+- [ ] 2026-09-12 — **[desk · parked]** Separate staff UI opening prep from Today. Prep-only logins now search on Check-in (register/pay/book hidden). Plan residual: `docs/Work/Product plans/plan-desk-visit-prep.md`.
 - [ ] 2026-09-07 — **[cockpit · dark mode]** Ship dark mode toggle. `.dark` tokens already complete in `frontend/app/globals.css:73-103`, `darkMode: ["class"]` set in `frontend/tailwind.config.ts`. Needs ThemeProvider + `dark` class on `<html>` in `frontend/app/layout.tsx`. Helps cockpit surface separation after the canvas-depth pass.
 - [x] 2026-08-23 — **[desk · archive patient]** Hide/restore on Check-in. Migration 209 (`archived_at`). No delete. Spec: `docs/Work/Product plans/receptionist-portal/task-p4-desk-archive-patient.md`. Founder must apply 209 on the app DB.
 - [x] 2026-08-23 — **[desk · edit patient]** Check-in Edit via `PATCH /patients/:id`. No delete. Spec: `docs/Work/Product plans/receptionist-portal/task-p4-desk-edit-patient.md`.
@@ -383,6 +384,6 @@ Add new items **below** this line (or at the top of the list—stay consistent).
 - [ ] 2026-09-07 — **Tab visibility needs improvement — more distinction between tabs** (active vs inactive state hard to tell apart).
 - [ ] 2026-09-07 — **Second editing and re-prescription flow.** Same-day revise shipped (`rxl-19`…`29`). `lvc` Phase 3 gated with residuals (`lvc-12`…`15`). Write-up: [`notes/2026-09-08-rx-edit-return-last-visit.md`](notes/2026-09-08-rx-edit-return-last-visit.md).
 - [ ] 2026-09-07 — **Vitals coming late.**
-- [ ] 2026-09-07 — **Front desk: basic history + report uploading.**
+- [x] 2026-09-07 — **Front desk: basic history + report uploading.** Promoted → [`plan-desk-visit-prep.md`](../Product%20plans/plan-desk-visit-prep.md).
 - [ ] 2026-09-07 — **Revisit last-medicines handling.**
 - [ ] 2026-09-08 — **Rx edit window, same-day return, last-visit ghosts.** Same-day revise + Phase 2 gated (`rxl-05`…`29`) with residuals. `lvc` Phase 3 gated (`lvc-12`…`15`) with residuals; not Shipped. Capture: [`notes/2026-09-08-rx-edit-return-last-visit.md`](notes/2026-09-08-rx-edit-return-last-visit.md).

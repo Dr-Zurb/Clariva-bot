@@ -8,7 +8,9 @@
  * next eligible patient as soon as the day pipeline resolves.
  *
  * Deliberately independent of the pf-11 `patient_flow_advance` setting:
- * product rule is "finish = this patient is done → move to the next one".
+ * product rule is "finish = this patient is done → move to the next one",
+ * except while an Rx print dialog is open (Chrome closes that preview
+ * the moment this route changes).
  *
  * Status feedback is a short-lived toast in the same slot as other cockpit
  * toasts (top-right) so it never covers the Done / action dock. The
@@ -16,12 +18,18 @@
  * auto-dismisses; it is not a permanent overlay.
  */
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
 import { useNextAppointmentRoute } from "@/hooks/useNextAppointmentRoute";
 import { prefetchNextConsult } from "@/lib/query/prefetch/next-consult";
+import { cancelStorageKey } from "@/components/consultation/cockpit/NextPatientCountdown";
+import {
+  endPrintAdvanceHold,
+  isPrintAdvanceHeld,
+  subscribePrintAdvanceHold,
+} from "@/lib/cockpit/rx-print-advance";
 
 /** Match other cockpit toasts — top-right, above the header, not on Done. */
 const TOAST_CLASS =
@@ -32,6 +40,15 @@ const EMPTY_QUEUE_TOAST_MS = 3500;
 export interface AdvanceToNextPatientProps {
   currentAppointmentId: string;
   token: string;
+}
+
+function isAdvanceParked(appointmentId: string): boolean {
+  if (isPrintAdvanceHeld()) return true;
+  try {
+    return sessionStorage.getItem(cancelStorageKey(appointmentId)) === "1";
+  } catch {
+    return false;
+  }
 }
 
 export function AdvanceToNextPatient({
@@ -48,21 +65,37 @@ export function AdvanceToNextPatient({
   // not queue a second push.
   const firedRef = useRef(false);
   const [emptyToastGone, setEmptyToastGone] = useState(false);
+  const [printParked, setPrintParked] = useState(() =>
+    isAdvanceParked(currentAppointmentId)
+  );
+
+  const warmAndPush = useCallback(
+    (target: { url: string; appointmentId: string; patientId: string | null }) => {
+      router.prefetch(target.url);
+      prefetchNextConsult(queryClient, token, {
+        appointmentId: target.appointmentId,
+        patientId: target.patientId,
+      });
+      router.push(target.url);
+    },
+    [queryClient, router, token]
+  );
+
+  useEffect(() => {
+    const syncPark = () => {
+      setPrintParked(isAdvanceParked(currentAppointmentId));
+    };
+    syncPark();
+    return subscribePrintAdvanceHold(syncPark);
+  }, [currentAppointmentId]);
 
   useEffect(() => {
     if (firedRef.current) return;
     if (!next) return;
+    if (isAdvanceParked(currentAppointmentId)) return;
     firedRef.current = true;
-    // Warm the route and the next cockpit's reads first. These stay in flight
-    // across the push, so the next patient's queries join them instead of
-    // starting cold — this path had no warm-up at all before.
-    router.prefetch(next.url);
-    prefetchNextConsult(queryClient, token, {
-      appointmentId: next.appointmentId,
-      patientId: next.patientId,
-    });
-    router.push(next.url);
-  }, [next, router, queryClient, token]);
+    warmAndPush(next);
+  }, [next, currentAppointmentId, printParked, warmAndPush]);
 
   useEffect(() => {
     if (next || isLoading || !isLastInQueue) return;
@@ -91,7 +124,15 @@ export function AdvanceToNextPatient({
         type="button"
         role="status"
         className={`${TOAST_CLASS} pointer-events-auto`}
-        onClick={() => router.push(next.url)}
+        onClick={() => {
+          endPrintAdvanceHold();
+          try {
+            sessionStorage.removeItem(cancelStorageKey(currentAppointmentId));
+          } catch {
+            // private mode / SSR
+          }
+          warmAndPush(next);
+        }}
       >
         <Loader2
           className="h-4 w-4 animate-spin text-muted-foreground"

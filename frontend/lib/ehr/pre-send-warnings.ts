@@ -52,6 +52,7 @@ import { ackKeyForDdi } from "@/components/ehr/InteractionChips";
 
 /** Stable identifiers for the warning-kind enum. PHI-free. */
 export type PreSendWarningKind =
+  | "unacked-desk-allergy"
   | "unacked-allergy"
   | "unacked-ddi"
   | "no-diagnosis"
@@ -65,6 +66,13 @@ export type PreSendFocusTarget = "medicines-section" | "diagnosis";
  *  must NOT be forwarded to telemetry (it may include drug / allergy
  *  text). */
 export type PreSendWarning =
+  | {
+      kind: "unacked-desk-allergy";
+      targetId: PreSendFocusTarget;
+      summary: string;
+      count: number;
+      ids: ReadonlyArray<string>;
+    }
   | {
       kind: "unacked-allergy";
       targetId: PreSendFocusTarget;
@@ -124,6 +132,8 @@ export interface PreSendInputs {
   /** Single source of truth for ack state (parent form's
    *  `useAcknowledgements()`). */
   isAcked: (key: string) => boolean;
+  /** Unaccepted named allergies from the desk sidecar (DVP-DL-4). */
+  unacceptedDeskAllergies?: ReadonlyArray<{ id: string }>;
 }
 
 // ---------------------------------------------------------------------------
@@ -166,8 +176,8 @@ export function computePreSendWarnings(
 ): PreSendWarning[] {
   const warnings: PreSendWarning[] = [];
 
-  // 1. Unacked allergy clashes.
   const unackedAllergy = inputs.allergyMatches.filter((m) => {
+    if (m.reportedAtDesk) return false;
     const instanceId = inputs.medicineInstanceIds[m.medicineIndex];
     if (!instanceId) {
       // Defensive: no instance id ⇒ no possible ack key was ever
@@ -190,7 +200,7 @@ export function computePreSendWarnings(
     });
   }
 
-  // 2. Unacked DDI warnings.
+  // 3. Unacked DDI warnings.
   const unackedDdi = inputs.ddiInteractions.filter(
     (row) => !inputs.isAcked(ackKeyForDdi(row.id))
   );

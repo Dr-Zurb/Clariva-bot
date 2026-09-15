@@ -76,8 +76,9 @@ export function GettingStartedClient({ token }: GettingStartedClientProps) {
           You’re set up
         </h2>
         <p className="mt-2 text-sm text-muted-foreground">
-          You’re verified, Instagram is connected, and practice basics are in
-          place. Patients can book through Halo Aid.
+          {onboarding.data.instagramConnected
+            ? "You’re verified, Instagram is connected, and practice basics are in place. Patients can book through Halo Aid."
+            : "You’re verified and practice basics are in place. Patients can book through Halo Aid."}
         </p>
         <Button asChild className="mt-5">
           <Link href="/dashboard">

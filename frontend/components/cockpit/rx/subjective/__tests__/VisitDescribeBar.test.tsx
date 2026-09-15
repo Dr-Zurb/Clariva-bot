@@ -10,6 +10,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   VisitDescribeBar,
   VisitDescribeFormBar,
+  VISIT_DESCRIBE_PLACEHOLDER,
 } from "@/components/cockpit/rx/subjective/VisitDescribeBar";
 import { parseMedicineLine } from "@/lib/cockpit/medicine-line-parse";
 import {
@@ -130,6 +131,12 @@ describe("VisitDescribeBar (vnb-04)", () => {
     parseVisit.mockResolvedValue(aiOnlyProposal());
     vi.mocked(visitDescribeShown).mockReset();
     vi.mocked(visitDescribeAccepted).mockReset();
+  });
+
+  it("keeps a single add-anything placeholder and a stable aria-label", () => {
+    render(<VisitDescribeBar token="tok" {...callbacks} />);
+    const input = screen.getByLabelText("Describe this visit");
+    expect(input).toHaveAttribute("placeholder", VISIT_DESCRIBE_PLACEHOLDER);
   });
 
   it("shows the dictate control after mount (SSR-safe)", async () => {

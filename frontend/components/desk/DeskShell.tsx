@@ -33,6 +33,11 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useLogout } from "@/hooks/useLogout";
+import {
+  deskHomeHref,
+  deskNavTodayLabel,
+  deskShowsCheckInNav,
+} from "@/lib/desk/capabilities";
 import { cn } from "@/lib/utils";
 
 const SIDEBAR_COLLAPSED_KEY = "clariva.desk.sidebar.collapsed";
@@ -65,17 +70,26 @@ export function DeskShell({
   profileName,
   profileEmail,
   token,
+  capabilities,
 }: {
   children: React.ReactNode;
   actorKind: "receptionist" | "doctor";
   profileName: string;
   profileEmail?: string | null;
   token: string;
+  capabilities?: readonly string[];
 }) {
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useState(false);
   const handleLogout = useLogout();
-  const role = actorKind === "doctor" ? "Doctor" : "Receptionist";
+  const homeHref = deskHomeHref(capabilities);
+  const todayLabel = deskNavTodayLabel(capabilities);
+  const navItems = NAV.filter(
+    (item) => item.href !== "/desk" || deskShowsCheckInNav(capabilities),
+  ).map((item) =>
+    item.href === "/desk/today" ? { ...item, label: todayLabel } : item
+  );
+  const role = actorKind === "doctor" ? "Doctor" : "Staff";
 
   useEffect(() => {
     try {
@@ -153,9 +167,9 @@ export function DeskShell({
         >
           <div className="flex items-center gap-2">
             <Link
-              href="/desk"
+              href={homeHref}
               className="flex select-none items-center gap-2"
-              aria-label="Halo Aid Front desk home"
+              aria-label="Halo Aid staff home"
             >
               <Image
                 src="/brand/halo-logomark.svg"
@@ -171,7 +185,7 @@ export function DeskShell({
               </span>
             </Link>
             <span className="rounded-md bg-primary/10 px-1.5 py-0.5 text-[11px] font-medium text-primary">
-              Front desk
+              Staff
             </span>
           </div>
 
@@ -248,7 +262,7 @@ export function DeskShell({
                 "flex flex-1 flex-col gap-0.5 p-3",
                 collapsed ? "pt-3" : "pt-10"
               )}
-              aria-label="Front desk navigation"
+              aria-label="Staff navigation"
             >
               {collapsed ? (
                 <Tooltip>
@@ -269,7 +283,7 @@ export function DeskShell({
                 </Tooltip>
               ) : null}
 
-              {NAV.map(renderNavItem)}
+              {navItems.map(renderNavItem)}
 
               {actorKind === "doctor" ? (
                 collapsed ? (
@@ -312,7 +326,9 @@ export function DeskShell({
           </main>
         </div>
 
-        {token ? <DeskTabBar token={token} /> : null}
+        {token ? (
+          <DeskTabBar token={token} capabilities={capabilities} />
+        ) : null}
       </div>
     </TooltipProvider>
   );

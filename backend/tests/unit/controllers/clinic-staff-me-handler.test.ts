@@ -42,6 +42,7 @@ describe('getClinicStaffMeHandler', () => {
         actingDoctorId: DOCTOR_ID,
         actorId: ACTOR_ID,
         actorKind: 'staff',
+        staffCapabilities: ['previsit'],
         correlationId: 'cid',
       } as unknown as Request,
       res,
@@ -52,10 +53,18 @@ describe('getClinicStaffMeHandler', () => {
     await new Promise((resolve) => setImmediate(resolve));
 
     expect(res.statusCode).toBe(200);
-    const body = res.body as { data: { doctorId: string; timezone: string; today: string } };
+    const body = res.body as {
+      data: {
+        doctorId: string;
+        timezone: string;
+        today: string;
+        capabilities: string[];
+      };
+    };
     expect(body.data.doctorId).toBe(DOCTOR_ID);
     expect(body.data.timezone).toBe('Asia/Kolkata');
     expect(body.data.today).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(body.data.capabilities).toEqual(['previsit']);
     expect(JSON.stringify(body)).not.toMatch(/phone|name|mrn/i);
   });
 });
