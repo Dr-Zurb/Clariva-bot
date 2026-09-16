@@ -9,8 +9,9 @@ import { createClient } from "@/lib/supabase/client";
 
 /**
  * Live access token for client pages that sit open for hours (desk
- * registration). Starts from an optional SSR token, then follows
- * Supabase refresh + tab-focus so API calls do not keep a dead JWT.
+ * registration, doctor dashboard / cockpit). Starts from an optional
+ * SSR token, then follows Supabase refresh + tab-focus so API calls
+ * do not keep a dead JWT.
  */
 export function useSessionAccessToken(initialToken = "") {
   const [token, setToken] = useState(initialToken);
