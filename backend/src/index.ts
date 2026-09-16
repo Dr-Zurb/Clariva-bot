@@ -142,11 +142,16 @@ const corsOptionsDev: cors.CorsOptions = {
 
 // General API rate limiter (applies to all routes by default)
 // MUST: Use canonical error format via handler (not message) per RECIPES.md R-RATE-LIMIT-001
+// MUST: Global cap is 10,000 / 15 min per RATE_LIMITING.md — 100/15 min trips a
+// single OPD tab (30s session + counts + overrun + events) and clinic NAT.
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: env.NODE_ENV === 'production' ? 100 : 1000, // 100 requests (prod) or 1000 (dev) per 15 minutes
+  max: 10_000, // Global backstop: 10,000 requests per IP per 15 minutes
   skip: (req: Request) =>
-    req.path === '/health' || req.path === '/' || req.path.startsWith('/cron/'), // health, root, cron (e-task-5)
+    req.path === '/health' ||
+    req.path === '/' ||
+    req.path.startsWith('/cron/') ||
+    req.path.startsWith('/webhooks/'), // own limiter in rate-limiters.ts
   handler: (req: Request, res: Response) => {
     const error = new TooManyRequestsError(
       'Too many requests from this IP, please try again later.'
