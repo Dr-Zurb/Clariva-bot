@@ -9,13 +9,20 @@ jest.mock('../../../src/config/database', () => ({
 }));
 jest.mock('../../../src/utils/audit-logger', () => ({
   logDataAccess: jest.fn().mockResolvedValue(undefined as never),
+  logAuditEvent: jest.fn().mockResolvedValue(undefined as never),
+}));
+jest.mock('../../../src/services/doctor-settings-service', () => ({
+  getDoctorSettings: jest.fn().mockResolvedValue(null as never),
 }));
 
 import * as database from '../../../src/config/database';
+import * as doctorSettings from '../../../src/services/doctor-settings-service';
 import {
   aggregateDoctorMedicineCombos,
+  clearMyMedicineCombo,
   listMyMedicineCombos,
   MEDICINE_COMBO_LIST_CAP,
+  medicineComboHabitSignature,
   type MedicineComboSourceRow,
 } from '../../../src/services/doctor-medicine-combo-service';
 
@@ -183,6 +190,95 @@ describe('aggregateDoctorMedicineCombos', () => {
     expect(combos).toHaveLength(1);
     expect(combos[0]?.drugMasterId).toBe(master);
   });
+
+  it('drops uses at or before a reset so a newer habit can rank first', () => {
+    const tenDay = row({
+      medicine_name: 'Calcium D3',
+      dose_qty: 1,
+      dose_unit: 'tab',
+      frequency_code: 'OD',
+      duration_value: 10,
+      duration_unit: 'days',
+      created_at: '2026-08-01T00:00:00Z',
+    });
+    const twentyDay = row({
+      medicine_name: 'Calcium D3',
+      dose_qty: 1,
+      dose_unit: 'tab',
+      frequency_code: 'OD',
+      duration_value: 20,
+      duration_unit: 'days',
+      created_at: '2026-09-01T00:00:00Z',
+    });
+    const sig = medicineComboHabitSignature({
+      nameKey: 'calcium d3',
+      dosage: '',
+      doseQty: 1,
+      doseUnit: 'tab',
+      frequencyCode: 'OD',
+      frequency: '',
+      durationValue: 10,
+      durationUnit: 'days',
+      duration: '',
+      foodTiming: null,
+      routeCode: null,
+      form: null,
+    });
+
+    const afterClear = aggregateDoctorMedicineCombos(
+      [tenDay, tenDay, twentyDay],
+      { [sig]: '2026-08-15T00:00:00Z' }
+    );
+
+    expect(afterClear).toHaveLength(1);
+    expect(afterClear[0]).toMatchObject({
+      durationValue: 20,
+      useCount: 1,
+    });
+  });
+
+  it('counts the same habit again after the reset timestamp', () => {
+    const before = row({
+      medicine_name: 'Calcium D3',
+      dose_qty: 1,
+      dose_unit: 'tab',
+      frequency_code: 'OD',
+      duration_value: 10,
+      duration_unit: 'days',
+      created_at: '2026-08-01T00:00:00Z',
+    });
+    const after = row({
+      medicine_name: 'Calcium D3',
+      dose_qty: 1,
+      dose_unit: 'tab',
+      frequency_code: 'OD',
+      duration_value: 10,
+      duration_unit: 'days',
+      created_at: '2026-09-10T00:00:00Z',
+    });
+    const sig = medicineComboHabitSignature({
+      nameKey: 'calcium d3',
+      dosage: '',
+      doseQty: 1,
+      doseUnit: 'tab',
+      frequencyCode: 'OD',
+      frequency: '',
+      durationValue: 10,
+      durationUnit: 'days',
+      duration: '',
+      foodTiming: null,
+      routeCode: null,
+      form: null,
+    });
+
+    const combos = aggregateDoctorMedicineCombos([before, after], {
+      [sig]: '2026-09-01T00:00:00Z',
+    });
+
+    expect(combos).toHaveLength(1);
+    expect(combos[0]?.useCount).toBe(1);
+    expect(combos[0]?.lastUsedAt).toBe('2026-09-10T00:00:00Z');
+  });
 });
 
 describe('listMyMedicineCombos', () => {
@@ -221,5 +317,64 @@ describe('listMyMedicineCombos', () => {
     expect(combos).toHaveLength(1);
     expect(combos[0]?.nameKey).toBe('pantop');
     expect(combos.length).toBeLessThanOrEqual(MEDICINE_COMBO_LIST_CAP);
+  });
+});
+
+describe('clearMyMedicineCombo', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('writes a reset timestamp onto existing opd_policies', async () => {
+    jest.mocked(doctorSettings.getDoctorSettings).mockResolvedValue({
+      doctor_id: doctorA,
+      opd_policies: { slot_join_grace_minutes: 10 },
+    } as never);
+
+    const eq = jest.fn().mockResolvedValue({ error: null } as never);
+    const update = jest.fn().mockReturnValue({ eq });
+    const from = jest.fn().mockReturnValue({ update });
+    mockedDb.getSupabaseAdminClient.mockReturnValue({ from } as never);
+
+    await expect(
+      clearMyMedicineCombo(correlationId, doctorA, {
+        nameKey: 'calcium d3',
+        dosage: '',
+        doseQty: 1,
+        doseUnit: 'tab',
+        frequencyCode: 'OD',
+        frequency: '',
+        durationValue: 10,
+        durationUnit: 'days',
+        duration: '',
+        foodTiming: null,
+        routeCode: null,
+        form: null,
+      })
+    ).resolves.toEqual({ cleared: true });
+
+    expect(from).toHaveBeenCalledWith('doctor_settings');
+    const payload = update.mock.calls[0]?.[0] as {
+      opd_policies: Record<string, unknown>;
+    };
+    expect(payload.opd_policies.slot_join_grace_minutes).toBe(10);
+    expect(payload.opd_policies.medicine_combo_resets).toEqual(
+      expect.objectContaining({
+        [medicineComboHabitSignature({
+          nameKey: 'calcium d3',
+          dosage: '',
+          doseQty: 1,
+          doseUnit: 'tab',
+          frequencyCode: 'OD',
+          frequency: '',
+          durationValue: 10,
+          durationUnit: 'days',
+          duration: '',
+          foodTiming: null,
+          routeCode: null,
+          form: null,
+        })]: expect.any(String),
+      })
+    );
   });
 });

@@ -57,7 +57,7 @@ export function MedicineCaptureBar({
 }: MedicineCaptureBarProps) {
   const [text, setText] = useState("");
   const committingRef = useRef(false);
-  const { combos } = useDoctorMedicineCombos(token);
+  const { combos, clearCombo } = useDoctorMedicineCombos(token);
 
   const focusInput = useCallback(() => {
     requestAnimationFrame(() =>
@@ -151,6 +151,16 @@ export function MedicineCaptureBar({
     [extraOptions, matchingCombos, commitMedicines]
   );
 
+  const clearComboById = useCallback(
+    (id: string) => {
+      const idx = extraOptions.findIndex((option) => option.id === id);
+      const combo = matchingCombos[idx];
+      if (!combo) return;
+      void clearCombo(combo);
+    },
+    [clearCombo, extraOptions, matchingCombos]
+  );
+
   const handleEnter = useCallback(() => {
     if (committingRef.current) return;
     const trimmed = text.trim();
@@ -187,6 +197,7 @@ export function MedicineCaptureBar({
             }}
             extraOptions={extraOptions}
             onSelectExtra={commitComboById}
+            onClearExtra={clearComboById}
             token={token}
             placeholder="Add medicine — type a full line and press Enter (e.g. amlodipine 5 mg 2 tab od 30 days after food)"
             disabled={disabled}

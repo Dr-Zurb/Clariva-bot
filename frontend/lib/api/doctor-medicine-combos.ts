@@ -6,6 +6,7 @@
 
 import { requireApiBaseUrl } from "@/lib/api-base";
 import type { ApiSuccess, ApiError } from "@/lib/api";
+import { authorizedFetch } from "@/lib/auth/authorized-fetch";
 
 export interface DoctorMedicineCombo {
   medicineName: string;
@@ -63,9 +64,83 @@ export async function fetchDoctorMedicineCombos(
         "Content-Type": "application/json",
         Authorization: `Bearer ${token}`,
       },
-      cache: "default",
+      cache: "no-store",
     }
   );
   const json = await parseJsonResponse<{ combos: DoctorMedicineCombo[] }>(res);
   return json.data.combos ?? [];
+}
+
+export type MedicineComboHabitKey = Pick<
+  DoctorMedicineCombo,
+  | "nameKey"
+  | "dosage"
+  | "doseQty"
+  | "doseUnit"
+  | "frequencyCode"
+  | "frequency"
+  | "durationValue"
+  | "durationUnit"
+  | "duration"
+  | "foodTiming"
+  | "routeCode"
+  | "form"
+>;
+
+export function medicineComboHabitKey(
+  combo: MedicineComboHabitKey
+): MedicineComboHabitKey {
+  return {
+    nameKey: combo.nameKey,
+    dosage: combo.dosage,
+    doseQty: combo.doseQty,
+    doseUnit: combo.doseUnit,
+    frequencyCode: combo.frequencyCode,
+    frequency: combo.frequency,
+    durationValue: combo.durationValue,
+    durationUnit: combo.durationUnit,
+    duration: combo.duration,
+    foodTiming: combo.foodTiming,
+    routeCode: combo.routeCode,
+    form: combo.form,
+  };
+}
+
+export function sameMedicineComboHabit(
+  a: MedicineComboHabitKey,
+  b: MedicineComboHabitKey
+): boolean {
+  return (
+    a.nameKey === b.nameKey &&
+    a.dosage === b.dosage &&
+    a.doseQty === b.doseQty &&
+    a.doseUnit === b.doseUnit &&
+    a.frequencyCode === b.frequencyCode &&
+    a.frequency === b.frequency &&
+    a.durationValue === b.durationValue &&
+    a.durationUnit === b.durationUnit &&
+    a.duration === b.duration &&
+    a.foodTiming === b.foodTiming &&
+    a.routeCode === b.routeCode &&
+    a.form === b.form
+  );
+}
+
+export async function clearDoctorMedicineCombo(
+  token: string,
+  habit: MedicineComboHabitKey
+): Promise<void> {
+  const res = await authorizedFetch(
+    `${requireApiBaseUrl()}/api/v1/doctors/me/medicine-combos/clear`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      token,
+      body: JSON.stringify(medicineComboHabitKey(habit)),
+      cache: "no-store",
+    }
+  );
+  await parseJsonResponse<{ cleared: true }>(res);
 }

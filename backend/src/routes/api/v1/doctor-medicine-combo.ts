@@ -6,10 +6,14 @@
 
 import { Router } from 'express';
 import { authenticateToken } from '../../../middleware/auth';
-import { listMyMedicineCombosHandler } from '../../../controllers/doctor-medicine-combo-controller';
+import {
+  clearMyMedicineComboHandler,
+  listMyMedicineCombosHandler,
+} from '../../../controllers/doctor-medicine-combo-controller';
 
 const router = Router();
 
 router.get('/', authenticateToken, listMyMedicineCombosHandler);
+router.post('/clear', authenticateToken, clearMyMedicineComboHandler);
 
 export default router;
