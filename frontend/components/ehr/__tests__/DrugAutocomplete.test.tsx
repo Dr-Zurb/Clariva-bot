@@ -419,6 +419,44 @@ describe("DrugAutocomplete — extra options (combos above catalog)", () => {
     expect(onChange).not.toHaveBeenCalled();
   });
 
+  it("clears an extra option without committing it", async () => {
+    const onSelectExtra = vi.fn();
+    const onClearExtra = vi.fn();
+    mockedSearch.mockResolvedValue({
+      data: { results: [makeDrug(drugA, "Multivitamin")] },
+    } as never);
+
+    render(
+      <DrugAutocomplete
+        value="multi"
+        onChange={vi.fn()}
+        extraOptions={[
+          {
+            id: "combo-10",
+            label: "Multivitamin · 1 OD · 10 days",
+            badge: "Most frequent",
+          },
+        ]}
+        onSelectExtra={onSelectExtra}
+        onClearExtra={onClearExtra}
+        token="test-token-1234567890"
+        inputId="med-clear"
+        debounceMs={0}
+      />
+    );
+
+    const input = screen.getByRole("combobox");
+    await act(async () => {
+      fireEvent.focus(input);
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("medicine-combo-clear")).toBeInTheDocument();
+    });
+    fireEvent.mouseDown(screen.getByTestId("medicine-combo-clear"));
+    expect(onClearExtra).toHaveBeenCalledWith("combo-10");
+    expect(onSelectExtra).not.toHaveBeenCalled();
+  });
+
   it("fills the field from a catalog row without selecting an extra", async () => {
     const onSelect = vi.fn();
     const onSelectExtra = vi.fn();

@@ -24,9 +24,11 @@ vi.mock("@/lib/api", async (importOriginal) => {
   };
 });
 
+const mockClearCombo = vi.fn();
 const mockUseDoctorMedicineCombos = vi.fn(() => ({
   combos: [] as unknown[],
   isLoading: false,
+  clearCombo: mockClearCombo,
 }));
 
 vi.mock("@/hooks/useDoctorMedicineCombos", () => ({
@@ -84,9 +86,12 @@ describe("MedicineCaptureBar", () => {
     mockSearchDrugs.mockReset();
     mockSearchDrugs.mockResolvedValue({ data: { results: [] } });
     mockUseDoctorMedicineCombos.mockReset();
+    mockClearCombo.mockReset();
+    mockClearCombo.mockResolvedValue(undefined);
     mockUseDoctorMedicineCombos.mockReturnValue({
       combos: [],
       isLoading: false,
+      clearCombo: mockClearCombo,
     });
   });
 
@@ -195,6 +200,7 @@ describe("MedicineCaptureBar", () => {
     mockUseDoctorMedicineCombos.mockReturnValue({
       combos: [MULTIVITAMIN_COMBO],
       isLoading: false,
+      clearCombo: mockClearCombo,
     });
 
     renderBar();
@@ -233,6 +239,7 @@ describe("MedicineCaptureBar", () => {
         },
       ],
       isLoading: false,
+      clearCombo: mockClearCombo,
     });
 
     renderBar();
@@ -263,6 +270,28 @@ describe("MedicineCaptureBar", () => {
     });
   });
 
+  it("clears a frequent combo without minting the card", async () => {
+    mockUseDoctorMedicineCombos.mockReturnValue({
+      combos: [MULTIVITAMIN_COMBO],
+      isLoading: false,
+      clearCombo: mockClearCombo,
+    });
+
+    renderBar();
+    fireEvent.change(getCaptureInput(), { target: { value: "multi" } });
+    await waitFor(() => {
+      expect(screen.getByTestId("medicine-combo-clear")).toBeInTheDocument();
+    });
+    fireEvent.mouseDown(screen.getByTestId("medicine-combo-clear"));
+    expect(mockClearCombo).toHaveBeenCalledWith(
+      expect.objectContaining({
+        medicineName: "Multivitamin",
+        durationValue: 10,
+      })
+    );
+    expect(onAddMedicines).not.toHaveBeenCalled();
+  });
+
   it("autocompletes a catalog name without minting a card", async () => {
     mockSearchDrugs.mockResolvedValue({
       data: {
@@ -274,6 +303,7 @@ describe("MedicineCaptureBar", () => {
     mockUseDoctorMedicineCombos.mockReturnValue({
       combos: [MULTIVITAMIN_COMBO],
       isLoading: false,
+      clearCombo: mockClearCombo,
     });
 
     renderBar();
@@ -326,6 +356,7 @@ describe("MedicineCaptureBar", () => {
     mockUseDoctorMedicineCombos.mockReturnValue({
       combos: [MULTIVITAMIN_COMBO],
       isLoading: false,
+      clearCombo: mockClearCombo,
     });
 
     renderBar();

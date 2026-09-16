@@ -348,7 +348,7 @@ payout_schedule         TEXT NULL  -- per_appointment | daily | weekly | monthly
 payout_minor            BIGINT NULL  -- (025)
 razorpay_linked_account_id TEXT NULL  -- (025)
 opd_mode                TEXT NOT NULL DEFAULT 'slot'  -- CHECK (slot | queue); migration 028
-opd_policies            JSONB NULL   -- optional keys (OPD-08): `slot_join_grace_minutes` (int; patient join window after scheduled start, slot mode); `reschedule_payment_policy` (`forfeit` | `transfer_entitlement`); `queue_reinsert_default` (`end_of_queue` | `after_current`); plus earlier queue caps; no PHI
+opd_policies            JSONB NULL   -- optional keys (OPD-08): `slot_join_grace_minutes` (int; patient join window after scheduled start, slot mode); `reschedule_payment_policy` (`forfeit` | `transfer_entitlement`); `queue_reinsert_default` (`end_of_queue` | `after_current`); `medicine_combo_resets` (map habit-signature → ISO; count reset, no PHI); plus earlier queue caps
 instagram_receptionist_paused BOOLEAN NOT NULL DEFAULT false  -- migration 033; pause DM + comment automation
 instagram_receptionist_pause_message TEXT NULL  -- optional custom patient DM when paused (RBH-09)
 logo_path               TEXT NULL  -- clinic-branding-v1 / 211; Storage key in bucket `clinic-branding`, never a URL

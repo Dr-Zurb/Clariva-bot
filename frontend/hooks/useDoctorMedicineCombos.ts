@@ -7,15 +7,18 @@
  * Failure mode: empty list — hint stays hidden (cold start).
  */
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  clearDoctorMedicineCombo,
   fetchDoctorMedicineCombos,
+  sameMedicineComboHabit,
   type DoctorMedicineCombo,
 } from "@/lib/api/doctor-medicine-combos";
 
 export interface UseDoctorMedicineCombosResult {
   combos: DoctorMedicineCombo[];
   isLoading: boolean;
+  clearCombo: (combo: DoctorMedicineCombo) => Promise<void>;
 }
 
 const SESSION_CACHE = new Map<string, DoctorMedicineCombo[]>();
@@ -53,5 +56,18 @@ export function useDoctorMedicineCombos(
     void load();
   }, [token, cacheKey]);
 
-  return { combos, isLoading };
+  const clearCombo = useCallback(
+    async (combo: DoctorMedicineCombo) => {
+      if (!token) return;
+      await clearDoctorMedicineCombo(token, combo);
+      setCombos((prev) => {
+        const next = prev.filter((row) => !sameMedicineComboHabit(row, combo));
+        SESSION_CACHE.set(cacheKey, next);
+        return next;
+      });
+    },
+    [cacheKey, token]
+  );
+
+  return { combos, isLoading, clearCombo };
 }

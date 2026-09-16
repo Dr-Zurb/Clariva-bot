@@ -71,6 +71,8 @@ interface DrugAutocompleteProps {
    */
   extraOptions?: readonly DrugAutocompleteExtraOption[];
   onSelectExtra?: (id: string) => void;
+  /** Clears a habit row without committing it. Enter still commits #1. */
+  onClearExtra?: (id: string) => void;
   /** Auth token for the search request. */
   token: string;
   /** Required: input id for label association. */
@@ -131,6 +133,7 @@ export default function DrugAutocomplete({
   onSelect,
   extraOptions = EMPTY_EXTRA_OPTIONS,
   onSelectExtra,
+  onClearExtra,
   token,
   inputId,
   placeholder = "Medicine name",
@@ -480,6 +483,21 @@ export default function DrugAutocomplete({
                 >
                   {extra.badge}
                 </span>
+              ) : null}
+              {onClearExtra ? (
+                <button
+                  type="button"
+                  aria-label="Clear this suggestion"
+                  data-testid="medicine-combo-clear"
+                  className="shrink-0 rounded px-1 text-[12px] leading-none text-muted-foreground hover:bg-muted hover:text-foreground"
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    onClearExtra(extra.id);
+                  }}
+                >
+                  ×
+                </button>
               ) : null}
             </li>
           );
