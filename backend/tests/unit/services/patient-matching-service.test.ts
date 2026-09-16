@@ -70,8 +70,6 @@ describe('Patient Matching Service (e-task-2)', () => {
 
   it('returns matches when phone matches and name is similar', async () => {
     const { from } = createMockChain([
-      { data: [{ patient_id: 'p1' }], error: null },
-      { data: [{ patient_id: 'p1' }], error: null },
       {
         data: [
           {
@@ -104,11 +102,115 @@ describe('Patient Matching Service (e-task-2)', () => {
     expect(result[0].confidence).toBeGreaterThanOrEqual(0.5);
   });
 
-  it('returns empty when no patients linked to doctor', async () => {
+  it('matches when the input phone is the stored alt_phone', async () => {
     const { from } = createMockChain([
-      { data: [], error: null },
-      { data: [], error: null },
+      {
+        data: [
+          {
+            id: 'p1',
+            name: 'Sunita Devi',
+            phone: '9814800001',
+            alt_phone: '9000010017',
+            age: 68,
+            gender: 'female',
+            medical_record_number: 'P-00009',
+            guardian_name: 'Ram Prakash',
+            guardian_relation: 'spouse',
+          },
+        ],
+        error: null,
+      },
     ]);
+
+    (mockedDb.getSupabaseAdminClient as jest.Mock).mockReturnValue({ from });
+
+    const result = await findPossiblePatientMatches(
+      doctorId,
+      '9000010017',
+      'Sunita Devi',
+      68,
+      'female',
+      correlationId,
+      'Ram Prakash'
+    );
+
+    expect(result).toHaveLength(1);
+    expect(result[0].patientId).toBe('p1');
+    expect(result[0].altPhone).toBe('9000010017');
+    expect(result[0].guardianName).toBe('Ram Prakash');
+  });
+
+  it('matches on name plus age or guardian when the phone is not unique', async () => {
+    const { from } = createMockChain([
+      {
+        data: [
+          {
+            id: 'p1',
+            name: 'Sunita Devi',
+            phone: '9814800001',
+            age: 68,
+            gender: 'female',
+            medical_record_number: 'P-00009',
+            guardian_name: 'Ram Prakash',
+            guardian_relation: 'spouse',
+          },
+        ],
+        error: null,
+      },
+    ]);
+
+    (mockedDb.getSupabaseAdminClient as jest.Mock).mockReturnValue({ from });
+
+    const byIdentity = await findPossiblePatientMatches(
+      doctorId,
+      '123',
+      'Sunita Devi',
+      68,
+      'female',
+      correlationId,
+      'Ram Prakash'
+    );
+
+    expect(byIdentity).toHaveLength(1);
+    expect(byIdentity[0]?.patientId).toBe('p1');
+  });
+
+  it('matches identity even when the mobile is new', async () => {
+    const { from } = createMockChain([
+      {
+        data: [
+          {
+            id: 'p1',
+            name: 'Sunita Devi',
+            phone: '9814800001',
+            age: 68,
+            gender: 'female',
+            medical_record_number: 'P-00009',
+            guardian_name: 'Ram Prakash',
+          },
+        ],
+        error: null,
+      },
+    ]);
+
+    (mockedDb.getSupabaseAdminClient as jest.Mock).mockReturnValue({ from });
+
+    const byNewPhone = await findPossiblePatientMatches(
+      doctorId,
+      '9000099999',
+      'Sunita Devi',
+      68,
+      'female',
+      correlationId,
+      'Ram Prakash'
+    );
+
+    expect(byNewPhone).toHaveLength(1);
+    expect(byNewPhone[0]?.patientId).toBe('p1');
+  });
+
+  it('returns empty when no patients linked to doctor', async () => {
+    const { from } = createMockChain([{ data: [], error: null }]);
 
     (mockedDb.getSupabaseAdminClient as jest.Mock).mockReturnValue({ from });
 

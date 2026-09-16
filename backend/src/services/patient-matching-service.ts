@@ -29,6 +29,56 @@ const IDENTITY_CONFIDENCE_THRESHOLD = 0.7;
 const IDENTITY_AGE_TOLERANCE = 3;
 const MAX_MATCHES = 5;
 
+type DoctorOwnedPatientRow = Pick<
+  Patient,
+  | 'id'
+  | 'name'
+  | 'phone'
+  | 'age'
+  | 'gender'
+  | 'medical_record_number'
+  | 'guardian_name'
+  | 'guardian_relation'
+  | 'alt_phone'
+  | 'archived_at'
+>;
+
+async function loadDoctorOwnedPatients(
+  admin: NonNullable<ReturnType<typeof getSupabaseAdminClient>>,
+  doctorId: string,
+  correlationId: string
+): Promise<DoctorOwnedPatientRow[]> {
+  let { data, error } = await admin
+    .from('patients')
+    .select(
+      'id, name, phone, age, gender, medical_record_number, guardian_name, guardian_relation, alt_phone, archived_at'
+    )
+    .eq('doctor_id', doctorId);
+
+  if (error && /archived_at/i.test(error.message ?? '')) {
+    const retry = await admin
+      .from('patients')
+      .select(
+        'id, name, phone, age, gender, medical_record_number, guardian_name, guardian_relation, alt_phone'
+      )
+      .eq('doctor_id', doctorId);
+    data = retry.data as typeof data;
+    error = retry.error;
+  }
+
+  if (error && /guardian_name|alt_phone/i.test(error.message ?? '')) {
+    const retry = await admin
+      .from('patients')
+      .select('id, name, phone, age, gender, medical_record_number')
+      .eq('doctor_id', doctorId);
+    data = retry.data as typeof data;
+    error = retry.error;
+  }
+
+  if (error) handleSupabaseError(error, correlationId);
+  return (data ?? []) as DoctorOwnedPatientRow[];
+}
+
 /**
  * Normalize phone to last 10 digits (strip country code, spaces).
  */
@@ -83,7 +133,7 @@ function nameSimilarity(inputName: string, dbName: string): number {
 
 /**
  * Find possible patient matches for "booking for someone else".
- * Scoped to patients linked to this doctor via appointments or conversations.
+ * Scoped to patients owned by this doctor (`patients.doctor_id`).
  *
  * @param doctorId - Doctor UUID
  * @param phone - Patient phone (required)
@@ -121,80 +171,16 @@ export async function findPossiblePatientMatches(
     return [];
   }
 
-  // Get distinct patient IDs linked to this doctor (appointments OR conversations)
-  const { data: aptPatients, error: aptErr } = await admin
-    .from('appointments')
-    .select('patient_id')
-    .eq('doctor_id', doctorId)
-    .not('patient_id', 'is', null);
-
-  if (aptErr) handleSupabaseError(aptErr, correlationId ?? '');
-
-  const { data: convPatients, error: convErr } = await admin
-    .from('conversations')
-    .select('patient_id')
-    .eq('doctor_id', doctorId);
-
-  if (convErr) handleSupabaseError(convErr, correlationId ?? '');
-
-  const patientIds = new Set<string>();
-  for (const row of aptPatients ?? []) {
-    const pid = (row as { patient_id: string | null }).patient_id;
-    if (pid) patientIds.add(pid);
-  }
-  for (const row of convPatients ?? []) {
-    patientIds.add((row as { patient_id: string }).patient_id);
-  }
-
-  if (patientIds.size === 0) return [];
-
-  // Fetch patients; filter by primary or alt phone last-10
-  let { data: patients, error: patErr } = await admin
-    .from('patients')
-    .select(
-      'id, name, phone, age, gender, medical_record_number, guardian_name, guardian_relation, alt_phone, archived_at'
-    )
-    .in('id', Array.from(patientIds));
-
-  if (patErr && /archived_at/i.test(patErr.message ?? '')) {
-    const retry = await admin
-      .from('patients')
-      .select(
-        'id, name, phone, age, gender, medical_record_number, guardian_name, guardian_relation, alt_phone'
-      )
-      .in('id', Array.from(patientIds));
-    patients = retry.data as typeof patients;
-    patErr = retry.error;
-  }
-
-  if (patErr && /guardian_name|alt_phone/i.test(patErr.message ?? '')) {
-    const retry = await admin
-      .from('patients')
-      .select('id, name, phone, age, gender, medical_record_number')
-      .in('id', Array.from(patientIds));
-    patients = retry.data as typeof patients;
-    patErr = retry.error;
-  }
-
-  if (patErr) handleSupabaseError(patErr, correlationId ?? '');
+  // Doctor-owned rows only. Do not `.in(id, appointmentIds)` — a few hundred
+  // UUIDs overflow undici response headers and 500 the register form.
+  const patients = await loadDoctorOwnedPatients(admin, doctorId, correlationId ?? '');
+  if (patients.length === 0) return [];
 
   const gNorm = (s: string) =>
     s.trim().toLowerCase().replace(/^(m|male)$/, 'male').replace(/^(f|female)$/, 'female');
 
   const matches: PossiblePatientMatch[] = [];
-  for (const p of (patients ?? []) as Pick<
-    Patient,
-    | 'id'
-    | 'name'
-    | 'phone'
-    | 'age'
-    | 'gender'
-    | 'medical_record_number'
-    | 'guardian_name'
-    | 'guardian_relation'
-    | 'alt_phone'
-    | 'archived_at'
-  >[]) {
+  for (const p of patients) {
     if (p.archived_at) continue;
     const pPhoneLast10 = normalizePhoneLast10(p.phone);
     const pAltLast10 = p.alt_phone ? normalizePhoneLast10(p.alt_phone) : '';
@@ -274,38 +260,8 @@ export async function listPossibleDuplicates(
     throw new InternalError('Service role client not available');
   }
 
-  const patientIds = new Set<string>();
-
-  const { data: aptPatients, error: aptErr } = await admin
-    .from('appointments')
-    .select('patient_id')
-    .eq('doctor_id', doctorId)
-    .not('patient_id', 'is', null);
-
-  if (aptErr) handleSupabaseError(aptErr, correlationId);
-  for (const row of aptPatients ?? []) {
-    const pid = (row as { patient_id: string | null }).patient_id;
-    if (pid) patientIds.add(pid);
-  }
-
-  const { data: convPatients, error: convErr } = await admin
-    .from('conversations')
-    .select('patient_id')
-    .eq('doctor_id', doctorId);
-
-  if (convErr) handleSupabaseError(convErr, correlationId);
-  for (const row of convPatients ?? []) {
-    patientIds.add((row as { patient_id: string }).patient_id);
-  }
-
-  if (patientIds.size === 0) return { groups: [] };
-
-  const { data: patients, error: patErr } = await admin
-    .from('patients')
-    .select('id, name, phone, age, gender, medical_record_number')
-    .in('id', Array.from(patientIds));
-
-  if (patErr) handleSupabaseError(patErr, correlationId);
+  const patients = await loadDoctorOwnedPatients(admin, doctorId, correlationId);
+  if (patients.length === 0) return { groups: [] };
 
   const patientList = (patients ?? []) as Pick<
     Patient,
