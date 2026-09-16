@@ -32,6 +32,8 @@ export interface LastVisitSectionStripProps {
   };
   disabled?: boolean;
   testId?: string;
+  /** `start` puts Repeat next to the line so the far-right column is not ambiguous. */
+  actionsPlacement?: "start" | "end";
 }
 
 /**
@@ -46,6 +48,7 @@ export function LastVisitSectionStrip({
   undoAction,
   disabled = false,
   testId,
+  actionsPlacement = "end",
 }: LastVisitSectionStripProps): JSX.Element | null {
   if (items.length === 0) return null;
 
@@ -88,22 +91,15 @@ export function LastVisitSectionStrip({
         className="mt-1.5 space-y-1"
         data-testid={testId ? `${testId}-items` : undefined}
       >
-        {items.map((item) => (
-          <li
-            key={item.key}
-            className="flex items-start justify-between gap-2"
-            data-testid={testId ? `${testId}-item-${item.key}` : undefined}
-          >
-            <span
-              className={cn(
-                "min-w-0 flex-1 border-l-2 border-dashed border-muted-foreground/40 pl-2 text-[11px] text-muted-foreground",
-                item.applied && "text-muted-foreground/70"
-              )}
-            >
-              {item.label}
-            </span>
-            {item.actions && item.actions.length > 0 && !disabled ? (
-              <div className="flex shrink-0 flex-wrap items-center justify-end gap-0.5">
+        {items.map((item) => {
+          const actions =
+            item.actions && item.actions.length > 0 && !disabled ? (
+              <div
+                className={cn(
+                  "flex shrink-0 flex-wrap items-center gap-0.5",
+                  actionsPlacement === "end" && "justify-end"
+                )}
+              >
                 {item.actions.map((action) => (
                   <button
                     key={action.label}
@@ -123,9 +119,29 @@ export function LastVisitSectionStrip({
                   </button>
                 ))}
               </div>
-            ) : null}
-          </li>
-        ))}
+            ) : null;
+          return (
+            <li
+              key={item.key}
+              className={cn(
+                "flex items-start gap-2",
+                actionsPlacement === "end" && "justify-between"
+              )}
+              data-testid={testId ? `${testId}-item-${item.key}` : undefined}
+            >
+              {actionsPlacement === "start" ? actions : null}
+              <span
+                className={cn(
+                  "min-w-0 flex-1 border-l-2 border-dashed border-muted-foreground/40 pl-2 text-[11px] text-muted-foreground",
+                  item.applied && "text-muted-foreground/70"
+                )}
+              >
+                {item.label}
+              </span>
+              {actionsPlacement === "end" ? actions : null}
+            </li>
+          );
+        })}
       </ul>
     </div>
   );

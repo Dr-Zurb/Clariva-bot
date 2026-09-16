@@ -67,4 +67,32 @@ describe("LastVisitSectionStrip", () => {
     fireEvent.click(action);
     expect(onApply).toHaveBeenCalledTimes(1);
   });
+
+  it("places item actions immediately before the label when asked", () => {
+    render(
+      <LastVisitSectionStrip
+        visitDate="11 Sep"
+        summary=""
+        items={[
+          {
+            key: "m1",
+            label: "pantacid — 2 capsules",
+            actions: [
+              {
+                label: "Repeat",
+                onClick: vi.fn(),
+                testId: "row-repeat",
+              },
+            ],
+          },
+        ]}
+        actionsPlacement="start"
+        testId="last-visit-medicines"
+      />
+    );
+    const row = screen.getByTestId("last-visit-medicines-item-m1");
+    const repeat = screen.getByTestId("row-repeat");
+    expect(row.firstElementChild).toContainElement(repeat);
+    expect(row.textContent).toMatch(/^Repeat/);
+  });
 });

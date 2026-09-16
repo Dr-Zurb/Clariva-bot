@@ -142,6 +142,7 @@ export function LastVisitMedicinesStrip({
       }
       disabled={disabled}
       testId="last-visit-medicines"
+      actionsPlacement="start"
     />
   );
 }
