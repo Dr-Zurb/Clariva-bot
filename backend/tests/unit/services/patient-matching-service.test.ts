@@ -70,8 +70,6 @@ describe('Patient Matching Service (e-task-2)', () => {
 
   it('returns matches when phone matches and name is similar', async () => {
     const { from } = createMockChain([
-      { data: [{ patient_id: 'p1' }], error: null },
-      { data: [{ patient_id: 'p1' }], error: null },
       {
         data: [
           {
@@ -106,8 +104,6 @@ describe('Patient Matching Service (e-task-2)', () => {
 
   it('matches when the input phone is the stored alt_phone', async () => {
     const { from } = createMockChain([
-      { data: [{ patient_id: 'p1' }], error: null },
-      { data: [{ patient_id: 'p1' }], error: null },
       {
         data: [
           {
@@ -146,8 +142,6 @@ describe('Patient Matching Service (e-task-2)', () => {
 
   it('matches on name plus age or guardian when the phone is not unique', async () => {
     const { from } = createMockChain([
-      { data: [{ patient_id: 'p1' }], error: null },
-      { data: [{ patient_id: 'p1' }], error: null },
       {
         data: [
           {
@@ -183,8 +177,6 @@ describe('Patient Matching Service (e-task-2)', () => {
 
   it('matches identity even when the mobile is new', async () => {
     const { from } = createMockChain([
-      { data: [{ patient_id: 'p1' }], error: null },
-      { data: [{ patient_id: 'p1' }], error: null },
       {
         data: [
           {
@@ -218,10 +210,7 @@ describe('Patient Matching Service (e-task-2)', () => {
   });
 
   it('returns empty when no patients linked to doctor', async () => {
-    const { from } = createMockChain([
-      { data: [], error: null },
-      { data: [], error: null },
-    ]);
+    const { from } = createMockChain([{ data: [], error: null }]);
 
     (mockedDb.getSupabaseAdminClient as jest.Mock).mockReturnValue({ from });
 
