@@ -493,12 +493,12 @@ export function getTelemedTextTemplate(
 
 /**
  * Post-visit review cockpit layout.
- * Serves completed (`ended`) and terminal (`cancelled` / `no_show`)
- * appointments when the doctor reviews the record.
+ * Serves terminal (`cancelled` / `no_show`) appointments.
+ * Completed (`ended`) visits stay on the live SOAP template.
  *
  * Body leaf 12% (`<EndedConsultBody>` strip) · Assessment strip 8% ·
  * Plan + Investigations bottom row 80%. `mapStateToTemplate` returns
- * `'review'` for `ended` and `terminal` states.
+ * `'review'` for `terminal` states.
  *
  * ecb-01 (2026-05-27): body leaf re-introduced — was 0% / omitted prior.
  * The 12% allocation matches the height budget the voice template uses

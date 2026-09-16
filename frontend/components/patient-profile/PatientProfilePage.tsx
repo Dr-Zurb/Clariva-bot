@@ -136,11 +136,10 @@ export default function PatientProfilePage({
   const [, setFinishError] = useState<string | null>(null);
   const finishErrorTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   /**
-   * Post-finish automove. `ended` flips the template to `review`, which
-   * renders `<EndedConsultBody>` instead of `<EndedCard>` — so pf-11 has no
-   * host in this cockpit. We mount `<AdvanceToNextPatient>` ourselves, but
-   * only for a visit finished in this session; reviewing an old completed
-   * visit must not navigate away.
+   * Post-finish automove. Ended visits stay on the live SOAP layout.
+   * We mount `<AdvanceToNextPatient>` ourselves, but only for a visit
+   * finished in this session; reviewing an old completed visit must
+   * not navigate away.
    */
   const [advanceAfterFinish, setAdvanceAfterFinish] = useState(false);
 

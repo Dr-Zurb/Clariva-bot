@@ -10,7 +10,7 @@
  *   [RxSectionNav — sticky]
  *     Symptoms · Diagnosis · Investigations · Medicines · Notes
  *   [Form body — scrolls]
- *     <PrescriptionForm> (+ read-only notice when ended)
+ *     <PrescriptionForm>
  *
  * Action buttons ("Send Rx", "Send Rx & finish", "Finish visit") live
  * inside PrescriptionForm's own footer — no duplicate sticky bar here.
@@ -43,10 +43,7 @@ import {
 } from "@/components/cockpit/rx/previous/PreviousRxSideSheet";
 import { FavoritesSideSheetAnchor } from "@/components/cockpit/rx/favorites/FavoritesSideSheet";
 import { useOptionalRxForm } from "@/components/cockpit/rx/RxFormContext";
-import { useRxLock } from "@/components/cockpit/rx/useRxLock";
 import { RxNoteLifecycleStrip } from "@/components/cockpit/rx/RxReviseStrip";
-import { usePrescriptionFormShell } from "@/components/cockpit/rx/PrescriptionFormShellContext";
-import { isSupersededNote } from "@/components/cockpit/rx/rxLoadDecision";
 import { useSideSheet } from "@/components/patient-profile/SideSheetHost";
 import {
   trackCockpitPolishNavClarityLanded,
@@ -62,7 +59,7 @@ export interface RxWorkspaceProps {
   appointmentId: string;
   patientId: string | null;
   token: string;
-  /** Current cockpit state — drives the read-only notice. */
+  /** Current cockpit state — terminal hides the Rx pane. */
   state: CockpitState;
   /**
    * Forwarded to PrescriptionForm.onSent — fires after a successful
@@ -148,11 +145,6 @@ export default function RxWorkspace({
   // a collapse without re-shaping this component. Prefix with `_` to
   // silence unused-variable lints.
   void _onCollapse;
-  const { contentLocked } = useRxLock();
-  const shell = usePrescriptionFormShell();
-  const superseded = shell?.prescription
-    ? isSupersededNote(shell.prescription)
-    : false;
 
   // cs-11: ref for the scroll container inside the Rx column. The
   // RxSectionNav observes sections relative to this scroll root (not the
@@ -247,16 +239,6 @@ export default function RxWorkspace({
           }
         >
           <RxNoteLifecycleStrip token={token} />
-          {contentLocked && state === "ended" && !superseded && (
-            <div
-              role="status"
-              aria-live="polite"
-              data-testid="rx-readonly-notice"
-              className="border-b border-border bg-muted/50 px-3 py-2 text-sm text-muted-foreground"
-            >
-              This prescription is read-only. The consultation has ended.
-            </div>
-          )}
 
           {/* cs-11: sticky section-nav chip strip. Positioned as the first
               child inside the scroll div so `sticky top-0` keeps it
