@@ -579,12 +579,16 @@ describe("useRxCommitActions", () => {
       data: { sent: true, channels: { email: true } },
       meta: { timestamp: "", requestId: "" },
     });
-    const print = vi.fn();
+    const order: string[] = [];
+    const print = vi.fn(() => {
+      order.push("print");
+    });
     const printStub = installPrintIframe(print);
     let resolveFinish!: () => void;
     const onFinish = vi.fn(
       () =>
         new Promise<void>((resolve) => {
+          order.push("finish");
           resolveFinish = resolve;
         })
     );
@@ -610,7 +614,10 @@ describe("useRxCommitActions", () => {
     await waitFor(() => {
       expect(print).toHaveBeenCalledTimes(1);
     });
-    expect(onFinish).toHaveBeenCalledTimes(1);
+    await waitFor(() => {
+      expect(onFinish).toHaveBeenCalledTimes(1);
+    });
+    expect(order[0]).toBe("print");
     resolveFinish();
     printStub.restore();
   });

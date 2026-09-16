@@ -138,18 +138,6 @@ function isSafariPrintHost(): boolean {
   return /safari/i.test(ua) && !/chrome|chromium|android/i.test(ua);
 }
 
-function afterNextPaint(): Promise<void> {
-  return new Promise((resolve) => {
-    if (typeof requestAnimationFrame !== "function") {
-      window.setTimeout(resolve, 0);
-      return;
-    }
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => resolve());
-    });
-  });
-}
-
 function watchPrintDialogClosed(win: Window, onClosed: () => void): void {
   let closed = false;
   const done = () => {
@@ -1071,14 +1059,8 @@ export function useRxCommitActions({
           );
         });
 
-      if (shouldFinish) {
-        setPreviewOpen(false);
-        void Promise.resolve(onFinish?.()).catch(() => {
-          // handleFinishVisit already surfaces wrap-up errors.
-        });
-        if (printJob) await afterNextPaint();
-      }
-
+      // Print first — wrap-up remounts the cockpit and was pushing the
+      // system preview after send & finish had already painted.
       if (printJob) {
         try {
           const objectUrl = await printJob;
@@ -1094,6 +1076,13 @@ export function useRxCommitActions({
               : "Could not open the print dialog"
           );
         }
+      }
+
+      if (shouldFinish) {
+        setPreviewOpen(false);
+        void Promise.resolve(onFinish?.()).catch(() => {
+          // handleFinishVisit already surfaces wrap-up errors.
+        });
       }
     } catch (err) {
       setCommitError(
