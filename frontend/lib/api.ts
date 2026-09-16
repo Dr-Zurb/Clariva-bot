@@ -5,6 +5,7 @@
  */
 
 import { requireApiBaseUrl } from "@/lib/api-base";
+import { authorizedFetch } from "@/lib/auth/authorized-fetch";
 import type {
   Appointment,
   AppointmentsListData,
@@ -126,11 +127,11 @@ async function request<T>(
   const base = requireApiBaseUrl();
   let res: Response;
   try {
-    res = await fetch(`${base}${path}`, {
+    res = await authorizedFetch(`${base}${path}`, {
       headers: {
         "Content-Type": "application/json",
-        ...(options.token && { Authorization: `Bearer ${options.token}` }),
       },
+      token: options.token,
       cache: "no-store",
     });
   } catch (err) {
@@ -271,14 +272,14 @@ export async function postAppointmentCheckIn(
   token: string,
   appointmentId: string
 ): Promise<ApiSuccess<{ appointment: Appointment }>> {
-  const res = await fetch(
+  const res = await authorizedFetch(
     `${requireApiBaseUrl()}/api/v1/appointments/${encodeURIComponent(appointmentId)}/check-in`,
     {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
       },
+      token,
       cache: "no-store",
     }
   );
@@ -1268,14 +1269,14 @@ export async function postAppointmentWrapUp(
   appointmentId: string,
   payload: WrapUpAppointmentPayload = {}
 ): Promise<ApiSuccess<{ appointment: Appointment }>> {
-  const res = await fetch(
+  const res = await authorizedFetch(
     `${requireApiBaseUrl()}/api/v1/appointments/${appointmentId}/wrap-up`,
     {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
       },
+      token,
       body: JSON.stringify(payload),
       cache: "no-store",
     }
@@ -1307,14 +1308,14 @@ export async function postDoctorMarkNoShow(
   token: string,
   appointmentId: string
 ): Promise<ApiSuccess<{ marked: boolean }>> {
-  const res = await fetch(
+  const res = await authorizedFetch(
     `${requireApiBaseUrl()}/api/v1/opd/appointments/${appointmentId}/mark-no-show`,
     {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
       },
+      token,
       body: JSON.stringify({}),
       cache: "no-store",
     }
@@ -1559,6 +1560,14 @@ export interface SelectSlotAndPayData {
   tokenNumber?: number;
 }
 
+/** mca-13 / mca-14: owned-page intake on select-slot-and-pay */
+export interface PublicBookingIntakeApi {
+  patientName: string;
+  patientPhone: string;
+  reasonForVisit: string;
+  consentGranted: true;
+}
+
 export interface RedirectUrlData {
   redirectUrl: string;
 }
@@ -1630,7 +1639,8 @@ export async function selectSlotAndPay(
     catalogServiceKey?: string;
     catalogServiceId?: string;
     consultationModality?: ConsultationModalityApi;
-  }
+  },
+  intake?: PublicBookingIntakeApi
 ): Promise<ApiSuccess<SelectSlotAndPayData>> {
   const body: {
     token: string;
@@ -1638,6 +1648,10 @@ export async function selectSlotAndPay(
     catalogServiceKey?: string;
     catalogServiceId?: string;
     consultationModality?: ConsultationModalityApi;
+    patientName?: string;
+    patientPhone?: string;
+    reasonForVisit?: string;
+    consentGranted?: boolean;
   } = { token: bookingToken, slotStart };
   if (catalog?.catalogServiceKey) {
     body.catalogServiceKey = catalog.catalogServiceKey;
@@ -1647,6 +1661,12 @@ export async function selectSlotAndPay(
   }
   if (catalog?.consultationModality) {
     body.consultationModality = catalog.consultationModality;
+  }
+  if (intake) {
+    body.patientName = intake.patientName;
+    body.patientPhone = intake.patientPhone;
+    body.reasonForVisit = intake.reasonForVisit;
+    body.consentGranted = intake.consentGranted;
   }
   const res = await fetch(`${requireApiBaseUrl()}/api/v1/bookings/select-slot-and-pay`, {
     method: "POST",
@@ -3158,12 +3178,12 @@ export async function createPrescription(
   token: string,
   payload: CreatePrescriptionPayload
 ): Promise<ApiSuccess<PrescriptionData>> {
-  const res = await fetch(`${requireApiBaseUrl()}/api/v1/prescriptions`, {
+  const res = await authorizedFetch(`${requireApiBaseUrl()}/api/v1/prescriptions`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
     },
+    token,
     body: JSON.stringify(payload),
     cache: "no-store",
   });
@@ -3612,12 +3632,12 @@ export async function updatePrescription(
   id: string,
   payload: UpdatePrescriptionPayload
 ): Promise<ApiSuccess<PrescriptionData>> {
-  const res = await fetch(`${requireApiBaseUrl()}/api/v1/prescriptions/${id}`, {
+  const res = await authorizedFetch(`${requireApiBaseUrl()}/api/v1/prescriptions/${id}`, {
     method: "PATCH",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
     },
+    token,
     body: JSON.stringify(payload),
     cache: "no-store",
   });
@@ -3882,11 +3902,9 @@ export async function sendPrescriptionToPatient(
   token: string,
   prescriptionId: string
 ): Promise<ApiSuccess<SendPrescriptionData>> {
-  const res = await fetch(`${requireApiBaseUrl()}/api/v1/prescriptions/${prescriptionId}/send`, {
+  const res = await authorizedFetch(`${requireApiBaseUrl()}/api/v1/prescriptions/${prescriptionId}/send`, {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-    },
+    token,
     cache: "no-store",
   });
   const json = (await res.json().catch(() => ({}))) as

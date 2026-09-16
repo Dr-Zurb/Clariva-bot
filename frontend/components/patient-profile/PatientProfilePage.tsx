@@ -67,6 +67,7 @@ import { RxFormActionsBridgeProvider } from "@/components/cockpit/rx/RxFormActio
 import { PrescriptionFormShellProvider } from "@/components/cockpit/rx/PrescriptionFormShellContext";
 import SideSheetHost from "@/components/patient-profile/SideSheetHost";
 import { useRxFormProviderSetup } from "@/components/cockpit/rx/useRxFormProviderSetup";
+import { useSessionAccessToken } from "@/hooks/useSessionAccessToken";
 import {
   trackCockpitV2Phase2ShellFlipped,
   trackCockpitV2RChartLanded,
@@ -116,10 +117,12 @@ interface PatientProfilePageProps {
  */
 export default function PatientProfilePage({
   appointment: appointmentProp,
-  token,
+  token: initialToken,
   panes: panesProp,
   storageKey: storageKeyProp,
 }: PatientProfilePageProps) {
+  const { token: liveToken } = useSessionAccessToken(initialToken);
+  const token = liveToken || initialToken;
   // Local copy — mirrors how ConsultationCockpit lifts appointment into state
   // so optimistic mutations (mark no-show, finish visit) update the UI
   // immediately without waiting for a full page re-fetch.

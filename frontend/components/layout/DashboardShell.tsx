@@ -16,6 +16,7 @@ import { useOnboardingStatusQuery } from "@/hooks/queries/useOnboardingStatusQue
 import { useVerificationStatusQuery } from "@/hooks/queries/useVerificationStatusQuery";
 import { NavPerfTracker } from "@/lib/nav-perf/nav-timing";
 import { QueryProvider } from "@/components/providers/QueryProvider";
+import { useSessionAccessToken } from "@/hooks/useSessionAccessToken";
 import { cn } from "@/lib/utils";
 
 const SIDEBAR_COLLAPSED_KEY = "clariva.sidebar.collapsed";
@@ -68,10 +69,12 @@ export function DashboardShell(props: DashboardShellProps) {
 
 function DashboardShellInner({
   userEmail,
-  token,
+  token: initialToken,
   isAdmin = false,
   children,
 }: DashboardShellProps) {
+  const { token: liveToken } = useSessionAccessToken(initialToken ?? "");
+  const token = liveToken || initialToken;
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   // Default false (expanded) avoids SSR/hydration mismatch — real value is
   // read from localStorage in the effect below (one-frame reconcile on mount).

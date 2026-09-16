@@ -324,6 +324,8 @@ export function useRxFormProviderSetup({
   appointmentContext,
 }: UseRxFormProviderSetupArgs): RxFormProviderSetup {
   const queryClient = useQueryClient();
+  const tokenRef = useRef(token);
+  tokenRef.current = token;
   const appointmentContextRef = useRef(appointmentContext ?? null);
   appointmentContextRef.current = appointmentContext ?? null;
   const [entryMode, setEntryMode] = useState<PrescriptionType>("structured");
@@ -392,28 +394,28 @@ export function useRxFormProviderSetup({
   const loadDeskVitals = useCallback(async () => {
     try {
       return await queryClient.fetchQuery(
-        deskVitalsQueryOptions(token, appointmentId),
+        deskVitalsQueryOptions(tokenRef.current, appointmentId),
       );
     } catch {
       return { ghost: null, note: null };
     }
-  }, [appointmentId, queryClient, token]);
+  }, [appointmentId, queryClient]);
 
   const resolveAppointmentContext =
     useCallback(async (): Promise<AppointmentLoadContext> => {
       const supplied = appointmentContextRef.current;
       if (supplied) return supplied;
-      return loadAppointmentContext(token, appointmentId);
-    }, [appointmentId, token]);
+      return loadAppointmentContext(tokenRef.current, appointmentId);
+    }, [appointmentId]);
 
   useEffect(() => {
-    if (disabled || !token) return;
+    if (disabled || !tokenRef.current) return;
     let cancelled = false;
     void (async () => {
       // Settings + appointment modality in parallel — seed only needs specialty
       // from settings after both settle (avoids a second appointment round-trip).
       const [defaults, appt] = await Promise.all([
-        loadDoctorSubjectiveDefaults(token),
+        loadDoctorSubjectiveDefaults(tokenRef.current),
         resolveAppointmentContext(),
       ]);
       if (cancelled) return;
@@ -433,7 +435,7 @@ export function useRxFormProviderSetup({
     return () => {
       cancelled = true;
     };
-  }, [disabled, token, appointmentId, resolveAppointmentContext]);
+  }, [disabled, appointmentId, resolveAppointmentContext]);
 
   useEffect(() => {
     if (disabled) return;
@@ -494,7 +496,7 @@ export function useRxFormProviderSetup({
         fields = applySubjectiveCarrySeed(fields, source);
       }
       try {
-        const defaults = await loadDoctorSubjectiveDefaults(token);
+        const defaults = await loadDoctorSubjectiveDefaults(tokenRef.current);
         if (cancelled) return;
         applyLayoutDefaults(defaults);
         applyDoctorCustomSeeds(fields, defaults);
@@ -513,8 +515,8 @@ export function useRxFormProviderSetup({
           loadDeskVitals(),
           initialPrescription
             ? Promise.resolve(null)
-            : listPrescriptionsByAppointment(token, appointmentId),
-          loadDoctorSubjectiveDefaults(token),
+            : listPrescriptionsByAppointment(tokenRef.current, appointmentId),
+          loadDoctorSubjectiveDefaults(tokenRef.current),
         ]);
         if (cancelled) return;
         setConsultationType(appt.consultationType);
@@ -563,7 +565,6 @@ export function useRxFormProviderSetup({
     };
   }, [
     appointmentId,
-    token,
     initialPrescription,
     generateInstanceIds,
     disabled,
