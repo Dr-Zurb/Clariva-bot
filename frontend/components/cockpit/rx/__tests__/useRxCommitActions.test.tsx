@@ -513,16 +513,18 @@ describe("useRxCommitActions", () => {
       result.current.sendFinishAndPrint();
     });
     await waitFor(() => {
-      expect(onFinish).toHaveBeenCalledTimes(1);
+      expect(print).toHaveBeenCalledTimes(1);
     });
     await waitFor(() => {
-      expect(print).toHaveBeenCalledTimes(1);
+      expect(onFinish).toHaveBeenCalledTimes(1);
     });
     expect(openSpy).not.toHaveBeenCalled();
     expect(isPrintAdvanceHeld()).toBe(true);
     expect(sessionStorage.getItem("pf11_cancelled_appt-1")).toBe("1");
-    printStub.firePrintMedia(true);
-    printStub.firePrintMedia(false);
+    await act(async () => {
+      printStub.firePrintMedia(true);
+      printStub.firePrintMedia(false);
+    });
     expect(isPrintAdvanceHeld()).toBe(false);
     expect(sessionStorage.getItem("pf11_cancelled_appt-1")).toBeNull();
     printStub.restore();
@@ -617,7 +619,7 @@ describe("useRxCommitActions", () => {
     await waitFor(() => {
       expect(onFinish).toHaveBeenCalledTimes(1);
     });
-    expect(order[0]).toBe("print");
+    expect(order).toEqual(["print", "finish"]);
     resolveFinish();
     printStub.restore();
   });
@@ -655,14 +657,13 @@ describe("useRxCommitActions", () => {
       result.current.sendFinishAndPrint();
     });
     await waitFor(() => {
-      expect(onFinish).toHaveBeenCalledTimes(1);
-    });
-    // Wrap-up may remount the cockpit; the next-patient jump must stay
-    // parked until the dialog is handed off.
-    expect(holdAtFinish).toBe(true);
-    await waitFor(() => {
       expect(print).toHaveBeenCalledTimes(1);
     });
+    await waitFor(() => {
+      expect(onFinish).toHaveBeenCalledTimes(1);
+    });
+    // Wrap-up remounts the cockpit; stay parked until the dialog closes.
+    expect(holdAtFinish).toBe(true);
     expect(isPrintAdvanceHeld()).toBe(true);
     printStub.restore();
   });
@@ -808,7 +809,7 @@ describe("useRxCommitActions", () => {
     });
   });
 
-  it("reuses the preview-warmed PDF for print instead of fetching again", async () => {
+  it("prints a freshly saved PDF instead of a stale preview warm", async () => {
     const { fetchPrescriptionPdf, sendPrescriptionToPatient } =
       await import("@/lib/api");
     vi.mocked(sendPrescriptionToPatient).mockResolvedValue({
@@ -847,7 +848,7 @@ describe("useRxCommitActions", () => {
     await waitFor(() => {
       expect(print).toHaveBeenCalledTimes(1);
     });
-    expect(fetchPrescriptionPdf).toHaveBeenCalledTimes(1);
+    expect(fetchPrescriptionPdf).toHaveBeenCalledTimes(2);
     printStub.restore();
   });
 
