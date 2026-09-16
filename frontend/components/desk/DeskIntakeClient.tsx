@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { useSessionAccessToken } from "@/hooks/useSessionAccessToken";
 import { ArrowLeft, Check, Pencil, Search, UserPlus, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -95,6 +96,7 @@ import {
   isSearchableDeskQuery,
 } from "@/lib/desk/search";
 import { deskLastPaidMethod, visitPaymentById } from "@/lib/desk/payment";
+import { invalidateDoctorDay } from "@/lib/query/invalidate";
 import { queryKeys } from "@/lib/query/keys";
 import { useDeskTodayQuery } from "@/hooks/queries/useDeskTodayQuery";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
@@ -141,7 +143,8 @@ function titleCaseDeskName(raw: string): string {
     .join(" ");
 }
 
-export function DeskIntakeClient({ token }: { token: string }) {
+export function DeskIntakeClient({ token: initialToken }: { token: string }) {
+  const { token } = useSessionAccessToken(initialToken);
   const queryClient = useQueryClient();
   const isDesktop = useMediaQuery("(min-width: 1024px)");
   const {
@@ -658,13 +661,22 @@ export function DeskIntakeClient({ token }: { token: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- reload when date/patient/context change
   }, [showBook, patient?.id, slotDate, context?.doctorId]);
 
+  function refreshVisitLists(dateIso?: string) {
+    const day = dateIso ?? context?.today;
+    if (day) {
+      void invalidateDoctorDay(queryClient, day);
+      return;
+    }
+    void queryClient.invalidateQueries({ queryKey: queryKeys.desk.all });
+  }
+
   function finishDeskVisit(
     bookedName: string,
     action: "checked in" | "added" | "booked",
     tokenNo: number | null | undefined,
     appointmentId?: string
   ) {
-    void queryClient.invalidateQueries({ queryKey: queryKeys.desk.all });
+    refreshVisitLists(slotDate || context?.today);
     if (action === "checked in" && appointmentId) {
       const canBill = hasDeskCapability(context?.capabilities, "front_desk");
       const canPrep = hasAnyDeskPrepCapability(context?.capabilities);
@@ -705,7 +717,7 @@ export function DeskIntakeClient({ token }: { token: string }) {
         if (arrived.data.appointment.opd_token_number != null) {
           setCheckedInToken(arrived.data.appointment.opd_token_number);
         }
-        void queryClient.invalidateQueries({ queryKey: queryKeys.desk.all });
+        refreshVisitLists(context?.today);
         return arrived.data.appointment.id;
       }
       const created = await createDeskAppointment(token, {
@@ -719,7 +731,7 @@ export function DeskIntakeClient({ token }: { token: string }) {
       if (created.data.appointment.opd_token_number != null) {
         setCheckedInToken(created.data.appointment.opd_token_number);
       }
-      void queryClient.invalidateQueries({ queryKey: queryKeys.desk.all });
+      refreshVisitLists(context?.today);
       return created.data.appointment.id;
     } catch (err) {
       const lock =
@@ -737,6 +749,7 @@ export function DeskIntakeClient({ token }: { token: string }) {
           } else if (lock.token != null) {
             setCheckedInToken(lock.token);
           }
+          refreshVisitLists(context?.today);
           return arrived.data.appointment.id;
         } catch (checkInErr) {
           setCheckingIn(false);

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   createAppointment,
   getAvailableSlots,
@@ -12,6 +13,7 @@ import {
 import { cn } from "@/lib/utils";
 import { todayLocalIso } from "@/lib/dates";
 import { formatTime } from "@/lib/format-date";
+import { invalidateDoctorDay } from "@/lib/query/invalidate";
 import type { PatientSummary } from "@/types/patient";
 
 interface AddAppointmentModalProps {
@@ -39,6 +41,7 @@ export default function AddAppointmentModal({
   onSuccess,
   token,
 }: AddAppointmentModalProps) {
+  const queryClient = useQueryClient();
   const [doctorId, setDoctorId] = useState<string | null>(null);
   const [patients, setPatients] = useState<PatientSummary[]>([]);
   const [mode, setMode] = useState<"patient" | "walkin">("patient");
@@ -161,6 +164,7 @@ export default function AddAppointmentModal({
       if (notes.trim()) payload.notes = notes.trim();
 
       await createAppointment(token, payload);
+      void invalidateDoctorDay(queryClient, date || todayLocalIso());
       onSuccess();
       onClose();
     } catch (err) {

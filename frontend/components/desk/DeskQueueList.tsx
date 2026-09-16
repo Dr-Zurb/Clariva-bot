@@ -21,6 +21,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useDeskTodayQuery } from "@/hooks/queries/useDeskTodayQuery";
+import { useSessionAccessToken } from "@/hooks/useSessionAccessToken";
 import { deskErrorMessage } from "@/lib/desk/api";
 import {
   deskPrepActionLabel,
@@ -477,12 +478,13 @@ function StatusCell({
 }
 
 export function DeskQueueList({
-  token,
+  token: initialToken,
   density = "full",
 }: {
   token: string;
   density?: "compact" | "full";
 }) {
+  const { token } = useSessionAccessToken(initialToken);
   const queryClient = useQueryClient();
   const browse = density === "full";
   const [filter, setFilter] = useState<DeskQueueFilter>("all");

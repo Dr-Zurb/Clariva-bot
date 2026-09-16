@@ -25,6 +25,22 @@ export function invalidateOpdSession(queryClient: QueryClient, dateIso: string) 
   });
 }
 
+/**
+ * Refresh every surface that lists a day's visits after a book / add-slot /
+ * check-in, so the cockpit strip and OPD Today update without a reload.
+ */
+export function invalidateDoctorDay(
+  queryClient: QueryClient,
+  dateIso: string,
+) {
+  return Promise.all([
+    invalidateAppointments(queryClient),
+    invalidateOpdSession(queryClient, dateIso),
+    invalidateOpdQueueSession(queryClient, dateIso),
+    queryClient.invalidateQueries({ queryKey: queryKeys.desk.all }),
+  ]);
+}
+
 /** Invalidate patient chart reads after clinical writes. */
 export function invalidatePatientChart(
   queryClient: QueryClient,

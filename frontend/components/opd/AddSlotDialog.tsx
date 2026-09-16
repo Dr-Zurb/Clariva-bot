@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -14,6 +15,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 import { createAppointment } from "@/lib/api";
+import { invalidateDoctorDay } from "@/lib/query/invalidate";
 import type { SlotSessionRow } from "@/types/opd-doctor";
 import { trackOpdSlotEvent } from "./opdQueueTelemetry";
 
@@ -111,6 +113,7 @@ export function AddSlotDialog({
   token,
   onSuccess,
 }: AddSlotDialogProps): JSX.Element {
+  const queryClient = useQueryClient();
   const nameRef = useRef<HTMLInputElement>(null);
   const [formMode, setFormMode] = useState<AddSlotDialogMode>("extra-slot");
   const [patientName, setPatientName] = useState("");
@@ -207,6 +210,7 @@ export function AddSlotDialog({
           relatedAppointmentId: relatedAppointmentId ?? undefined,
         });
 
+        void invalidateDoctorDay(queryClient, sessionDate);
         onSuccess();
         onOpenChange(false);
         trackOpdSlotEvent({
@@ -234,6 +238,7 @@ export function AddSlotDialog({
       notes,
       token,
       relatedAppointmentId,
+      queryClient,
       onSuccess,
       onOpenChange,
     ]
