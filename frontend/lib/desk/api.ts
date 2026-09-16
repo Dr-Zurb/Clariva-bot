@@ -8,6 +8,7 @@
 import { getAvailableSlots, getPatientById, getPatients } from "@/lib/api";
 import type { ApiError, ApiSuccess } from "@/lib/api";
 import { requireApiBaseUrl } from "@/lib/api-base";
+import { getFreshBrowserAccessToken } from "@/lib/auth/browser-access-token";
 import type { Appointment } from "@/types/appointment";
 import type {
   DeskHisabSnapshot,
@@ -229,7 +230,8 @@ async function deskRequest<T>(
     method?: string;
     body?: unknown;
     signal?: AbortSignal;
-  }
+  },
+  retried = false
 ): Promise<ApiSuccess<T>> {
   const res = await fetch(`${requireApiBaseUrl()}${path}`, {
     method: options.method ?? "GET",
@@ -241,6 +243,13 @@ async function deskRequest<T>(
     cache: "no-store",
     signal: options.signal,
   });
+
+  if (res.status === 401 && !retried) {
+    const fresh = await getFreshBrowserAccessToken(options.token);
+    if (fresh && fresh !== options.token) {
+      return deskRequest(path, { ...options, token: fresh }, true);
+    }
+  }
 
   const json = (await res.json().catch(() => ({}))) as ApiSuccess<T> | ApiError;
   if (!res.ok || isApiError(json)) {

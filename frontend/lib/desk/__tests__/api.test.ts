@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { getFreshBrowserAccessToken } from "@/lib/auth/browser-access-token";
 import {
   cancelDeskAppointment,
   leaveDeskAppointment,
@@ -16,6 +17,10 @@ import {
   searchDeskPatients,
   type DeskError,
 } from "@/lib/desk/api";
+
+vi.mock("@/lib/auth/browser-access-token", () => ({
+  getFreshBrowserAccessToken: vi.fn(async (current?: string) => current ?? ""),
+}));
 
 describe("classifyDeskAccessError", () => {
   it("maps 403 to forbidden (unlinked / suspended)", () => {
@@ -456,6 +461,51 @@ describe("listDeskLabPending", () => {
     await expect(listDeskLabPending("tok")).rejects.toMatchObject({
       message: "Forbidden",
       status: 403,
+    });
+  });
+});
+
+describe("deskRequest expired-token retry", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+    vi.mocked(getFreshBrowserAccessToken).mockReset();
+    vi.mocked(getFreshBrowserAccessToken).mockImplementation(
+      async (current?: string) => current ?? ""
+    );
+  });
+
+  it("retries once with a refreshed session after 401", async () => {
+    vi.stubEnv("NEXT_PUBLIC_API_URL", "http://api.test");
+    vi.mocked(getFreshBrowserAccessToken).mockResolvedValue("fresh-tok");
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        json: async () => ({
+          success: false,
+          error: { message: "Invalid or expired token" },
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          success: true,
+          data: {
+            doctorId: "d1",
+            actorKind: "staff",
+            timezone: "Asia/Kolkata",
+            today: "2026-09-16",
+          },
+        }),
+      });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(probeDeskAccess("stale-tok")).resolves.toBe("ok");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({
+      headers: { Authorization: "Bearer fresh-tok" },
     });
   });
 });

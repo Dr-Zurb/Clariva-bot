@@ -33,6 +33,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useLogout } from "@/hooks/useLogout";
+import { useSessionAccessToken } from "@/hooks/useSessionAccessToken";
 import {
   deskHomeHref,
   deskNavTodayLabel,
@@ -69,7 +70,7 @@ export function DeskShell({
   actorKind,
   profileName,
   profileEmail,
-  token,
+  token: initialToken,
   capabilities,
 }: {
   children: React.ReactNode;
@@ -79,6 +80,8 @@ export function DeskShell({
   token: string;
   capabilities?: readonly string[];
 }) {
+  const { token: liveToken } = useSessionAccessToken(initialToken);
+  const token = liveToken || initialToken;
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useState(false);
   const handleLogout = useLogout();
