@@ -138,11 +138,18 @@ function isSafariPrintHost(): boolean {
   return /safari/i.test(ua) && !/chrome|chromium|android/i.test(ua);
 }
 
+/** Chrome fires afterprint when the preview opens — ignore that first beat. */
+const PRINT_CLOSE_GRACE_MS = 800;
+
 function watchPrintDialogClosed(win: Window, onClosed: () => void): void {
   let closed = false;
+  const openedAt = Date.now();
+  const stoppers: Array<() => void> = [];
+
   const done = () => {
     if (closed) return;
     closed = true;
+    stoppers.forEach((stop) => stop());
     onClosed();
   };
 
@@ -151,6 +158,8 @@ function watchPrintDialogClosed(win: Window, onClosed: () => void): void {
     done();
     return;
   }
+
+  const afterGrace = (): boolean => Date.now() - openedAt >= PRINT_CLOSE_GRACE_MS;
 
   try {
     const media = win.matchMedia("print");
@@ -164,13 +173,32 @@ function watchPrintDialogClosed(win: Window, onClosed: () => void): void {
     };
     if (typeof media.addEventListener === "function") {
       media.addEventListener("change", onChange);
+      stoppers.push(() => media.removeEventListener("change", onChange));
     } else if (typeof media.addListener === "function") {
       media.addListener(onChange);
+      stoppers.push(() => media.removeListener(onChange));
     }
   } catch {
-    // matchMedia unavailable — AdvanceToNextPatient stays parked until
-    // the doctor clicks Next or the iframe keepalive ends.
+    // afterprint / focus still cover Chrome.
   }
+
+  const onAfterPrint = () => {
+    if (afterGrace()) done();
+  };
+  try {
+    win.addEventListener("afterprint", onAfterPrint);
+    stoppers.push(() => win.removeEventListener("afterprint", onAfterPrint));
+  } catch {
+    // iframe window may reject listeners
+  }
+  window.addEventListener("afterprint", onAfterPrint);
+  stoppers.push(() => window.removeEventListener("afterprint", onAfterPrint));
+
+  const onFocus = () => {
+    if (afterGrace()) done();
+  };
+  window.addEventListener("focus", onFocus);
+  stoppers.push(() => window.removeEventListener("focus", onFocus));
 }
 
 /** Download the signed PDF into a blob URL the iframe can print same-origin. */
@@ -749,16 +777,16 @@ export function useRxCommitActions({
   }, [appointmentId]);
 
   /** Write only when needed so a clean flush does not drop the warmed PDF. */
-  const persistDraftForCommit = useCallback(async () => {
-    if (!prescriptionIdRef?.current) {
-      await autoSaveFlush({ force: true });
-      dropPdfWarm(true);
-      return;
-    }
-    if (!isDirty) return;
-    await autoSaveFlush();
-    dropPdfWarm(true);
-  }, [autoSaveFlush, dropPdfWarm, isDirty, prescriptionIdRef]);
+  const persistDraftForCommit = useCallback(
+    async (opts?: { force?: boolean }) => {
+      if (!prescriptionIdRef?.current || opts?.force || isDirty) {
+        await autoSaveFlush({ force: true });
+        dropPdfWarm(true);
+        return;
+      }
+    },
+    [autoSaveFlush, dropPdfWarm, isDirty, prescriptionIdRef]
+  );
 
   const requestRevisionIfNeeded = useCallback(
     (action: RxReviseLeaveAction): boolean => {
@@ -994,7 +1022,7 @@ export function useRxCommitActions({
     finishAfterSendRef.current = false;
     try {
       try {
-        await persistDraftForCommit();
+        await persistDraftForCommit({ force: shouldPrint });
       } catch (saveErr) {
         setCommitError(
           saveErr instanceof Error
@@ -1008,8 +1036,8 @@ export function useRxCommitActions({
         setCommitError("Prescription was not saved. Please try again.");
         return;
       }
-      // Print parks advance even when finishing — navigating away closes
-      // Chrome's system preview. Finish-only still clears a stale park.
+      // Print parks navigation until the dialog closes. Finish-only clears
+      // a stale park so wrap-up can automove.
       if (shouldPrint) {
         beginPrintAdvanceHold();
         setAdvanceCancelled(true);
@@ -1017,10 +1045,9 @@ export function useRxCommitActions({
         setAdvanceCancelled(false);
       }
 
-      // Start the PDF before the send so a cold render is already in flight.
-      const printJob = shouldPrint ? takeWarmedPdf(rxId) : null;
-      // Awaited after wrap-up paints — swallow the leftover rejection so a
-      // failed fetch is not an unhandled rejection in that gap.
+      // Always render from the just-saved draft. A preview-warmed PDF can
+      // still be the empty slip from before the last flush.
+      const printJob = shouldPrint ? loadPdfObjectUrl(rxId) : null;
       printJob?.catch(() => undefined);
 
       setCommitSuccess("Sending to patient…");
@@ -1059,8 +1086,8 @@ export function useRxCommitActions({
           );
         });
 
-      // Print first — wrap-up remounts the cockpit and was pushing the
-      // system preview after send & finish had already painted.
+      // Open print on this visit, then wrap up. Do not wait for Chrome's
+      // close signal — matchMedia often never fires and the modal hung.
       if (printJob) {
         try {
           const objectUrl = await printJob;
@@ -1068,18 +1095,30 @@ export function useRxCommitActions({
             onDialogClosed: releasePrintAdvanceHold,
           });
         } catch (printErr) {
-          // Stay parked so the error is readable and Print can be retried.
+          releasePrintAdvanceHold();
           setAdvanceCancelled(true);
           setCommitError(
             printErr instanceof Error
               ? printErr.message
               : "Could not open the print dialog"
           );
+          if (shouldFinish) {
+            setPreviewOpen(false);
+            void Promise.resolve(onFinish?.())
+              .catch(() => {
+                // handleFinishVisit already surfaces wrap-up errors.
+              })
+              .finally(() => {
+                setAdvanceCancelled(true);
+              });
+          }
+          return;
         }
       }
 
       if (shouldFinish) {
         setPreviewOpen(false);
+        if (!shouldPrint) setAdvanceCancelled(false);
         void Promise.resolve(onFinish?.()).catch(() => {
           // handleFinishVisit already surfaces wrap-up errors.
         });
@@ -1096,7 +1135,7 @@ export function useRxCommitActions({
     setAdvanceCancelled,
     releasePrintAdvanceHold,
     prescriptionIdRef,
-    takeWarmedPdf,
+    loadPdfObjectUrl,
     token,
     onSuccess,
     onSent,
