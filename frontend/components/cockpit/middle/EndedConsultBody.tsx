@@ -7,8 +7,8 @@
  * Background:
  *   csl-01 (2026-05-26) hid the redundant column-shell headers in the
  *   middle column. That fix exposed a long-standing void: when an
- *   appointment is `ended` (status=completed) or `terminal` (status in
- *   {cancelled, no_show}), `mapStateToTemplate` returns `'review'` and
+ *   appointment is `terminal` (status in {cancelled, no_show}),
+ *   `mapStateToTemplate` returns `'review'` and
  *   `makeMiddleColumn` omitted the body leaf entirely. The middle column
  *   then rendered only Assessment + Plan-bottom with a meaningless gap
  *   between the (now-hidden) "Consult" column header and the sticky

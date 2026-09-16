@@ -420,8 +420,10 @@ export function shouldMountLauncher(state: CockpitState): boolean {
  *
  * Priority order:
  *   1. override (doctor's global preference)
- *   2. state-based override: terminal | ended → review
+ *   2. state-based override: terminal → review
  *   3. modality-based dispatch: video / voice / text / in_clinic
+ *      (`ended` stays on the live SOAP layout so changing patients
+ *      does not swap in the retired read-only review shell)
  *
  * Returns `CockpitTemplate` (never null). Walk-in appointments
  * (`patient_id` absent) are handled by the caller — see DL-7 of the
@@ -442,7 +444,7 @@ export function mapStateToTemplate(
     return override;
   }
 
-  if (state === "terminal" || state === "ended") {
+  if (state === "terminal") {
     return "review";
   }
 

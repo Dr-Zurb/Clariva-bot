@@ -201,8 +201,14 @@ describe('buildCockpitTabs — the Consult / Visit-summary body tab', () => {
     expect(voiceBody?.title).toBe('Consult');
     expect(voiceBody?.icon).toBe(Phone);
 
-    const reviewBody = buildCockpitTabs(
+    const endedBody = buildCockpitTabs(
       fixtureCtx({ state: 'ended' }),
+    ).find((t) => t.id === 'body');
+    expect(endedBody?.title).toBe('Consult');
+    expect(endedBody?.icon).toBe(Video);
+
+    const reviewBody = buildCockpitTabs(
+      fixtureCtx({ state: 'terminal' }),
     ).find((t) => t.id === 'body');
     expect(reviewBody?.title).toBe('Visit summary');
     expect(reviewBody?.icon).toBe(CheckCircle2);

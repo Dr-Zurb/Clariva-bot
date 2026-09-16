@@ -126,17 +126,11 @@ describe("RxWorkspace cockpitMode prop", () => {
 });
 
 describe("RxWorkspace read-only notice (rxl-02)", () => {
-  it("states that an ended visit is read-only", () => {
+  it("does not show the retired read-only banner on an ended visit", () => {
     renderWithProvider({ state: "ended" });
-    const notice = screen.getByTestId("rx-readonly-notice");
-    expect(notice).toHaveTextContent(
-      "This prescription is read-only. The consultation has ended.",
-    );
-    expect(notice).not.toHaveTextContent(/15|amend/i);
+    expect(screen.queryByTestId("rx-readonly-notice")).not.toBeInTheDocument();
     expect(
-      screen.queryByLabelText(
-        "Prescription is read-only — the consultation has ended",
-      ),
+      screen.queryByText(/This prescription is read-only/i),
     ).not.toBeInTheDocument();
   });
 
