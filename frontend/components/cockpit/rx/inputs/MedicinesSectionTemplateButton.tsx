@@ -87,8 +87,12 @@ export function MedicinesSectionTemplateButton({
 
     setSaving(true);
     try {
-      await createRxTemplate(token, { name: name.trim(), ...payload });
+      const created = await createRxTemplate(token, {
+        name: name.trim(),
+        ...payload,
+      });
       removePack(pack);
+      return created.data.template;
     } catch (err) {
       window.alert(err instanceof Error ? err.message : "Failed to save template");
     } finally {
