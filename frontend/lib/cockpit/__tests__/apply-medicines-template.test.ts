@@ -5,6 +5,7 @@ import {
   defaultMedicinesSaveName,
   MEDICINES_TEMPLATE_SCOPE,
   medicinesScopeHasContent,
+  rxMedicinesFromPackSuggestion,
   templateMedicineToRxMedicine,
   templateMedicinesHasContent,
 } from "@/lib/cockpit/apply-medicines-template";
@@ -150,5 +151,39 @@ describe("apply-medicines-template", () => {
         ],
       }),
     ).toBe("Medicines (3)");
+  });
+
+  it("maps a pack suggestion onto RxMedicine rows for save", () => {
+    const meds = rxMedicinesFromPackSuggestion({
+      useCount: 5,
+      lastUsedAt: "2026-09-01T00:00:00Z",
+      medicines: [
+        {
+          medicineName: "Azithromycin",
+          nameKey: "azithromycin",
+          dosage: "",
+          doseQty: 1,
+          doseUnit: "tab",
+          frequencyCode: "OD",
+          frequency: "",
+          durationValue: 5,
+          durationUnit: "days",
+          duration: "",
+          foodTiming: null,
+          routeCode: null,
+          route: "",
+          form: null,
+          drugMasterId: null,
+        },
+      ],
+    });
+    expect(meds[0]).toEqual(
+      expect.objectContaining({
+        medicineName: "Azithromycin",
+        doseQty: 1,
+        frequencyCode: "OD",
+        durationValue: 5,
+      }),
+    );
   });
 });

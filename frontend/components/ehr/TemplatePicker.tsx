@@ -18,6 +18,7 @@ import {
 } from "@/lib/api";
 import { formatDate } from "@/lib/format-date";
 import type { DoctorRxTemplate, RxTemplateScope } from "@/types/rx-template";
+import type { DoctorMedicinePackSuggestion } from "@/lib/api/doctor-medicine-pack-suggestions";
 import {
   formatTemplateSummary,
   SCOPE_PICKER_LABELS,
@@ -64,6 +65,11 @@ interface TemplatePickerProps {
    * this section id first (advisory ordering only).
    */
   priorityCustomSectionId?: string;
+  /** Recurring exact packs for the medicines picker. Not Enter-commitable. */
+  packSuggestions?: readonly DoctorMedicinePackSuggestion[];
+  onSavePackSuggestion?: (pack: DoctorMedicinePackSuggestion) => void | Promise<void>;
+  onDismissPackSuggestion?: (pack: DoctorMedicinePackSuggestion) => void | Promise<void>;
+  onPackSuggestionsOpened?: () => void;
 }
 
 export default function TemplatePicker({
@@ -75,6 +81,10 @@ export default function TemplatePicker({
   onApply,
   onSaveCurrentAsTemplate,
   priorityCustomSectionId,
+  packSuggestions = [],
+  onSavePackSuggestion,
+  onDismissPackSuggestion,
+  onPackSuggestionsOpened,
 }: TemplatePickerProps) {
   const isSubjective = variant === "subjective";
   const isObjective = variant === "objective";
@@ -130,6 +140,10 @@ export default function TemplatePicker({
   }, [open]);
 
   useEffect(() => {
+    if (open) onPackSuggestionsOpened?.();
+  }, [open, onPackSuggestionsOpened]);
+
+  useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -170,6 +184,14 @@ export default function TemplatePicker({
       return false;
     });
   }, [search, templates, isScopedVariant, scope, priorityCustomSectionId]);
+
+  const visiblePackSuggestions = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return packSuggestions;
+    return packSuggestions.filter((pack) =>
+      pack.medicines.some((m) => m.medicineName.toLowerCase().includes(q)),
+    );
+  }, [packSuggestions, search]);
 
   const handleApply = useCallback(
     async (template: DoctorRxTemplate) => {
@@ -271,7 +293,61 @@ export default function TemplatePicker({
             {error}
           </p>
         )}
-        {!loading && !error && filtered.length === 0 && (
+        {!loading && !error && visiblePackSuggestions.length > 0 ? (
+          <div
+            className="border-b border-border px-3 py-2.5"
+            data-testid="medicine-pack-suggestions"
+          >
+            <p className="text-xs font-medium text-muted-foreground">Suggested</p>
+            <ul className="mt-2 divide-y divide-border">
+              {visiblePackSuggestions.map((pack, index) => {
+                const names = pack.medicines.map((m) => m.medicineName).join(" · ");
+                return (
+                  <li
+                    key={`${pack.lastUsedAt}-${index}`}
+                    className="flex items-start justify-between gap-2 py-2.5 first:pt-0"
+                    data-testid="medicine-pack-suggestion"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium text-foreground">{names}</p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Used {pack.useCount} time{pack.useCount === 1 ? "" : "s"}
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-0.5">
+                      {onSavePackSuggestion ? (
+                        <Button
+                          type="button"
+                          size="sm"
+                          className="h-8"
+                          data-testid="medicine-pack-suggestion-save"
+                          onClick={() => void onSavePackSuggestion(pack)}
+                        >
+                          Save as template
+                        </Button>
+                      ) : null}
+                      {onDismissPackSuggestion ? (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-muted-foreground"
+                          aria-label="Dismiss this suggestion"
+                          data-testid="medicine-pack-suggestion-dismiss"
+                          onClick={() => void onDismissPackSuggestion(pack)}
+                        >
+                          <X className="h-3.5 w-3.5" aria-hidden />
+                        </Button>
+                      ) : null}
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        ) : null}
+
+        {!loading && !error && filtered.length === 0 && visiblePackSuggestions.length === 0 && (
           <div className="px-3 py-6 text-center text-sm text-muted-foreground">
             {templates.length === 0 ? (
               isScopedVariant ? (
@@ -301,6 +377,11 @@ export default function TemplatePicker({
         )}
         {!loading && !error && filtered.length > 0 && (
           <ul className="divide-y divide-border">
+            {visiblePackSuggestions.length > 0 ? (
+              <li className="px-3 pt-2 pb-1 text-xs font-medium text-muted-foreground" role="presentation">
+                Saved
+              </li>
+            ) : null}
             {filtered.map((t) => {
               const busy = busyTemplateId === t.id;
               const medCount = t.medicines_json?.length ?? 0;

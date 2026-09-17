@@ -14,6 +14,7 @@ import type {
   DoctorRxTemplate,
   RxTemplateMedicine,
 } from "@/types/rx-template";
+import type { DoctorMedicinePackSuggestion } from "@/lib/api/doctor-medicine-pack-suggestions";
 
 export const MEDICINES_TEMPLATE_SCOPE = "medicines" as const;
 
@@ -107,6 +108,29 @@ export function buildMedicinesTemplateSavePayload(
     scope: MEDICINES_TEMPLATE_SCOPE,
     medicines,
   };
+}
+
+export function rxMedicinesFromPackSuggestion(
+  pack: DoctorMedicinePackSuggestion,
+): RxMedicine[] {
+  return pack.medicines.map((m) =>
+    templateMedicineToRxMedicine({
+      medicineName: m.medicineName,
+      dosage: m.dosage,
+      route: m.route,
+      frequency: m.frequency,
+      duration: m.duration,
+      drugMasterId: m.drugMasterId,
+      frequencyCode: m.frequencyCode,
+      durationValue: m.durationValue,
+      durationUnit: m.durationUnit,
+      routeCode: m.routeCode,
+      doseQty: m.doseQty,
+      doseUnit: m.doseUnit,
+      form: m.form,
+      foodTiming: m.foodTiming,
+    } as RxTemplateMedicine),
+  );
 }
 
 export function defaultMedicinesSaveName(

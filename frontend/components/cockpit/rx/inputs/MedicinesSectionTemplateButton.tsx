@@ -4,13 +4,16 @@ import { useState } from "react";
 import { BookmarkPlus, LayoutTemplate } from "lucide-react";
 import { useRxForm, type RxMedicine } from "@/components/cockpit/rx/RxFormContext";
 import TemplatePicker from "@/components/ehr/TemplatePicker";
+import { useDoctorMedicinePackSuggestions } from "@/hooks/useDoctorMedicinePackSuggestions";
 import { createRxTemplate } from "@/lib/api";
+import type { DoctorMedicinePackSuggestion } from "@/lib/api/doctor-medicine-pack-suggestions";
 import {
   buildMedicinesFromTemplate,
   buildMedicinesTemplateSavePayload,
   defaultMedicinesSaveName,
   MEDICINES_TEMPLATE_SCOPE,
   medicinesScopeHasContent,
+  rxMedicinesFromPackSuggestion,
 } from "@/lib/cockpit/apply-medicines-template";
 import type { DoctorRxTemplate } from "@/types/rx-template";
 import { Button } from "@/components/ui/button";
@@ -40,6 +43,8 @@ export function MedicinesSectionTemplateButton({
   const { token, state } = useRxForm();
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
+  const { suggestions, unseenCount, dismissPack, markSeen, removePack } =
+    useDoctorMedicinePackSuggestions(token);
 
   const handleApply = async (template: DoctorRxTemplate) => {
     onMedicinesApplied(buildMedicinesFromTemplate(template));
@@ -70,6 +75,32 @@ export function MedicinesSectionTemplateButton({
     }
   };
 
+  const handleSaveSuggestion = async (pack: DoctorMedicinePackSuggestion) => {
+    const medicines = rxMedicinesFromPackSuggestion(pack);
+    const payload = buildMedicinesTemplateSavePayload({ medicines });
+    const nameSeed = defaultMedicinesSaveName({ medicines });
+    const name = window.prompt(
+      "Save this pack as a template — enter a short name:",
+      nameSeed,
+    );
+    if (!name?.trim()) return;
+
+    setSaving(true);
+    try {
+      await createRxTemplate(token, { name: name.trim(), ...payload });
+      removePack(pack);
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : "Failed to save template");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const templateLabel =
+    unseenCount > 0
+      ? `Templates, ${unseenCount} new pack suggestion${unseenCount === 1 ? "" : "s"}`
+      : "Templates";
+
   return (
     <>
       <IconTooltipGroup>
@@ -88,18 +119,25 @@ export function MedicinesSectionTemplateButton({
               <BookmarkPlus className="h-3.5 w-3.5" aria-hidden />
             </Button>
           </IconTooltip>
-          <IconTooltip label="Templates">
+          <IconTooltip label={templateLabel}>
             <Button
               type="button"
               variant="ghost"
               size="sm"
               disabled={disabled || saving}
-              className={cn(ICON_BTN_CLASS)}
+              className={cn(ICON_BTN_CLASS, "relative")}
               data-testid="medicines-section-template"
-              aria-label="Templates"
+              aria-label={templateLabel}
               onClick={() => setOpen(true)}
             >
               <LayoutTemplate className="h-3.5 w-3.5" aria-hidden />
+              {unseenCount > 0 ? (
+                <span
+                  data-testid="medicines-template-suggestion-nudge"
+                  className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full bg-primary"
+                  aria-hidden
+                />
+              ) : null}
             </Button>
           </IconTooltip>
         </span>
@@ -112,6 +150,10 @@ export function MedicinesSectionTemplateButton({
         variant="subjective"
         scope={MEDICINES_TEMPLATE_SCOPE}
         onApply={handleApply}
+        packSuggestions={suggestions}
+        onSavePackSuggestion={handleSaveSuggestion}
+        onDismissPackSuggestion={(pack) => void dismissPack(pack)}
+        onPackSuggestionsOpened={() => void markSeen()}
       />
     </>
   );
