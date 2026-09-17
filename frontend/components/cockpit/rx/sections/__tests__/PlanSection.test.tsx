@@ -338,6 +338,35 @@ describe("PlanSection peer zones (plan-p0)", () => {
     ).toBeInTheDocument();
   });
 
+  it("scrolls nearest on Plan L1 open and does not scroll on close", () => {
+    const scrollSpy = vi
+      .spyOn(HTMLElement.prototype, "scrollIntoView")
+      .mockImplementation(() => {});
+
+    renderPlanSection([completeMedicine("Ibuprofen")], ["instance-a"]);
+
+    for (const name of [
+      /Toggle Investigations \/ orders/i,
+      /Toggle Medications/i,
+      /Toggle Follow-up/i,
+      /Toggle Advice & education/i,
+      /Toggle Referral/i,
+      /Toggle Clinical notes/i,
+    ]) {
+      fireEvent.click(screen.getByRole("button", { name }));
+      expect(scrollSpy).not.toHaveBeenCalled();
+
+      fireEvent.click(screen.getByRole("button", { name }));
+      expect(scrollSpy).toHaveBeenCalledWith({
+        block: "nearest",
+        behavior: "smooth",
+      });
+      scrollSpy.mockClear();
+    }
+
+    scrollSpy.mockRestore();
+  });
+
   it("renders a single Advice section with quick picks and handouts (no education L2)", () => {
     renderPlanSection([completeMedicine("Ibuprofen")], ["instance-a"]);
 

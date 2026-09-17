@@ -22,7 +22,6 @@ import { historyFieldKeyToSectionId } from "@/lib/cockpit/subjective-section-ord
 import type { SubjectiveSectionId } from "@/lib/cockpit/subjective-section-order";
 import { historyFieldKeyToNoteFavorite } from "@/lib/api/note-favorites";
 import { RX_FIELD_INPUT_CLASS } from "@/components/cockpit/rx/sections/field-styles";
-import { SUBJECTIVE_SCROLL_TOP_SELECTOR } from "@/lib/cockpit/exam-card-scroll";
 import { SectionReorderLeadingAction } from "@/components/cockpit/rx/subjective/SortableSectionShell";
 
 export interface HistoryFieldsProps {
@@ -78,8 +77,7 @@ function HistoryFieldRow({
       defaultOpen={sectionOpen === undefined ? false : undefined}
       toggleLabel={`Toggle ${label}`}
       preview={preview ? `— ${preview}` : undefined}
-      scrollOnExpand
-      closeScrollToSelector={SUBJECTIVE_SCROLL_TOP_SELECTOR}
+      scrollIntoViewIfNeeded
       stickyHeader
       depthTone
       bodyClassName="space-y-2"

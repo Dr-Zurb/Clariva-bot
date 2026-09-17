@@ -26,7 +26,7 @@ describe("exam-card-scroll", () => {
 
     const card = document.querySelector(`[${EXAM_SYSTEM_CARD_ATTR}="general"]`);
     expect(card?.scrollIntoView).toHaveBeenCalledWith({
-      block: "start",
+      block: "nearest",
       behavior: "smooth",
     });
   });
@@ -40,7 +40,7 @@ describe("exam-card-scroll", () => {
 
     const card = document.querySelector(`[${EXAM_GENERAL_FINDING_CARD_ATTR}="pallor"]`);
     expect(card?.scrollIntoView).toHaveBeenCalledWith({
-      block: "start",
+      block: "nearest",
       behavior: "smooth",
     });
   });
@@ -54,7 +54,7 @@ describe("exam-card-scroll", () => {
 
     const section = document.querySelector(`[${EXAM_SUBSECTION_ATTR}="resp-auscultation"]`);
     expect(section?.scrollIntoView).toHaveBeenCalledWith({
-      block: "start",
+      block: "nearest",
       behavior: "smooth",
     });
   });

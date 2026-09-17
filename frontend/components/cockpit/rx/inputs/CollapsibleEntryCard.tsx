@@ -4,6 +4,7 @@ import { ChevronDown, Trash2 } from "lucide-react";
 import { useLayoutEffect, useRef, type KeyboardEvent, type ReactNode } from "react";
 import {
   reAnchorCollapsibleOnClose,
+  scrollCollapsibleIntoViewIfNeeded,
   scrollCollapsibleToStickyTop,
 } from "@/lib/cockpit/collapse-scroll";
 import { Collapse } from "@/components/ui/Collapse";
@@ -55,6 +56,11 @@ export interface CollapsibleEntryCardProps {
    * precedence over {@link closeBehavior}.
    */
   closeScrollToSelector?: string;
+  /**
+   * Chart PMH keeps the old park-on-toggle. SOAP cards omit this and only
+   * nudge when the opened card is offscreen.
+   */
+  parkOnToggle?: boolean;
   /** Override the scroll-margin class (sticky-header awareness on open). */
   scrollMarginClassName?: string;
   /** Extra classes for the outer card shell. */
@@ -85,6 +91,7 @@ export function CollapsibleEntryCard({
   bodyId,
   closeBehavior = "reanchor",
   closeScrollToSelector,
+  parkOnToggle = false,
   scrollMarginClassName = COLLAPSIBLE_ENTRY_CARD_EXAM_SCROLL_MARGIN,
   className,
   children,
@@ -107,6 +114,14 @@ export function CollapsibleEntryCard({
   useLayoutEffect(() => {
     if (open === prevOpen.current) return;
     prevOpen.current = open;
+    if (!parkOnToggle) {
+      if (open) {
+        scrollCollapsibleIntoViewIfNeeded(cardRef.current, {
+          pinTopIfTaller: true,
+        });
+      }
+      return;
+    }
     if (open) {
       scrollCollapsibleToStickyTop(cardRef.current);
     } else if (closeScrollToSelector) {
@@ -115,7 +130,7 @@ export function CollapsibleEntryCard({
     } else if (closeBehavior === "reanchor") {
       reAnchorCollapsibleOnClose(cardRef.current);
     }
-  }, [open, closeBehavior, closeScrollToSelector]);
+  }, [open, closeBehavior, closeScrollToSelector, parkOnToggle]);
 
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (disabled) return;

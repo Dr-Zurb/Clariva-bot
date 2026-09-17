@@ -25,7 +25,7 @@ import type {
   StrengthUnit,
 } from "@/types/prescription";
 import { isMedicineRowComplete } from "@/lib/cockpit/medicine-row-state";
-import { scrollCollapsibleToStickyTop } from "@/lib/cockpit/collapse-scroll";
+import { scrollCollapsibleIntoViewIfNeeded } from "@/lib/cockpit/collapse-scroll";
 import { cn } from "@/lib/utils";
 import {
   CHART_MED_DOSE_UNIT_PRIMARY,
@@ -367,7 +367,6 @@ export default function MedicineRow({
   const shouldShowSummary = hasName && (isReadOnly || isEditing === false);
 
   const cardRef = useRef<HTMLDivElement>(null);
-  const prevEditingRef = useRef(isEditing);
   const [strengthDraft, setStrengthDraft] = useState<string | null>(null);
   const [foodMoreCustom, setFoodMoreCustom] = useState<string | null>(null);
   const [freqUiMode, setFreqUiMode] = useState<ChartMedFrequencyUiMode>(() =>
@@ -391,22 +390,10 @@ export default function MedicineRow({
     }
   }, [value.foodTiming]);
 
-  // Subjective/objective parity: open glides the card under sticky chrome;
-  // close glides the Medications section (capture + list) back to the top.
   useLayoutEffect(() => {
-    if (isReadOnly || !hasName || !onRequestCollapse) return;
-    const prev = prevEditingRef.current;
-    if (isEditing === prev) return;
-    prevEditingRef.current = isEditing;
-    if (isEditing) {
-      scrollCollapsibleToStickyTop(cardRef.current);
-    } else {
-      const section =
-        cardRef.current?.closest<HTMLElement>("#medicines-section") ??
-        document.getElementById("medicines-section");
-      scrollCollapsibleToStickyTop(section);
-    }
-  }, [isEditing, isReadOnly, hasName, onRequestCollapse]);
+    if (shouldShowSummary || isReadOnly) return;
+    scrollCollapsibleIntoViewIfNeeded(cardRef.current);
+  }, [shouldShowSummary, isReadOnly]);
 
   if (shouldShowSummary) {
     return (

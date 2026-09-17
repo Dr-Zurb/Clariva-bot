@@ -28,11 +28,11 @@ describe("scrollComplaintCardIntoView", () => {
 
     scrollComplaintCardIntoView("row-1");
 
-    // No scroll pane in jsdom → the shared glide falls back to native smooth scroll.
+    // No scroll pane in jsdom → nearest fallback.
     const root = document.querySelector(`[${COMPLAINT_CARD_INSTANCE_ATTR}="row-1"]`);
     expect(root).not.toBeNull();
     expect(root?.scrollIntoView).toHaveBeenCalledWith({
-      block: "start",
+      block: "nearest",
       behavior: "smooth",
     });
   });
@@ -108,10 +108,7 @@ describe("scrollParentComplaintCardIntoView", () => {
     scrollParentComplaintCardIntoView("parent-row");
 
     const root = document.querySelector(`[${COMPLAINT_CARD_INSTANCE_ATTR}="parent-row"]`);
-    expect(root?.scrollIntoView).toHaveBeenCalledWith({
-      block: "start",
-      behavior: "smooth",
-    });
+    expect(root?.scrollIntoView).not.toHaveBeenCalled();
   });
 });
 
@@ -136,23 +133,16 @@ describe("scrollComplaintCaptureIntoView", () => {
 
     scrollComplaintCaptureIntoView();
 
-    expect(sectionSpy).toHaveBeenCalledTimes(1);
-    expect(sectionSpy).toHaveBeenCalledWith({
-      block: "start",
-      behavior: "smooth",
-    });
+    expect(sectionSpy).not.toHaveBeenCalled();
   });
 
-  it("falls back to the capture input when the section is missing", () => {
+  it("does not scroll the capture input when the section is missing", () => {
     document.body.innerHTML = `<input id="${COMPLAINT_CAPTURE_INPUT_ID}" />`;
 
     scrollComplaintCaptureIntoView();
 
     const input = document.getElementById(COMPLAINT_CAPTURE_INPUT_ID);
-    expect(input?.scrollIntoView).toHaveBeenCalledWith({
-      block: "start",
-      behavior: "smooth",
-    });
+    expect(input?.scrollIntoView).not.toHaveBeenCalled();
   });
 
   it("no-ops when neither the section nor the input exists", () => {

@@ -1,5 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { SoapTabFamilyProvider } from "@/components/cockpit/rx/sections/section-chrome";
 import { CollapsibleContainer } from "@/components/ui/CollapsibleContainer";
 
@@ -251,5 +251,30 @@ describe("CollapsibleContainer", () => {
       expect(header?.className).toContain("border-b");
       expect(header?.style.position).toBe("sticky");
     }
+  });
+
+  it("nudges nearest on expand when scrollIntoViewIfNeeded is set", () => {
+    const scrollSpy = vi
+      .spyOn(HTMLElement.prototype, "scrollIntoView")
+      .mockImplementation(() => {});
+
+    render(
+      <CollapsibleContainer
+        title="Section"
+        toggleLabel="Toggle section"
+        scrollIntoViewIfNeeded
+        defaultOpen={false}
+      >
+        <p>Body content</p>
+      </CollapsibleContainer>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Toggle section" }));
+
+    expect(scrollSpy).toHaveBeenCalledWith({
+      block: "nearest",
+      behavior: "smooth",
+    });
+    scrollSpy.mockRestore();
   });
 });

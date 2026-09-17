@@ -1,7 +1,6 @@
 import {
   measureStackedStickyOffset,
-  scrollCollapsibleToStickyTop,
-  scrollCollapsibleToStickyTopWithMargin,
+  scrollCollapsibleIntoViewIfNeeded,
 } from "@/lib/cockpit/collapse-scroll";
 
 /** Scroll anchor id on the expanded complaint card header row. */
@@ -79,14 +78,17 @@ function complaintCardScrollMargin(root: HTMLElement): number {
 }
 
 /**
- * After switching the active complaint card, glide its root to the top of the
- * scroll pane (under the stacked sticky headers) so the body expands downward
- * in view. Preceding sibling margin applies only to associated symptoms.
+ * After switching the active complaint card, nudge it into view only if the
+ * opened card is clipped. Preceding sibling margin applies only to associated
+ * symptoms.
  */
 export function scrollComplaintCardIntoView(instanceId: string): void {
   const root = complaintCardRoot(instanceId);
   if (!root) return;
-  scrollCollapsibleToStickyTopWithMargin(root, complaintCardScrollMargin(root));
+  scrollCollapsibleIntoViewIfNeeded(root, {
+    pinTopIfTaller: true,
+    scrollMarginTopPx: complaintCardScrollMargin(root),
+  });
 }
 
 /**
@@ -97,35 +99,11 @@ export function scrollComplaintCardHeaderIntoView(instanceId: string): void {
 }
 
 /**
- * After closing an associated symptom card, glide the parent chief-complaint
- * card back to the top so the doctor lands on the parent row (and can add
- * another associated symptom or collapse the parent). Scrolls the card root —
- * not the sticky header — so the landing is correct even when the header is
- * already pinned (exam-system-card parity).
+ * After closing an associated symptom card — stay put.
  */
-export function scrollParentComplaintCardIntoView(parentInstanceId: string): void {
-  scrollCollapsibleToStickyTop(complaintCardRoot(parentInstanceId));
-}
+export function scrollParentComplaintCardIntoView(_parentInstanceId: string): void {}
 
 /**
- * After a deliberate card collapse, bring the whole chief-complaints container
- * back into view (header + capture field + collapsed list) so the doctor can add
- * another complaint or pick the next card. Glides the section wrapper — not just
- * the input — so the "Chief complaints" title stays visible. Does not focus the
- * input (avoids keyboard pop / steal).
+ * After a deliberate card collapse — stay put.
  */
-export function scrollComplaintCaptureIntoView(): void {
-  if (typeof document === "undefined") return;
-
-  const section = document.getElementById(CHIEF_COMPLAINTS_SECTION_ID);
-  if (section instanceof HTMLElement) {
-    scrollCollapsibleToStickyTop(section);
-    return;
-  }
-
-  // Fallback when the section id is absent (tests / legacy markup).
-  const input = document.getElementById(COMPLAINT_CAPTURE_INPUT_ID);
-  if (input instanceof HTMLElement) {
-    scrollCollapsibleToStickyTop(input);
-  }
-}
+export function scrollComplaintCaptureIntoView(): void {}

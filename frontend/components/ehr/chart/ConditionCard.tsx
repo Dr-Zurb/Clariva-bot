@@ -166,6 +166,7 @@ export function ConditionCard({
       removeLabel={`Remove condition ${condition.condition}`}
       testId={`condition-card-${condition.id}`}
       bodyId={bodyId}
+      parkOnToggle
       closeScrollToSelector='[data-testid="past-medical-history-field"]'
       scrollMarginClassName="scroll-mt-[var(--sticky-stack,2.75rem)]"
       className={isPast ? "bg-muted/30" : undefined}

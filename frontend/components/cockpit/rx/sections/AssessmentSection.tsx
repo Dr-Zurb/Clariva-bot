@@ -1039,8 +1039,7 @@ function AssessmentSectionChrome({
           count={meta.count}
           depthTone
           stickyHeader
-          scrollOnExpand
-          closeScrollToSelector={ASSESSMENT_SCROLL_TOP_SELECTOR}
+          scrollIntoViewIfNeeded
           leadingActions={leadingActions}
           actions={meta.actions}
           open={collapseControlled ? displayOpenById[sectionId] : undefined}

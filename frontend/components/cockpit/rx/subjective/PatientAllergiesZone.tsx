@@ -11,7 +11,6 @@ import {
   resolveSubjectiveSectionIcon,
   sectionHeaderIcon,
 } from "@/components/cockpit/rx/sections/section-chrome";
-import { SUBJECTIVE_SCROLL_TOP_SELECTOR } from "@/lib/cockpit/exam-card-scroll";
 import { SectionReorderLeadingAction } from "@/components/cockpit/rx/subjective/SortableSectionShell";
 import { formatCountSummary } from "@/components/patient-profile/panes/snapshot-pane-summary";
 import { usePatientAllergiesQuery } from "@/hooks/queries/usePatientAllergiesQuery";
@@ -65,8 +64,7 @@ export function PatientAllergiesZone({
       sectionIcon={sectionHeaderIcon(resolveSubjectiveSectionIcon("allergies")!)}
       toggleLabel="Toggle allergies"
       testId="patient-allergies-zone"
-      scrollOnExpand
-      closeScrollToSelector={SUBJECTIVE_SCROLL_TOP_SELECTOR}
+      scrollIntoViewIfNeeded
       stickyHeader
       open={zoneOpen}
       onOpenChange={handleZoneOpenChange}

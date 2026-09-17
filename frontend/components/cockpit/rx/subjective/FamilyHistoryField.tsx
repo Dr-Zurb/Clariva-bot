@@ -6,7 +6,6 @@ import {
   resolveSubjectiveSectionIcon,
   sectionHeaderIcon,
 } from "@/components/cockpit/rx/sections/section-chrome";
-import { SUBJECTIVE_SCROLL_TOP_SELECTOR } from "@/lib/cockpit/exam-card-scroll";
 import { useDepthToneSurface } from "@/components/ui/sticky-stack";
 import { SectionReorderLeadingAction } from "@/components/cockpit/rx/subjective/SortableSectionShell";
 import { LastVisitFamilyHistoryStrip } from "@/components/cockpit/rx/last-visit/LastVisitParchiStrips";
@@ -843,8 +842,7 @@ export function FamilyHistoryField({
       title="Family history"
       sectionIcon={sectionHeaderIcon(resolveSubjectiveSectionIcon("family_history")!)}
       toggleLabel="Toggle Family history"
-      scrollOnExpand
-      closeScrollToSelector={SUBJECTIVE_SCROLL_TOP_SELECTOR}
+      scrollIntoViewIfNeeded
       stickyHeader
       preview={preview ? `— ${preview}` : undefined}
       count={familyHistoryFilledCount(value)}

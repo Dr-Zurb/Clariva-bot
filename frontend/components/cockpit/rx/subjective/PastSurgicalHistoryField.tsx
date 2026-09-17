@@ -6,7 +6,6 @@ import {
   resolveSubjectiveSectionIcon,
   sectionHeaderIcon,
 } from "@/components/cockpit/rx/sections/section-chrome";
-import { SUBJECTIVE_SCROLL_TOP_SELECTOR } from "@/lib/cockpit/exam-card-scroll";
 import { SectionReorderLeadingAction } from "@/components/cockpit/rx/subjective/SortableSectionShell";
 import { LastVisitPastSurgicalStrip } from "@/components/cockpit/rx/last-visit/LastVisitParchiStrips";
 import { RemoveIconButton } from "@/components/cockpit/rx/subjective/RemoveIconButton";
@@ -405,7 +404,7 @@ export function PastSurgicalHistoryField({
   sectionOpen,
   onSectionOpenChange,
   scrollOnExpand = false,
-  closeScrollToSelector,
+  closeScrollToSelector: _closeScrollToSelector,
   stickyHeader = true,
   nestedSticky = false,
   variant = nestedSticky ? "subsection" : "section",
@@ -444,11 +443,7 @@ export function PastSurgicalHistoryField({
           : undefined
       }
       toggleLabel="Toggle Past surgical history"
-      scrollOnExpand={scrollOnExpand}
-      closeScrollToSelector={
-        closeScrollToSelector ??
-        (variant === "section" ? SUBJECTIVE_SCROLL_TOP_SELECTOR : undefined)
-      }
+      scrollIntoViewIfNeeded={scrollOnExpand || variant === "section"}
       stickyHeader={stickyHeader}
       nestedSticky={nestedSticky}
       variant={variant}
