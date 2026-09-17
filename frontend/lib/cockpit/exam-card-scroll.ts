@@ -1,4 +1,4 @@
-import { scrollCollapsibleToStickyTop } from "@/lib/cockpit/collapse-scroll";
+import { scrollCollapsibleIntoViewIfNeeded } from "@/lib/cockpit/collapse-scroll";
 
 /** Scroll anchor on each systemic examination card (General, CVS, Resp, …). */
 export const EXAM_SYSTEM_CARD_ATTR = "data-exam-system-card";
@@ -42,64 +42,71 @@ function queryCard(attr: string, id: string): HTMLElement | null {
   return el instanceof HTMLElement ? el : null;
 }
 
-function querySelector(selector: string): HTMLElement | null {
-  if (typeof document === "undefined") return null;
-  const el = document.querySelector(selector);
-  return el instanceof HTMLElement ? el : null;
-}
+/** Close an L0 objective section — stay put. */
+export function scrollObjectiveTabToTop(): void {}
 
-/** Close an L0 objective section → glide the whole Objective tab to the top. */
-export function scrollObjectiveTabToTop(): void {
-  scrollCollapsibleToStickyTop(querySelector(OBJECTIVE_SCROLL_TOP_SELECTOR));
-}
-
-/** Close an L1 exam system card → glide the Examination section to the top. */
-export function scrollObjectiveExamSectionToTop(): void {
-  scrollCollapsibleToStickyTop(querySelector(OBJECTIVE_EXAM_SECTION_SELECTOR));
-}
+/** Close an L1 exam system card — stay put. */
+export function scrollObjectiveExamSectionToTop(): void {}
 
 /**
- * After expanding a systemic exam card, align it beneath the stacked sticky
- * headers so the body opens downward in view.
+ * After expanding a systemic exam card, nudge it into view only if clipped.
  */
 export function scrollExamSystemCardIntoView(systemId: string): void {
-  scrollCollapsibleToStickyTop(queryCard(EXAM_SYSTEM_CARD_ATTR, systemId));
+  scrollCollapsibleIntoViewIfNeeded(queryCard(EXAM_SYSTEM_CARD_ATTR, systemId), {
+    pinTopIfTaller: true,
+  });
 }
 
-/** Close an L2 exam subsection → glide its parent system card to the top. */
-export function scrollExamSystemCardToTop(systemId: string): void {
-  scrollCollapsibleToStickyTop(queryCard(EXAM_SYSTEM_CARD_ATTR, systemId));
-}
+/** Close an L2 exam subsection — stay put. */
+export function scrollExamSystemCardToTop(_systemId: string): void {}
 
-/** After expanding a General finding card, align it beneath sticky headers. */
+/** After expanding a General finding card, nudge it into view only if clipped. */
 export function scrollExamGeneralFindingCardIntoView(findingId: string): void {
-  scrollCollapsibleToStickyTop(queryCard(EXAM_GENERAL_FINDING_CARD_ATTR, findingId));
+  scrollCollapsibleIntoViewIfNeeded(
+    queryCard(EXAM_GENERAL_FINDING_CARD_ATTR, findingId),
+    { pinTopIfTaller: true },
+  );
 }
 
-/** After expanding a CVS structured finding card, align it beneath sticky headers. */
+/** After expanding a CVS structured finding card, nudge it into view only if clipped. */
 export function scrollExamCvsFindingCardIntoView(findingId: string): void {
-  scrollCollapsibleToStickyTop(queryCard(EXAM_CVS_FINDING_CARD_ATTR, findingId));
+  scrollCollapsibleIntoViewIfNeeded(
+    queryCard(EXAM_CVS_FINDING_CARD_ATTR, findingId),
+    { pinTopIfTaller: true },
+  );
 }
 
-/** After expanding a Respiratory structured finding card, align it beneath sticky headers. */
+/** After expanding a Respiratory structured finding card, nudge it into view only if clipped. */
 export function scrollExamRespFindingCardIntoView(findingId: string): void {
-  scrollCollapsibleToStickyTop(queryCard(EXAM_RESP_FINDING_CARD_ATTR, findingId));
+  scrollCollapsibleIntoViewIfNeeded(
+    queryCard(EXAM_RESP_FINDING_CARD_ATTR, findingId),
+    { pinTopIfTaller: true },
+  );
 }
 
-/** After expanding an Abdomen structured finding card, align it beneath sticky headers. */
+/** After expanding an Abdomen structured finding card, nudge it into view only if clipped. */
 export function scrollExamAbdFindingCardIntoView(findingId: string): void {
-  scrollCollapsibleToStickyTop(queryCard(EXAM_ABD_FINDING_CARD_ATTR, findingId));
+  scrollCollapsibleIntoViewIfNeeded(
+    queryCard(EXAM_ABD_FINDING_CARD_ATTR, findingId),
+    { pinTopIfTaller: true },
+  );
 }
 
-/** After expanding a CNS structured finding card, align it beneath sticky headers. */
+/** After expanding a CNS structured finding card, nudge it into view only if clipped. */
 export function scrollExamCnsFindingCardIntoView(findingId: string): void {
-  scrollCollapsibleToStickyTop(queryCard(EXAM_CNS_FINDING_CARD_ATTR, findingId));
+  scrollCollapsibleIntoViewIfNeeded(
+    queryCard(EXAM_CNS_FINDING_CARD_ATTR, findingId),
+    { pinTopIfTaller: true },
+  );
 }
 
 /**
- * Open an exam subsection, or close an L3 finding card → glide the subsection
- * (heading + sibling cards) to the top.
+ * Open an exam subsection — nudge into view only if clipped. Close stays put
+ * via {@link scrollExamSystemCardToTop}.
  */
 export function scrollExamSubsectionIntoView(subsectionScrollKey: string): void {
-  scrollCollapsibleToStickyTop(queryCard(EXAM_SUBSECTION_ATTR, subsectionScrollKey));
+  scrollCollapsibleIntoViewIfNeeded(
+    queryCard(EXAM_SUBSECTION_ATTR, subsectionScrollKey),
+    { pinTopIfTaller: false },
+  );
 }

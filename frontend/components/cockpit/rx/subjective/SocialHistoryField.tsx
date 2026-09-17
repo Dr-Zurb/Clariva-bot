@@ -1112,7 +1112,7 @@ export function SocialHistoryField({
       sectionIcon={sectionHeaderIcon(resolveSubjectiveSectionIcon("social_history")!)}
       toggleLabel="Toggle Social / personal history"
       testId="social-history-field"
-      scrollOnExpand
+      scrollIntoViewIfNeeded
       closeScrollToSelector={SUBJECTIVE_SCROLL_TOP_SELECTOR}
       stickyHeader
       depthTone
@@ -1135,7 +1135,7 @@ export function SocialHistoryField({
           count={substanceUseClusterFilledCount(value)}
           open={clusterAccordion.isOpen("substance")}
           onOpenChange={(open) => clusterAccordion.setOpen("substance", open)}
-          scrollOnExpand
+          scrollIntoViewIfNeeded
           stickyHeader
           closeScrollToSelector='[data-testid="social-history-field"]'
           bodyClassName="flex flex-col gap-3 pt-3 pb-3"
@@ -1151,7 +1151,7 @@ export function SocialHistoryField({
           statusDotFilled={Boolean(value.smoking?.status)}
           open={substanceAccordion.isOpen("smoking")}
           onOpenChange={(open) => substanceAccordion.setOpen("smoking", open)}
-          scrollOnExpand
+          scrollIntoViewIfNeeded
           stickyHeader
           closeScrollToSelector='[data-testid="social-history-cluster-substance"]'
           bodyClassName="space-y-2"
@@ -1250,7 +1250,7 @@ export function SocialHistoryField({
           statusDotFilled={Boolean(value.smokeless?.status)}
           open={substanceAccordion.isOpen("smokeless")}
           onOpenChange={(open) => substanceAccordion.setOpen("smokeless", open)}
-          scrollOnExpand
+          scrollIntoViewIfNeeded
           stickyHeader
           closeScrollToSelector='[data-testid="social-history-cluster-substance"]'
           bodyClassName="space-y-2"
@@ -1318,7 +1318,7 @@ export function SocialHistoryField({
           statusDotFilled={Boolean(value.alcohol?.status)}
           open={substanceAccordion.isOpen("alcohol")}
           onOpenChange={(open) => substanceAccordion.setOpen("alcohol", open)}
-          scrollOnExpand
+          scrollIntoViewIfNeeded
           stickyHeader
           closeScrollToSelector='[data-testid="social-history-cluster-substance"]'
           bodyClassName="space-y-2"
@@ -1873,7 +1873,7 @@ export function SocialHistoryField({
           statusDotFilled={Boolean(value.substances?.status)}
           open={substanceAccordion.isOpen("substances")}
           onOpenChange={(open) => substanceAccordion.setOpen("substances", open)}
-          scrollOnExpand
+          scrollIntoViewIfNeeded
           stickyHeader
           closeScrollToSelector='[data-testid="social-history-cluster-substance"]'
           bodyClassName="space-y-2"
@@ -1899,7 +1899,7 @@ export function SocialHistoryField({
           count={lifestyleClusterFilledCount(value)}
           open={clusterAccordion.isOpen("lifestyle")}
           onOpenChange={(open) => clusterAccordion.setOpen("lifestyle", open)}
-          scrollOnExpand
+          scrollIntoViewIfNeeded
           stickyHeader
           closeScrollToSelector='[data-testid="social-history-field"]'
           bodyClassName="flex flex-col gap-3 pt-3 pb-3"
@@ -1914,7 +1914,7 @@ export function SocialHistoryField({
             count={dietHasContent(normalizeDietSection(value.diet)) ? 1 : 0}
             open={lifestyleAccordion.isOpen("diet")}
             onOpenChange={(open) => lifestyleAccordion.setOpen("diet", open)}
-            scrollOnExpand
+            scrollIntoViewIfNeeded
             stickyHeader
             closeScrollToSelector='[data-testid="social-history-cluster-lifestyle"]'
             bodyClassName="space-y-2"
@@ -1938,7 +1938,7 @@ export function SocialHistoryField({
             count={caffeineItemsForDisplayMemo.length}
             open={lifestyleAccordion.isOpen("caffeine")}
             onOpenChange={(open) => lifestyleAccordion.setOpen("caffeine", open)}
-            scrollOnExpand
+            scrollIntoViewIfNeeded
             stickyHeader
             closeScrollToSelector='[data-testid="social-history-cluster-lifestyle"]'
             bodyClassName="space-y-2"
@@ -1963,7 +1963,7 @@ export function SocialHistoryField({
             count={activityItemsCount}
             open={lifestyleAccordion.isOpen("activity")}
             onOpenChange={(open) => lifestyleAccordion.setOpen("activity", open)}
-            scrollOnExpand
+            scrollIntoViewIfNeeded
             stickyHeader
             closeScrollToSelector='[data-testid="social-history-cluster-lifestyle"]'
             bodyClassName="space-y-2"
@@ -1988,7 +1988,7 @@ export function SocialHistoryField({
           count={contextClusterFilledCount(value)}
           open={clusterAccordion.isOpen("context")}
           onOpenChange={(open) => clusterAccordion.setOpen("context", open)}
-          scrollOnExpand
+          scrollIntoViewIfNeeded
           stickyHeader
           closeScrollToSelector='[data-testid="social-history-field"]'
           bodyClassName="flex flex-col gap-3 pt-3 pb-3"
@@ -2003,7 +2003,7 @@ export function SocialHistoryField({
             count={occupationCount}
             open={contextAccordion.isOpen("occupation")}
             onOpenChange={(open) => contextAccordion.setOpen("occupation", open)}
-            scrollOnExpand
+            scrollIntoViewIfNeeded
             stickyHeader
             closeScrollToSelector='[data-testid="social-history-cluster-context"]'
             bodyClassName="space-y-2"
@@ -2063,7 +2063,7 @@ export function SocialHistoryField({
             count={living?.situation ? 1 : 0}
             open={contextAccordion.isOpen("living")}
             onOpenChange={(open) => contextAccordion.setOpen("living", open)}
-            scrollOnExpand
+            scrollIntoViewIfNeeded
             stickyHeader
             closeScrollToSelector='[data-testid="social-history-cluster-context"]'
             bodyClassName="space-y-2"
@@ -2120,7 +2120,7 @@ export function SocialHistoryField({
             count={travelActive ? 1 : 0}
             open={contextAccordion.isOpen("travel")}
             onOpenChange={(open) => contextAccordion.setOpen("travel", open)}
-            scrollOnExpand
+            scrollIntoViewIfNeeded
             stickyHeader
             closeScrollToSelector='[data-testid="social-history-cluster-context"]'
             bodyClassName="space-y-2"
@@ -2225,7 +2225,7 @@ export function SocialHistoryField({
             }
             open={contextAccordion.isOpen("sick_contact")}
             onOpenChange={(open) => contextAccordion.setOpen("sick_contact", open)}
-            scrollOnExpand
+            scrollIntoViewIfNeeded
             stickyHeader
             closeScrollToSelector='[data-testid="social-history-cluster-context"]'
             bodyClassName="space-y-2"
@@ -2357,7 +2357,7 @@ export function SocialHistoryField({
           count={wellbeingClusterFilledCount(value)}
           open={clusterAccordion.isOpen("wellbeing")}
           onOpenChange={(open) => clusterAccordion.setOpen("wellbeing", open)}
-          scrollOnExpand
+          scrollIntoViewIfNeeded
           stickyHeader
           closeScrollToSelector='[data-testid="social-history-field"]'
           bodyClassName="flex flex-col gap-3 pt-3 pb-3"
@@ -2372,7 +2372,7 @@ export function SocialHistoryField({
             count={sleepHasContent(value.sleep) ? 1 : 0}
             open={wellbeingAccordion.isOpen("sleep")}
             onOpenChange={(open) => wellbeingAccordion.setOpen("sleep", open)}
-            scrollOnExpand
+            scrollIntoViewIfNeeded
             stickyHeader
             closeScrollToSelector='[data-testid="social-history-cluster-wellbeing"]'
             bodyClassName="space-y-2"
@@ -2466,7 +2466,7 @@ export function SocialHistoryField({
             }
             open={wellbeingAccordion.isOpen("stress")}
             onOpenChange={(open) => wellbeingAccordion.setOpen("stress", open)}
-            scrollOnExpand
+            scrollIntoViewIfNeeded
             stickyHeader
             closeScrollToSelector='[data-testid="social-history-cluster-wellbeing"]'
             bodyClassName="space-y-2"
@@ -2573,7 +2573,7 @@ export function SocialHistoryField({
           count={sexualClusterFilledCount(value)}
           open={clusterAccordion.isOpen("sexual")}
           onOpenChange={(open) => clusterAccordion.setOpen("sexual", open)}
-          scrollOnExpand
+          scrollIntoViewIfNeeded
           stickyHeader
           closeScrollToSelector='[data-testid="social-history-field"]'
           bodyClassName="space-y-2 pt-3 pb-3"

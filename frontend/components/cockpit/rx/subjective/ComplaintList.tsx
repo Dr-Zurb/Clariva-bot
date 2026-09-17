@@ -20,7 +20,6 @@ import {
   resolveSubjectiveSectionIcon,
   sectionHeaderIcon,
 } from "@/components/cockpit/rx/sections/section-chrome";
-import { SUBJECTIVE_SCROLL_TOP_SELECTOR } from "@/lib/cockpit/exam-card-scroll";
 import { usePersistedOpenId } from "@/lib/cockpit/use-persisted-entry-open";
 import { SectionReorderLeadingAction } from "@/components/cockpit/rx/subjective/SortableSectionShell";
 import {
@@ -583,8 +582,7 @@ export function ComplaintList({
         resolveSubjectiveSectionIcon("chief_complaints")!
       )}
       toggleLabel="Toggle chief complaints"
-      scrollOnExpand
-      closeScrollToSelector={SUBJECTIVE_SCROLL_TOP_SELECTOR}
+      scrollIntoViewIfNeeded
       stickyHeader
       depthTone
       count={complaints.length}

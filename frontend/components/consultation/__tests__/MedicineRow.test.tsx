@@ -182,7 +182,7 @@ describe("MedicineRow delete from summary", () => {
 });
 
 describe("MedicineRow collapse scroll (subj/obj parity)", () => {
-  it("glides the card into view when expanding from summary", () => {
+  it("scrolls nearest on expand and does not scroll on collapse", () => {
     const scrollSpy = vi
       .spyOn(HTMLElement.prototype, "scrollIntoView")
       .mockImplementation(() => {});
@@ -196,6 +196,8 @@ describe("MedicineRow collapse scroll (subj/obj parity)", () => {
       onRemove,
       value,
     } = renderRow({}, { isEditing: false });
+
+    expect(scrollSpy).not.toHaveBeenCalled();
 
     fireEvent.click(
       screen.getByRole("button", { name: "Paracetamol — expand medication" })
@@ -217,32 +219,11 @@ describe("MedicineRow collapse scroll (subj/obj parity)", () => {
     );
 
     expect(scrollSpy).toHaveBeenCalledWith({
-      block: "start",
+      block: "nearest",
       behavior: "smooth",
     });
-    scrollSpy.mockRestore();
-  });
 
-  it("glides the medicines section when collapsing the editor", () => {
-    const scrollSpy = vi
-      .spyOn(HTMLElement.prototype, "scrollIntoView")
-      .mockImplementation(() => {});
-
-    const section = document.createElement("div");
-    section.id = "medicines-section";
-    document.body.appendChild(section);
-
-    const {
-      rerender,
-      onRequestEdit,
-      onRequestCollapse,
-      onChange,
-      onPatch,
-      onRemove,
-      value,
-    } = renderRow({}, { isEditing: true });
-    const editor = screen.getByTestId("medicine-row-editor-2");
-    section.appendChild(editor.parentElement ?? editor);
+    scrollSpy.mockClear();
 
     rerender(
       <MedicineRow
@@ -258,9 +239,8 @@ describe("MedicineRow collapse scroll (subj/obj parity)", () => {
       />
     );
 
-    expect(scrollSpy).toHaveBeenCalled();
+    expect(scrollSpy).not.toHaveBeenCalled();
     scrollSpy.mockRestore();
-    section.remove();
   });
 });
 

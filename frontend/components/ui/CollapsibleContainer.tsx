@@ -1,6 +1,6 @@
 "use client";
 
-import { useId, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { ChevronDown } from "lucide-react";
 import { Collapse } from "@/components/ui/Collapse";
 import {
@@ -16,8 +16,10 @@ import {
 } from "@/components/cockpit/rx/sections/section-chrome";
 import { RX_EXAM_SYSTEM_TITLE_CLASS } from "@/components/cockpit/rx/sections/field-styles";
 import {
+  COLLAPSE_OPEN_MS,
   isCollapsibleAtStickyLine,
   reAnchorCollapsibleOnClose,
+  scrollCollapsibleIntoViewIfNeeded,
   scrollCollapsibleToStickyTop,
 } from "@/lib/cockpit/collapse-scroll";
 import { cn } from "@/lib/utils";
@@ -59,6 +61,11 @@ export interface CollapsibleContainerProps {
   bodyClassName?: string;
   /** When true, smooth-scroll this section into view on expand (not on initial mount). */
   scrollOnExpand?: boolean;
+  /**
+   * When true, expanding nudges the pane only if this section opened offscreen.
+   * Does not park the header at the top. Close stays put. Plan uses this.
+   */
+  scrollIntoViewIfNeeded?: boolean;
   /**
    * When set, closing glides the nearest ancestor matching this selector (the
    * card's "bigger container") to the top — e.g. top-level objective sections
@@ -135,6 +142,7 @@ export function CollapsibleContainer({
   headerClassName,
   bodyClassName,
   scrollOnExpand = false,
+  scrollIntoViewIfNeeded = false,
   closeScrollToSelector,
   stickyHeader = false,
   nestedSticky: _nestedSticky = false,
@@ -148,6 +156,7 @@ export function CollapsibleContainer({
   const reactId = useId();
   const bodyId = `collapsible-body-${reactId}`;
   const sectionRef = useRef<HTMLElement>(null);
+  const intoViewTimerRef = useRef<number | null>(null);
   const isControlled = openProp !== undefined;
   const [openState, setOpenState] = useState<boolean>(defaultOpen);
   const open = isControlled ? openProp : openState;
@@ -172,10 +181,36 @@ export function CollapsibleContainer({
       ? SOAP_TAB_FAMILY_ACCENT[tabFamily]
       : undefined;
 
+  useEffect(() => {
+    return () => {
+      if (intoViewTimerRef.current != null) {
+        window.clearTimeout(intoViewTimerRef.current);
+      }
+    };
+  }, []);
+
   const toggle = () => {
     const next = !open;
     if (!isControlled) setOpenState(next);
     onOpenChange?.(next);
+    if (intoViewTimerRef.current != null) {
+      window.clearTimeout(intoViewTimerRef.current);
+      intoViewTimerRef.current = null;
+    }
+    // Plan: nudge only if the opened section is clipped. Re-measure after the
+    // fold so a short body that grew offscreen is caught. Close stays put.
+    if (scrollIntoViewIfNeeded && next) {
+      scrollCollapsibleIntoViewIfNeeded(sectionRef.current, {
+        pinTopIfTaller: false,
+      });
+      intoViewTimerRef.current = window.setTimeout(() => {
+        intoViewTimerRef.current = null;
+        scrollCollapsibleIntoViewIfNeeded(sectionRef.current, {
+          pinTopIfTaller: false,
+        });
+      }, COLLAPSE_OPEN_MS);
+      return;
+    }
     // Open → glide this section to the top (under sticky chrome), concurrently
     // with the expand. Close → glide the bigger container to the top when
     // {@link closeScrollToSelector} is set; otherwise stay put unless the header

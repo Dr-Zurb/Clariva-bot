@@ -234,6 +234,16 @@ export interface CustomSubsectionBlockProps {
   leadingActions?: ReactNode;
   /** Scroll-to selector on collapse. Defaults to the subjective tab top. */
   scrollSelector?: string;
+  /**
+   * When false, skip the open/close pane glide. Plan opts out; Subjective
+   * and Assessment keep the default.
+   */
+  scrollOnExpand?: boolean;
+  /**
+   * When true, expanding nudges the pane only if this block opened offscreen.
+   * Plan uses this instead of `scrollOnExpand`.
+   */
+  scrollIntoViewIfNeeded?: boolean;
   /** When set, shows last-visit body for this custom block (LVC-DL-11). */
   lastVisitScope?: LastVisitCustomScope;
   onUpdate: (patch: Partial<CustomSubsection>) => void;
@@ -254,6 +264,8 @@ export function CustomSubsectionBlock({
   templateActions,
   leadingActions,
   scrollSelector,
+  scrollOnExpand = false,
+  scrollIntoViewIfNeeded = true,
   lastVisitScope,
   onUpdate,
   onRemove,
@@ -361,8 +373,13 @@ export function CustomSubsectionBlock({
       interactiveTitle={isEditingTitle ? headerTitleInput : undefined}
       preview={preview}
       toggleLabel={`Toggle ${displayTitle}`}
-      scrollOnExpand
-      closeScrollToSelector={scrollSelector ?? SUBJECTIVE_SCROLL_TOP_SELECTOR}
+      scrollOnExpand={scrollOnExpand}
+      scrollIntoViewIfNeeded={scrollIntoViewIfNeeded}
+      closeScrollToSelector={
+        scrollOnExpand
+          ? (scrollSelector ?? SUBJECTIVE_SCROLL_TOP_SELECTOR)
+          : undefined
+      }
       stickyHeader
       leadingActions={headerLeadingActions}
       actions={headerActions}

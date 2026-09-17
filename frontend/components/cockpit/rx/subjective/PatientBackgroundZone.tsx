@@ -15,7 +15,6 @@ import {
   resolveSubjectiveSectionIcon,
   sectionHeaderIcon,
 } from "@/components/cockpit/rx/sections/section-chrome";
-import { SUBJECTIVE_SCROLL_TOP_SELECTOR } from "@/lib/cockpit/exam-card-scroll";
 import { SectionReorderLeadingAction } from "@/components/cockpit/rx/subjective/SortableSectionShell";
 import { formatActivePastSummary } from "@/components/ehr/chart/ChartPillToggle";
 import {
@@ -160,8 +159,7 @@ export function PatientBackgroundZone({
       sectionIcon={sectionHeaderIcon(resolveSubjectiveSectionIcon("patient_background")!)}
       toggleLabel="Toggle patient background"
       testId="patient-background-zone"
-      scrollOnExpand
-      closeScrollToSelector={SUBJECTIVE_SCROLL_TOP_SELECTOR}
+      scrollIntoViewIfNeeded
       stickyHeader
       open={sectionOpen}
       onOpenChange={onSectionOpenChange}
@@ -190,8 +188,7 @@ export function PatientBackgroundZone({
         preview={pmhPreview ? `— ${pmhPreview}` : undefined}
         open={subsectionAccordion.isOpen("pmh")}
         onOpenChange={(open) => subsectionAccordion.setOpen("pmh", open)}
-        scrollOnExpand
-        closeScrollToSelector='[data-testid="patient-background-zone"]'
+        scrollIntoViewIfNeeded
         stickyHeader
         nestedSticky
         bodyClassName="space-y-3"

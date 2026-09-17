@@ -45,7 +45,6 @@ import {
   sectionHeaderIcon,
   soapTabHeadingClassName,
 } from "@/components/cockpit/rx/sections/section-chrome";
-import { OBJECTIVE_SCROLL_TOP_SELECTOR } from "@/lib/cockpit/exam-card-scroll";
 import { createEmptyCustomSubsection } from "@/lib/cockpit/custom-subsections";
 import {
   buildObjectiveClearAllActions,
@@ -891,8 +890,7 @@ export function ObjectiveSection({
           testId={`objective-section-${sectionId}`}
           leadingActions={leadingActions}
           actions={sectionActions}
-          scrollOnExpand
-          closeScrollToSelector={OBJECTIVE_SCROLL_TOP_SELECTOR}
+          scrollIntoViewIfNeeded
           stickyHeader
           open={collapseControlled ? displayOpenById[sectionId] : undefined}
           onOpenChange={

@@ -114,7 +114,6 @@ import type { PatientAllergy } from "@/types/patient-chart";
 import type { DrugMasterRow } from "@/types/drug-master";
 import type { InteractionRow } from "@/lib/api/drug-interactions";
 import { coerceRouteCode, defaultDoseUnitForForm } from "@/lib/medicineCodes";
-import { PLAN_SCROLL_TOP_SELECTOR } from "@/lib/cockpit/exam-card-scroll";
 import {
   buildPlanClearAllActions,
   rxFormHasClearablePlanContent,
@@ -1539,7 +1538,8 @@ export function PlanSection({
         sectionId={sectionId}
         lastVisitScope="plan"
         disabled={disabled}
-        scrollSelector={PLAN_SCROLL_TOP_SELECTOR}
+        scrollOnExpand={false}
+        scrollIntoViewIfNeeded
         leadingActions={leadingActions}
         focusTitleOnMount={focusBlockIdRef.current === block.id}
         pendingChildFocusId={focusChildIdRef.current}
@@ -1639,8 +1639,7 @@ export function PlanSection({
           preview={meta.preview}
           depthTone
           stickyHeader
-          scrollOnExpand
-          closeScrollToSelector={PLAN_SCROLL_TOP_SELECTOR}
+          scrollIntoViewIfNeeded
           bodyClassName={meta.bodyClassName}
           leadingActions={leadingActions}
           actions={meta.actions}

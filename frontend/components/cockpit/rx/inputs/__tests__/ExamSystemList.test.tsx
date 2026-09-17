@@ -265,7 +265,7 @@ describe("ExamSystemList (obj-03 · obj-30)", () => {
     openEdemaCard("pedal");
     expect(panel).toHaveAttribute("data-open", "true");
     expect(panel.scrollIntoView).toHaveBeenCalledWith({
-      block: "start",
+      block: "nearest",
       behavior: "smooth",
     });
     scrollSpy.mockRestore();
@@ -280,7 +280,7 @@ describe("ExamSystemList (obj-03 · obj-30)", () => {
     // smooth scroll, fired synchronously with the toggle (no deferral).
     const card = screen.getByTestId("exam-system-card-cvs");
     expect(card.scrollIntoView).toHaveBeenCalledWith({
-      block: "start",
+      block: "nearest",
       behavior: "smooth",
     });
     scrollSpy.mockRestore();
@@ -294,7 +294,7 @@ describe("ExamSystemList (obj-03 · obj-30)", () => {
 
     const card = screen.getByTestId("general-finding-card-pallor");
     expect(card.scrollIntoView).toHaveBeenCalledWith({
-      block: "start",
+      block: "nearest",
       behavior: "smooth",
     });
     scrollSpy.mockRestore();

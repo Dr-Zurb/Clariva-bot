@@ -254,6 +254,77 @@ export function scrollCollapsibleToStickyTopWithMargin(
   scrollCollapsibleToTop(el);
 }
 
+const INTO_VIEW_TOLERANCE_PX = 2;
+/** Minimum header+body room when a tall Plan L1 opens near the pane bottom. */
+const TALL_SECTION_HEADER_ROOM_PX = 88;
+
+export interface ScrollIntoViewIfNeededOptions {
+  /**
+   * When the card is taller than the pane, pin its top under sticky chrome.
+   * Medicine editors want this. Plan L1s pass false so opening Follow-up does
+   * not yank Investigations to the top.
+   */
+  pinTopIfTaller?: boolean;
+  /** Override the sticky-stack margin written to `scroll-margin-top`. */
+  scrollMarginTopPx?: number;
+}
+
+/**
+ * Nudge the pane only when `el` is clipped. Fully on-screen → no-op. Bottom
+ * overflow → pull up just enough. Top clipped under sticky chrome → pull down.
+ * Taller than the pane → pin the top (default) or keep the header usable
+ * without a full yank (`pinTopIfTaller: false`).
+ */
+export function scrollCollapsibleIntoViewIfNeeded(
+  el: HTMLElement | null,
+  options: ScrollIntoViewIfNeededOptions = {},
+): void {
+  if (!el) return;
+  const pinTopIfTaller = options.pinTopIfTaller ?? true;
+  const parent = getScrollParent(el);
+  if (!parent) {
+    el.scrollIntoView({
+      block: "nearest",
+      behavior: prefersReducedMotion() ? "auto" : "smooth",
+    });
+    return;
+  }
+
+  el.style.scrollMarginTop = `${
+    options.scrollMarginTopPx ?? measureStackedStickyOffset(el)
+  }px`;
+  const marginTop = stickyMarginTop(el);
+  const parentRect = parent.getBoundingClientRect();
+  const elRect = el.getBoundingClientRect();
+  const visibleTop = parentRect.top + marginTop;
+  const visibleBottom = parentRect.bottom;
+  const visibleHeight = visibleBottom - visibleTop;
+
+  let delta = 0;
+  if (visibleHeight > 0 && elRect.height > visibleHeight) {
+    if (pinTopIfTaller) {
+      delta = elRect.top - visibleTop;
+    } else if (elRect.top < visibleTop - INTO_VIEW_TOLERANCE_PX) {
+      delta = elRect.top - visibleTop;
+    } else if (elRect.top > visibleBottom - TALL_SECTION_HEADER_ROOM_PX) {
+      delta = elRect.top - (visibleBottom - TALL_SECTION_HEADER_ROOM_PX);
+    }
+  } else if (elRect.top < visibleTop - INTO_VIEW_TOLERANCE_PX) {
+    delta = elRect.top - visibleTop;
+  } else if (elRect.bottom > visibleBottom + INTO_VIEW_TOLERANCE_PX) {
+    delta = elRect.bottom - visibleBottom;
+  }
+
+  if (Math.abs(delta) <= INTO_VIEW_TOLERANCE_PX) return;
+
+  const next = Math.max(0, parent.scrollTop + delta);
+  if (prefersReducedMotion() || typeof parent.scrollTo !== "function") {
+    parent.scrollTop = next;
+    return;
+  }
+  parent.scrollTo({ top: next, behavior: "smooth" });
+}
+
 /**
  * CLOSE: settle the header to the sticky line as one motion locked to the body fold
  * — same duration (`COLLAPSE_CLOSE_MS`) and ease-out ramp — easing toward the

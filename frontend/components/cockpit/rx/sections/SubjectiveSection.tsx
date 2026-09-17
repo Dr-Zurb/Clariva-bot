@@ -45,7 +45,6 @@ import {
   SectionReorderLeadingAction,
 } from "@/components/cockpit/rx/subjective/SortableSectionShell";
 import { CollapsibleContainer } from "@/components/ui/CollapsibleContainer";
-import { SUBJECTIVE_SCROLL_TOP_SELECTOR } from "@/lib/cockpit/exam-card-scroll";
 import type { PatientChartMode } from "@/types/patient-chart";
 import {
   customBlockIdFromSectionId,
@@ -839,8 +838,7 @@ export function SubjectiveSection({
           title="Additional Notes"
           sectionIcon={sectionHeaderIcon(resolveSubjectiveSectionIcon("free_text_notes")!)}
           toggleLabel="Toggle additional notes"
-          scrollOnExpand
-          closeScrollToSelector={SUBJECTIVE_SCROLL_TOP_SELECTOR}
+          scrollIntoViewIfNeeded
           stickyHeader
           open={collapseControlled ? displayOpenById.free_text_notes : undefined}
           onOpenChange={
@@ -900,8 +898,7 @@ export function SubjectiveSection({
           value={fields.pastSurgicalHistoryStructured}
           disabled={disabled}
           onChange={setPastSurgicalHistoryStructured}
-          scrollOnExpand
-          closeScrollToSelector={SUBJECTIVE_SCROLL_TOP_SELECTOR}
+          scrollIntoViewIfNeeded
           {...sectionOpenProps("past_surgical")}
         />
       );
