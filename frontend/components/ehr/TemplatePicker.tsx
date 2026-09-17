@@ -11,14 +11,23 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Archive, LayoutTemplate, X } from "lucide-react";
+import { formatMedicineComboHint } from "@/lib/cockpit/medicine-combos";
+import type { DoctorMedicineCombo } from "@/lib/api/doctor-medicine-combos";
 import {
   archiveRxTemplate,
   listRxTemplates,
   recordRxTemplateUse,
 } from "@/lib/api";
 import { formatDate } from "@/lib/format-date";
-import type { DoctorRxTemplate, RxTemplateScope } from "@/types/rx-template";
-import type { DoctorMedicinePackSuggestion } from "@/lib/api/doctor-medicine-pack-suggestions";
+import type {
+  DoctorRxTemplate,
+  RxTemplateMedicine,
+  RxTemplateScope,
+} from "@/types/rx-template";
+import type {
+  DoctorMedicinePackLine,
+  DoctorMedicinePackSuggestion,
+} from "@/lib/api/doctor-medicine-pack-suggestions";
 import {
   formatTemplateSummary,
   SCOPE_PICKER_LABELS,
@@ -32,6 +41,88 @@ import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
 export type TemplatePickerVariant = "full" | "subjective" | "objective";
+
+const SECTION_CARD = "rounded-md border border-border bg-card px-2.5 py-2";
+const SECTION_ICON_BTN =
+  "h-7 w-7 shrink-0 p-0 text-muted-foreground hover:text-foreground";
+const SECTION_TEXT_ACTION =
+  "rounded px-1.5 py-0.5 text-[10px] leading-tight text-muted-foreground hover:text-foreground hover:underline disabled:opacity-50";
+const SECTION_SAVE_ACTION =
+  "rounded-md bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary hover:bg-primary/15 disabled:opacity-50";
+const MEDICINE_PACK_PREVIEW_LINES = 3;
+
+function formatPackLineLabel(line: DoctorMedicinePackLine): string {
+  return formatMedicineComboHint({
+    ...line,
+    useCount: 0,
+    lastUsedAt: "",
+  } as DoctorMedicineCombo);
+}
+
+function formatTemplateMedicineLine(medicine: RxTemplateMedicine): string {
+  return formatMedicineComboHint({
+    medicineName: medicine.medicineName,
+    nameKey: medicine.medicineName,
+    dosage: medicine.dosage ?? "",
+    doseQty: medicine.doseQty ?? null,
+    doseUnit: medicine.doseUnit ?? null,
+    frequencyCode: medicine.frequencyCode ?? null,
+    frequency: medicine.frequency ?? "",
+    durationValue: medicine.durationValue ?? null,
+    durationUnit: medicine.durationUnit ?? null,
+    duration: medicine.duration ?? "",
+    foodTiming: medicine.foodTiming ?? null,
+    routeCode: medicine.routeCode ?? null,
+    route: medicine.route ?? "",
+    form: medicine.form ?? null,
+    drugMasterId: medicine.drugMasterId ?? null,
+    useCount: 0,
+    lastUsedAt: "",
+  } as DoctorMedicineCombo);
+}
+
+function MedicineLinesPreview({
+  lines,
+  extraTestId,
+  expanded,
+  onToggle,
+}: {
+  lines: readonly { key: string; label: string }[];
+  extraTestId?: string;
+  expanded: boolean;
+  onToggle: () => void;
+}): JSX.Element | null {
+  if (lines.length === 0) return null;
+  const extraCount = lines.length - MEDICINE_PACK_PREVIEW_LINES;
+  const visible =
+    extraCount > 0 && !expanded
+      ? lines.slice(0, MEDICINE_PACK_PREVIEW_LINES)
+      : lines;
+  return (
+    <>
+      <ul className="mt-1.5 space-y-1">
+        {visible.map((line) => (
+          <li
+            key={line.key}
+            className="border-l-2 border-dashed border-muted-foreground/40 pl-2 text-[11px] text-muted-foreground"
+          >
+            {line.label}
+          </li>
+        ))}
+      </ul>
+      {extraCount > 0 ? (
+        <button
+          type="button"
+          className={cn(SECTION_TEXT_ACTION, "mt-1")}
+          data-testid={extraTestId}
+          onClick={onToggle}
+        >
+          {expanded ? "Show less" : `+${extraCount} more`}
+        </button>
+      ) : null}
+    </>
+  );
+}
 
 interface TemplatePickerProps {
   open: boolean;
@@ -67,7 +158,9 @@ interface TemplatePickerProps {
   priorityCustomSectionId?: string;
   /** Recurring exact packs for the medicines picker. Not Enter-commitable. */
   packSuggestions?: readonly DoctorMedicinePackSuggestion[];
-  onSavePackSuggestion?: (pack: DoctorMedicinePackSuggestion) => void | Promise<void>;
+  onSavePackSuggestion?: (
+    pack: DoctorMedicinePackSuggestion
+  ) => void | DoctorRxTemplate | Promise<void | DoctorRxTemplate>;
   onDismissPackSuggestion?: (pack: DoctorMedicinePackSuggestion) => void | Promise<void>;
   onPackSuggestionsOpened?: () => void;
 }
@@ -96,7 +189,25 @@ export default function TemplatePicker({
   const [search, setSearch] = useState("");
   const [busyTemplateId, setBusyTemplateId] = useState<string | null>(null);
   const [portalReady, setPortalReady] = useState(false);
+  const [expandedPackKeys, setExpandedPackKeys] = useState<Set<string>>(
+    () => new Set()
+  );
+  const [expandedTemplateIds, setExpandedTemplateIds] = useState<Set<string>>(
+    () => new Set()
+  );
   const closeButtonRef = useRef<HTMLButtonElement>(null);
+
+  const loadTemplates = useCallback(async (): Promise<DoctorRxTemplate[]> => {
+    if (scope === "test_results") {
+      const [reports, poc] = await Promise.all([
+        listRxTemplates(token, "test_results"),
+        listRxTemplates(token, "point_of_care"),
+      ]);
+      return [...reports.data.templates, ...poc.data.templates];
+    }
+    const res = await listRxTemplates(token, scope);
+    return res.data.templates;
+  }, [scope, token]);
 
   useEffect(() => {
     setPortalReady(true);
@@ -108,17 +219,7 @@ export default function TemplatePicker({
     setLoading(true);
     setError(null);
     // rpt-01: Reports picker remaps legacy `point_of_care` templates on read (no migration).
-    const load =
-      scope === "test_results"
-        ? Promise.all([
-            listRxTemplates(token, "test_results"),
-            listRxTemplates(token, "point_of_care"),
-          ]).then(([reports, poc]) => [
-            ...reports.data.templates,
-            ...poc.data.templates,
-          ])
-        : listRxTemplates(token, scope).then((res) => res.data.templates);
-    load
+    loadTemplates()
       .then((next) => {
         if (cancelled) return;
         setTemplates(next);
@@ -133,10 +234,14 @@ export default function TemplatePicker({
     return () => {
       cancelled = true;
     };
-  }, [open, token, scope]);
+  }, [open, loadTemplates]);
 
   useEffect(() => {
     if (open) closeButtonRef.current?.focus();
+    else {
+      setExpandedPackKeys(new Set());
+      setExpandedTemplateIds(new Set());
+    }
   }, [open]);
 
   useEffect(() => {
@@ -230,6 +335,27 @@ export default function TemplatePicker({
     [token],
   );
 
+  const handleSavePack = useCallback(
+    async (pack: DoctorMedicinePackSuggestion) => {
+      if (!onSavePackSuggestion) return;
+      setError(null);
+      try {
+        const created = await onSavePackSuggestion(pack);
+        if (created) {
+          setTemplates((prev) => [
+            created,
+            ...prev.filter((row) => row.id !== created.id),
+          ]);
+          return;
+        }
+        setTemplates(await loadTemplates());
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to save template");
+      }
+    },
+    [loadTemplates, onSavePackSuggestion],
+  );
+
   if (!open || !portalReady || typeof document === "undefined") return null;
 
   const headerTitle = isScopedVariant ? scopeLabels.title : "Rx templates";
@@ -239,22 +365,19 @@ export default function TemplatePicker({
 
   const body = (
     <div className="flex h-full flex-col bg-background">
-      <div className="flex items-start justify-between gap-2 border-b border-border px-3 py-3">
+      <div className="flex items-start justify-between gap-2 border-b border-border px-3 py-2.5">
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <LayoutTemplate
-              className="h-4 w-4 shrink-0 text-muted-foreground"
-              aria-hidden
-            />
-            <h2
-              id="rx-template-picker-title"
-              className="truncate text-sm font-semibold text-foreground"
-            >
-              {headerTitle}
-            </h2>
-          </div>
+          <h2
+            id="rx-template-picker-title"
+            className="flex items-center gap-2 border-l-2 border-l-primary/35 pl-2.5 text-sm font-semibold uppercase tracking-wide text-muted-foreground"
+          >
+            <LayoutTemplate className="h-4 w-4 shrink-0" aria-hidden />
+            <span className="truncate">{headerTitle}</span>
+          </h2>
           {isScopedVariant && scopeLabels.hint ? (
-            <p className="mt-0.5 pl-6 text-xs text-muted-foreground">{scopeLabels.hint}</p>
+            <p className="mt-0.5 pl-[1.125rem] text-[11px] text-muted-foreground">
+              {scopeLabels.hint}
+            </p>
           ) : null}
         </div>
         <Button
@@ -264,13 +387,13 @@ export default function TemplatePicker({
           size="icon"
           onClick={onClose}
           aria-label="Close templates picker"
-          className="h-8 w-8 shrink-0 text-muted-foreground"
+          className={SECTION_ICON_BTN}
         >
-          <X className="h-4 w-4" aria-hidden />
+          <X className="h-3.5 w-3.5" aria-hidden />
         </Button>
       </div>
 
-      <div className="border-b border-border px-3 py-2.5">
+      <div className="border-b border-border px-3 py-2">
         <label htmlFor="rx-template-search" className="sr-only">
           Search templates
         </label>
@@ -280,75 +403,90 @@ export default function TemplatePicker({
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder={searchPlaceholder}
-          className="h-9"
+          className="h-8 text-[13px]"
         />
       </div>
 
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 space-y-3 overflow-y-auto bg-muted/20 px-3 py-3">
         {loading && (
-          <p className="px-3 py-4 text-xs text-muted-foreground">Loading templates…</p>
+          <p className="text-[11px] text-muted-foreground">Loading templates…</p>
         )}
         {error && (
-          <p className="px-3 py-4 text-xs text-destructive" role="alert">
+          <p className="text-[11px] text-destructive" role="alert">
             {error}
           </p>
         )}
         {!loading && !error && visiblePackSuggestions.length > 0 ? (
-          <div
-            className="border-b border-border px-3 py-2.5"
-            data-testid="medicine-pack-suggestions"
-          >
-            <p className="text-xs font-medium text-muted-foreground">Suggested</p>
-            <ul className="mt-2 divide-y divide-border">
+          <section data-testid="medicine-pack-suggestions" className="space-y-2">
+            <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+              Suggested
+            </p>
+            <ul className="space-y-2">
               {visiblePackSuggestions.map((pack, index) => {
-                const names = pack.medicines.map((m) => m.medicineName).join(" · ");
+                const packKey = `${pack.lastUsedAt}-${index}`;
+                const expanded = expandedPackKeys.has(packKey);
                 return (
-                  <li
-                    key={`${pack.lastUsedAt}-${index}`}
-                    className="flex items-start justify-between gap-2 py-2.5 first:pt-0"
-                    data-testid="medicine-pack-suggestion"
-                  >
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-medium text-foreground">{names}</p>
-                      <p className="mt-1 text-xs text-muted-foreground">
-                        Used {pack.useCount} time{pack.useCount === 1 ? "" : "s"}
-                      </p>
-                    </div>
+                <li
+                  key={packKey}
+                  className={SECTION_CARD}
+                  data-testid="medicine-pack-suggestion"
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="min-w-0 text-[11px] text-muted-foreground">
+                      Used {pack.useCount} time{pack.useCount === 1 ? "" : "s"}
+                      {pack.medicines.length > MEDICINE_PACK_PREVIEW_LINES
+                        ? ` · ${pack.medicines.length} medicines`
+                        : ""}
+                    </p>
                     <div className="flex shrink-0 items-center gap-0.5">
                       {onSavePackSuggestion ? (
-                        <Button
+                        <button
                           type="button"
-                          size="sm"
-                          className="h-8"
+                          className={SECTION_SAVE_ACTION}
                           data-testid="medicine-pack-suggestion-save"
-                          onClick={() => void onSavePackSuggestion(pack)}
+                          onClick={() => void handleSavePack(pack)}
                         >
-                          Save as template
-                        </Button>
+                          Save
+                        </button>
                       ) : null}
                       {onDismissPackSuggestion ? (
-                        <Button
+                        <button
                           type="button"
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8 text-muted-foreground"
+                          className={SECTION_TEXT_ACTION}
                           aria-label="Dismiss this suggestion"
                           data-testid="medicine-pack-suggestion-dismiss"
                           onClick={() => void onDismissPackSuggestion(pack)}
                         >
-                          <X className="h-3.5 w-3.5" aria-hidden />
-                        </Button>
+                          Dismiss
+                        </button>
                       ) : null}
                     </div>
-                  </li>
+                  </div>
+                  <MedicineLinesPreview
+                    extraTestId="medicine-pack-suggestion-more"
+                    expanded={expanded}
+                    onToggle={() => {
+                      setExpandedPackKeys((prev) => {
+                        const next = new Set(prev);
+                        if (expanded) next.delete(packKey);
+                        else next.add(packKey);
+                        return next;
+                      });
+                    }}
+                    lines={pack.medicines.map((medicine, medIdx) => ({
+                      key: `${medicine.nameKey}-${medIdx}`,
+                      label: formatPackLineLabel(medicine),
+                    }))}
+                  />
+                </li>
                 );
               })}
             </ul>
-          </div>
+          </section>
         ) : null}
 
         {!loading && !error && filtered.length === 0 && visiblePackSuggestions.length === 0 && (
-          <div className="px-3 py-6 text-center text-sm text-muted-foreground">
+          <div className={`${SECTION_CARD} text-[11px] text-muted-foreground`}>
             {templates.length === 0 ? (
               isScopedVariant ? (
                 <p>Use the save icon in the section header to create a template.</p>
@@ -356,14 +494,13 @@ export default function TemplatePicker({
                 <>
                   <p>No templates yet.</p>
                   {onSaveCurrentAsTemplate && (
-                    <Button
+                    <button
                       type="button"
-                      size="sm"
-                      className="mt-3"
+                      className={cn(SECTION_TEXT_ACTION, "mt-2")}
                       onClick={() => onSaveCurrentAsTemplate(scope)}
                     >
                       Save current Rx as template
-                    </Button>
+                    </button>
                   )}
                 </>
               )
@@ -376,79 +513,120 @@ export default function TemplatePicker({
           </div>
         )}
         {!loading && !error && filtered.length > 0 && (
-          <ul className="divide-y divide-border">
+          <section className="space-y-2">
             {visiblePackSuggestions.length > 0 ? (
-              <li className="px-3 pt-2 pb-1 text-xs font-medium text-muted-foreground" role="presentation">
+              <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
                 Saved
-              </li>
+              </p>
             ) : null}
-            {filtered.map((t) => {
-              const busy = busyTemplateId === t.id;
-              const medCount = t.medicines_json?.length ?? 0;
-              const contentSummary = isScopedVariant
-                ? formatTemplateSummary(t, scope)
-                : `${medCount} medicine${medCount === 1 ? "" : "s"}`;
-              const lastUsed = t.last_used_at
-                ? ` · last used ${formatRelative(t.last_used_at)}`
-                : "";
+            <ul className="space-y-2">
+              {filtered.map((t) => {
+                const busy = busyTemplateId === t.id;
+                const namedMeds = (t.medicines_json ?? []).filter(
+                  (m) => m.medicineName.trim().length > 0
+                );
+                const showMedicineLines = scope === "medicines";
+                const medCount = namedMeds.length;
+                const contentSummary = isScopedVariant
+                  ? formatTemplateSummary(t, scope)
+                  : `${medCount} medicine${medCount === 1 ? "" : "s"}`;
+                const lastUsed = t.last_used_at
+                  ? `last used ${formatRelative(t.last_used_at)}`
+                  : "";
+                const expanded = expandedTemplateIds.has(t.id);
 
-              return (
-                <li key={t.id} className="px-3 py-2.5">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-medium text-foreground">{t.name}</p>
-                      {t.description ? (
-                        <p className="mt-0.5 truncate text-xs text-muted-foreground">
-                          {t.description}
+                return (
+                  <li
+                    key={t.id}
+                    className={SECTION_CARD}
+                    data-testid={showMedicineLines ? "medicines-saved-template" : undefined}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-medium text-foreground">
+                          {t.name}
                         </p>
-                      ) : null}
-                      <p className="mt-1 text-xs text-muted-foreground">
-                        {contentSummary}
-                        {lastUsed}
-                      </p>
+                        {t.description ? (
+                          <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
+                            {t.description}
+                          </p>
+                        ) : null}
+                        {showMedicineLines ? (
+                          <p className="mt-1 text-[11px] text-muted-foreground">
+                            {medCount > MEDICINE_PACK_PREVIEW_LINES
+                              ? `${medCount} medicines`
+                              : null}
+                            {medCount > MEDICINE_PACK_PREVIEW_LINES && lastUsed
+                              ? " · "
+                              : null}
+                            {lastUsed}
+                          </p>
+                        ) : (
+                          <p className="mt-1 text-[11px] text-muted-foreground">
+                            {contentSummary}
+                            {lastUsed ? ` · ${lastUsed}` : ""}
+                          </p>
+                        )}
+                      </div>
+                      <div className="flex shrink-0 items-center gap-0.5">
+                        <button
+                          type="button"
+                          onClick={() => void handleApply(t)}
+                          disabled={busy}
+                          aria-busy={busy}
+                          className={SECTION_TEXT_ACTION}
+                        >
+                          {busy ? "Applying…" : "Apply"}
+                        </button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => void handleArchive(t)}
+                          disabled={busy}
+                          aria-label={`Archive template ${t.name}`}
+                          title="Archive"
+                          className={SECTION_ICON_BTN}
+                        >
+                          <Archive className="h-3.5 w-3.5" aria-hidden />
+                        </Button>
+                      </div>
                     </div>
-                    <div className="flex shrink-0 items-center gap-0.5">
-                      <Button
-                        type="button"
-                        size="sm"
-                        onClick={() => handleApply(t)}
-                        disabled={busy}
-                        aria-busy={busy}
-                        className="h-8"
-                      >
-                        {busy ? "Applying…" : "Apply"}
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => handleArchive(t)}
-                        disabled={busy}
-                        aria-label={`Archive template ${t.name}`}
-                        title="Archive"
-                        className="h-8 w-8 text-muted-foreground"
-                      >
-                        <Archive className="h-3.5 w-3.5" aria-hidden />
-                      </Button>
-                    </div>
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
+                    {showMedicineLines ? (
+                      <MedicineLinesPreview
+                        extraTestId="medicines-saved-template-more"
+                        expanded={expanded}
+                        onToggle={() => {
+                          setExpandedTemplateIds((prev) => {
+                            const next = new Set(prev);
+                            if (expanded) next.delete(t.id);
+                            else next.add(t.id);
+                            return next;
+                          });
+                        }}
+                        lines={namedMeds.map((medicine, medIdx) => ({
+                          key: `${t.id}-${medicine.medicineName}-${medIdx}`,
+                          label: formatTemplateMedicineLine(medicine),
+                        }))}
+                      />
+                    ) : null}
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
         )}
       </div>
 
       {!isScopedVariant && onSaveCurrentAsTemplate && templates.length > 0 && !loading && (
-        <div className="border-t border-border p-3">
-          <Button
+        <div className="border-t border-border bg-muted/20 p-3">
+          <button
             type="button"
-            variant="outline"
-            className="w-full"
+            className={cn(SECTION_TEXT_ACTION, "text-[11px]")}
             onClick={() => onSaveCurrentAsTemplate(scope)}
           >
             Save current Rx as template
-          </Button>
+          </button>
         </div>
       )}
     </div>

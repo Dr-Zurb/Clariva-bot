@@ -3508,12 +3508,12 @@ export async function createRxTemplate(
   token: string,
   payload: CreateRxTemplatePayload
 ): Promise<ApiSuccess<RxTemplateData>> {
-  const res = await fetch(`${requireApiBaseUrl()}/api/v1/rx-templates`, {
+  const res = await authorizedFetch(`${requireApiBaseUrl()}/api/v1/rx-templates`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
     },
+    token,
     body: JSON.stringify(payload),
     cache: "no-store",
   });
@@ -3521,7 +3521,9 @@ export async function createRxTemplate(
     | ApiSuccess<RxTemplateData>
     | ApiError;
   if (!res.ok) {
-    const message = isApiError(json) ? json.error.message : "Request failed";
+    const message = isApiError(json)
+      ? json.error.message
+      : "Could not save the template. Try again.";
     const err = new Error(message) as Error & { status?: number };
     err.status = res.status;
     throw err;
