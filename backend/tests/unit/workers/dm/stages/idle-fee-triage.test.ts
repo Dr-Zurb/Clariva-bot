@@ -9,6 +9,10 @@ import { resolveStage } from '../../../../../src/workers/dm/stage-router';
 import type { DmTurnContext } from '../../../../../src/workers/dm/stage-router';
 import type { Conversation } from '../../../../../src/types/database';
 
+jest.mock('../../../../../src/services/slot-selection-service', () => ({
+  buildBookingPageUrl: jest.fn(() => 'https://example.com/book'),
+}));
+
 jest.mock('../../../../../src/utils/dm-reply-composer', () => ({
   composeDmReplySegments: jest.fn((segments: { kind: string; content?: string }[]) =>
     segments.map((s) => (s.kind === 'markdown' ? s.content : 'Welcome back segment')).join('\n\n')
@@ -119,9 +123,10 @@ describe('idleFeeTriageStage', () => {
 
     const result = await idleFeeTriageStage.handle(ctx);
     expect(result.branch).toBe('fee_deterministic_idle');
-    expect(composeIdleFeeQuoteDmWithMetaAsync).toHaveBeenCalled();
-    expect(result.nextState.step).toBe('responded');
-    expect(result.nextState.triage?.activeFlow).toBe('fee_quote');
+    expect(result.reply).toContain('Prices are on the booking page.');
+    expect(result.reply).toContain('https://example.com/book');
+    expect(result.reply).not.toMatch(/Dr |Fever|hypertension|diabetes/i);
+    expect(composeIdleFeeQuoteDmWithMetaAsync).not.toHaveBeenCalled();
   });
 
   it('fee question during collection → fee_deterministic_mid_collection', async () => {
@@ -139,10 +144,12 @@ describe('idleFeeTriageStage', () => {
 
     const result = await idleFeeTriageStage.handle(ctx);
     expect(result.branch).toBe('fee_deterministic_mid_collection');
-    expect(composeMidCollectionFeeQuoteDmWithMetaAsync).toHaveBeenCalled();
+    expect(result.reply).toContain('Prices are on the booking page.');
+    expect(result.reply).toContain('https://example.com/book');
+    expect(composeMidCollectionFeeQuoteDmWithMetaAsync).not.toHaveBeenCalled();
   });
 
-  it('medical_query while idle → medical_safety', async () => {
+  it('medical_query while idle → medical_safety receptionist only (no /book)', async () => {
     const ctx = minimalTurnCtx({
       intentResult: { intent: 'medical_query', confidence: 1 },
       text: 'mera pet dard ho raha hai',
@@ -150,11 +157,48 @@ describe('idleFeeTriageStage', () => {
 
     const result = await idleFeeTriageStage.handle(ctx);
     expect(result.branch).toBe('medical_safety');
-    expect(result.reply.length).toBeGreaterThan(20);
+    expect(result.reply).not.toContain('https://example.com/book');
+    expect(result.reply).toBe("I'm the receptionist. I can help with timings, availability, or a booking link.");
+    expect(result.reply).not.toMatch(/medical advice|teleconsult|doctor|medical record/i);
     expect(result.nextState.triage?.lastMedicalDeflectionAt).toBeDefined();
+    expect(result.nextState.triage?.reasonFirstTriagePhase).toBeUndefined();
+    expect(result.nextState.step).toBe('responded');
   });
 
-  it('greeting while idle → greeting_template + AI reply', async () => {
+  it('ask_question prescribe line → medical_safety receptionist only, no advice wording', async () => {
+    const ctx = minimalTurnCtx({
+      intentResult: { intent: 'ask_question', confidence: 1 },
+      text: 'are you a doctor? can you prescribe something for my cough?',
+    });
+
+    expect(isIdleFeeTriageTurn(ctx)).toBe(true);
+    const result = await idleFeeTriageStage.handle(ctx);
+    expect(result.branch).toBe('medical_safety');
+    expect(result.reply).not.toContain('https://example.com/book');
+    expect(result.reply).toContain("I'm the receptionist");
+    expect(result.reply).not.toMatch(/prescribe|medical advice|cough|consultation for/i);
+  });
+
+  it('in-flight reason-first ask_more + clinical text → /book (clears phase)', async () => {
+    const ctx = minimalTurnCtx({
+      intentResult: { intent: 'ask_question', confidence: 1 },
+      text: 'headache since yesterday',
+      state: {
+        step: 'responded',
+        collectedFields: [],
+        updatedAt: new Date().toISOString(),
+        triage: { reasonFirstTriagePhase: 'ask_more' },
+      },
+    });
+
+    const result = await idleFeeTriageStage.handle(ctx);
+    expect(result.branch).toBe('booking_start_link_first');
+    expect(result.reply).toContain('https://example.com/book');
+    expect(result.nextState.triage?.reasonFirstTriagePhase).toBeUndefined();
+    expect(result.nextState.step).toBe('awaiting_slot_selection');
+  });
+
+  it('greeting while idle → greeting_template + locked receptionist line', async () => {
     const ctx = minimalTurnCtx({
       intentResult: { intent: 'greeting', confidence: 1 },
       text: 'hi',
@@ -162,8 +206,11 @@ describe('idleFeeTriageStage', () => {
 
     const result = await idleFeeTriageStage.handle(ctx);
     expect(result.branch).toBe('greeting_template');
-    expect(ctx.runGenerateResponse).toHaveBeenCalled();
-    expect(result.reply).toBe('AI greeting reply');
+    expect(ctx.runGenerateResponse).not.toHaveBeenCalled();
+    expect(result.reply).toBe(
+      "Hi — I'm the receptionist. I can help with timings, availability, or a booking link. How can I help today?"
+    );
+    expect(result.reply).not.toMatch(/doctor|teleconsult|medical|Dr\b/i);
     expect(composeDmReplySegments).not.toHaveBeenCalled();
   });
 
@@ -206,7 +253,8 @@ describe('idleFeeTriageStage', () => {
     expect(patientService.findPatientByIdWithAdmin).toHaveBeenCalledWith('patient-1', 'corr-1');
     expect(composeDmReplySegments).toHaveBeenCalled();
     expect(result.reply).toContain('Welcome back segment');
-    expect(result.reply).toContain('AI greeting reply');
+    expect(result.reply).toContain("I'm the receptionist");
+    expect(ctx.runGenerateResponse).not.toHaveBeenCalled();
   });
 
   it('revoked/pending consent — no welcome_back even when profile has prior visits (rcp-24)', async () => {
@@ -229,7 +277,8 @@ describe('idleFeeTriageStage', () => {
     const result = await idleFeeTriageStage.handle(ctx);
     expect(result.branch).toBe('greeting_template');
     expect(composeDmReplySegments).not.toHaveBeenCalled();
-    expect(result.reply).toBe('AI greeting reply');
+    expect(result.reply).toContain("I'm the receptionist");
+    expect(ctx.runGenerateResponse).not.toHaveBeenCalled();
   });
 
   it('returning-greeting fixture pins welcome-back copy shape (rcp-21)', () => {
@@ -265,7 +314,8 @@ describe('idleFeeTriageStage', () => {
     expect(isIdleFeeTriageTurn(ctx)).toBe(true);
     const result = await idleFeeTriageStage.handle(ctx);
     expect(result.branch).toBe('fee_deterministic_idle');
-    expect(composeIdleFeeQuoteDmWithMetaAsync).toHaveBeenCalled();
+    expect(result.reply).toContain('Prices are on the booking page.');
+    expect(composeIdleFeeQuoteDmWithMetaAsync).not.toHaveBeenCalled();
   });
 
   it('resolveStage routes idle/fee/medical/greeting here; collection-only book still legacy', () => {

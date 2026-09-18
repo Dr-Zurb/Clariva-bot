@@ -2,6 +2,7 @@
  * Instagram DM copy for booking / reschedule links (OPD slot vs queue mode).
  * lang-22: every family takes sticky turn `language` (LANG3-D1).
  * lang-26: reviewed Roman Hindi / Roman Punjabi arms for booking-critical families.
+ * Slot CTA: get-an-appointment (no payment wording in the DM).
  */
 
 import type { DoctorSettingsRow } from '../types/doctor-settings';
@@ -11,7 +12,6 @@ import {
   type ConversationLanguage,
   type StaticMessageLocale,
 } from './conversation-language';
-import { buildRecordingAudioDisclosureMessage } from './dm-copy';
 
 export interface BookingLinkDmInput {
   readonly language: ConversationLanguage;
@@ -29,19 +29,19 @@ const BOOKING_LINK_COPY: Readonly<Record<StaticMessageLocale, BookingLinkCopy>> 
     queue: (slotLink) =>
       `Join the queue for your visit here: ${slotLink}\n\nChoose a day, then confirm - you'll get a token number. Wait times are approximate.`,
     slot: (slotLink) =>
-      `Pick your slot and complete payment here: ${slotLink}\n\nYou'll be redirected back to this chat when done.`,
+      `Open this link to get an appointment: ${slotLink}\n\nYou'll be redirected back to this chat when done.`,
   },
   hi: {
     queue: (slotLink) =>
       `Apni visit ke liye yahan queue join karein: ${slotLink}\n\nEk din choose karein, phir confirm karein - aapko token number milega. Wait time approximate hai.`,
     slot: (slotLink) =>
-      `Apna slot pick karein aur payment yahan complete karein: ${slotLink}\n\nDone hone par aap wapas is chat par aa jayenge.`,
+      `Appointment lene ke liye yeh link kholein: ${slotLink}\n\nDone hone par aap wapas is chat par aa jayenge.`,
   },
   pa: {
     queue: (slotLink) =>
       `Apni visit layi ithe queue join karo: ${slotLink}\n\nIk din choose karo, phir confirm karo - tenu token number milega. Wait time approximate hai.`,
     slot: (slotLink) =>
-      `Apna slot pick karo te payment ithe complete karo: ${slotLink}\n\nDone hon to tusi wapas is chat te aa jaoge.`,
+      `Appointment lain layi eh link kholo: ${slotLink}\n\nDone hon to tusi wapas is chat te aa jaoge.`,
   },
 };
 
@@ -53,7 +53,7 @@ export function formatBookingLinkDm(input: BookingLinkDmInput): string {
   const copy = BOOKING_LINK_COPY[locale];
   const mode = resolveOpdModeFromSettings(input.doctorSettings);
   const link = mode === 'queue' ? copy.queue(input.slotLink) : copy.slot(input.slotLink);
-  return `${link}\n\n${buildRecordingAudioDisclosureMessage()}`;
+  return link;
 }
 
 export interface RescheduleLinkDmInput {
@@ -138,15 +138,15 @@ const BOOKING_AWAITING_FOLLOW_UP_COPY: Readonly<
 > = {
   en: {
     queue: "Join the queue using the link above, or say 'change' to get a new link.",
-    slot: "Pick your slot and complete payment using the link above, or say 'change' to get a new link.",
+    slot: "Open the link above to get an appointment, or say 'change' to get a new link.",
   },
   hi: {
     queue: "Upar wale link se queue join karein, ya naya link ke liye 'change' likhein.",
-    slot: "Upar wale link se apna slot pick karein aur payment complete karein, ya naya link ke liye 'change' likhein.",
+    slot: "Appointment lene ke liye upar wala link kholein, ya naya link ke liye 'change' likhein.",
   },
   pa: {
     queue: "Upar wale link ton queue join karo, ya nava link layi 'change' likho.",
-    slot: "Upar wale link ton apna slot pick karo te payment complete karo, ya nava link layi 'change' likho.",
+    slot: "Appointment lain layi upar wala link kholo, ya nava link layi 'change' likho.",
   },
 };
 

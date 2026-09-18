@@ -491,6 +491,7 @@ describe("useRxCommitActions", () => {
     const onFinish = vi.fn(() => {
       window.history.pushState({}, "", "/dashboard/appointments/next-a");
     });
+    const onArmAdvance = vi.fn();
     const fields = createEmptyRxFormFields();
     fields.provisionalDiagnosis = "Hypertension";
     fields.advice = "Rest";
@@ -504,6 +505,7 @@ describe("useRxCommitActions", () => {
           token: "token",
           cockpitState: "live",
           onFinish,
+          onArmAdvance,
           registerActions: false,
         }),
       { wrapper: wrapper(makeShell(fields)) }
@@ -518,6 +520,7 @@ describe("useRxCommitActions", () => {
     await waitFor(() => {
       expect(onFinish).toHaveBeenCalledTimes(1);
     });
+    expect(onArmAdvance).toHaveBeenCalledTimes(1);
     expect(openSpy).not.toHaveBeenCalled();
     expect(isPrintAdvanceHeld()).toBe(true);
     expect(sessionStorage.getItem("pf11_cancelled_appt-1")).toBe("1");
@@ -531,15 +534,13 @@ describe("useRxCommitActions", () => {
     openSpy.mockRestore();
   });
 
-  it("clears a stale print-only advance block when finishing without print", async () => {
+  it("keeps a reopened completed visit on the preview instead of wrapping up", async () => {
     const { sendPrescriptionToPatient } = await import("@/lib/api");
     vi.mocked(sendPrescriptionToPatient).mockResolvedValue({
       success: true,
       data: { sent: true, channels: { email: true } },
       meta: { timestamp: "", requestId: "" },
     });
-    // An earlier Print on this visit parked the next-patient advance.
-    sessionStorage.setItem("pf11_cancelled_appt-1", "1");
 
     const onFinish = vi.fn();
     const fields = createEmptyRxFormFields();
@@ -551,8 +552,102 @@ describe("useRxCommitActions", () => {
           appointmentId: "appt-1",
           patientId: "pat-1",
           token: "token",
+          cockpitState: "ended",
+          onFinish,
+          registerActions: false,
+        }),
+      { wrapper: wrapper(makeShell(fields)) }
+    );
+
+    await act(async () => {
+      result.current.openPreview();
+    });
+    await waitFor(() => {
+      expect(result.current.previewOpen).toBe(true);
+    });
+
+    await act(async () => {
+      result.current.sendAndFinish();
+    });
+    await waitFor(() => {
+      expect(sendPrescriptionToPatient).toHaveBeenCalled();
+    });
+    expect(onFinish).not.toHaveBeenCalled();
+    expect(result.current.previewOpen).toBe(true);
+    expect(isPrintAdvanceHeld()).toBe(false);
+  });
+
+  it("does not automove when revising an already-ended visit", async () => {
+    const { getPrescriptionPdfUrl, sendPrescriptionToPatient } =
+      await import("@/lib/api");
+    vi.mocked(getPrescriptionPdfUrl).mockResolvedValue({
+      success: true,
+      data: { signedUrl: "https://storage.example/rx.pdf?sig=1" },
+      meta: { timestamp: "", requestId: "" },
+    });
+    vi.mocked(sendPrescriptionToPatient).mockResolvedValue({
+      success: true,
+      data: { sent: true, channels: { email: true } },
+      meta: { timestamp: "", requestId: "" },
+    });
+    const print = vi.fn();
+    const printStub = installPrintIframe(print);
+    const onFinish = vi.fn();
+    const onArmAdvance = vi.fn();
+    const onParkAdvanceForEdit = vi.fn();
+    const fields = createEmptyRxFormFields();
+    fields.medicines[0] = { ...fields.medicines[0]!, medicineName: "Aspirin" };
+
+    const { result } = renderHook(
+      () =>
+        useRxCommitActions({
+          appointmentId: "appt-1",
+          patientId: "pat-1",
+          token: "token",
+          cockpitState: "ended",
+          onFinish,
+          onArmAdvance,
+          onParkAdvanceForEdit,
+          registerActions: false,
+        }),
+      { wrapper: wrapper(makeShell(fields)) }
+    );
+
+    await act(async () => {
+      result.current.sendFinishAndPrint();
+    });
+    await waitFor(() => {
+      expect(print).toHaveBeenCalledTimes(1);
+    });
+    expect(onFinish).not.toHaveBeenCalled();
+    expect(onArmAdvance).not.toHaveBeenCalled();
+    expect(onParkAdvanceForEdit).toHaveBeenCalledTimes(1);
+    printStub.restore();
+  });
+
+  it("does not automove after send and finish without print", async () => {
+    const { sendPrescriptionToPatient } = await import("@/lib/api");
+    vi.mocked(sendPrescriptionToPatient).mockResolvedValue({
+      success: true,
+      data: { sent: true, channels: { email: true } },
+      meta: { timestamp: "", requestId: "" },
+    });
+    sessionStorage.setItem("pf11_cancelled_appt-1", "1");
+
+    const onFinish = vi.fn();
+    const onArmAdvance = vi.fn();
+    const fields = createEmptyRxFormFields();
+    fields.medicines[0] = { ...fields.medicines[0]!, medicineName: "Aspirin" };
+
+    const { result } = renderHook(
+      () =>
+        useRxCommitActions({
+          appointmentId: "appt-1",
+          patientId: "pat-1",
+          token: "token",
           cockpitState: "live",
           onFinish,
+          onArmAdvance,
           registerActions: false,
         }),
       { wrapper: wrapper(makeShell(fields)) }
@@ -564,7 +659,8 @@ describe("useRxCommitActions", () => {
     await waitFor(() => {
       expect(onFinish).toHaveBeenCalledTimes(1);
     });
-    expect(sessionStorage.getItem("pf11_cancelled_appt-1")).toBeNull();
+    expect(onArmAdvance).not.toHaveBeenCalled();
+    expect(sessionStorage.getItem("pf11_cancelled_appt-1")).toBe("1");
     expect(isPrintAdvanceHeld()).toBe(false);
   });
 

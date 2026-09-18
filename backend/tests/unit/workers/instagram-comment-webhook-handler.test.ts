@@ -23,6 +23,9 @@ jest.mock('../../../src/services/instagram-service');
 jest.mock('../../../src/services/comment-outreach-language', () => ({
   resolveCommentOutreachLanguage: jest.fn(async () => 'en'),
 }));
+jest.mock('../../../src/services/automated-messaging-opt-out', () => ({
+  shouldSkipCommentPrivateReply: jest.fn(async () => false),
+}));
 jest.mock('../../../src/services/notification-service', () => ({
   sendCommentLeadToDoctor: jest.fn(async () => undefined),
 }));

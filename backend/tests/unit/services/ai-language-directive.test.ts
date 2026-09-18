@@ -68,6 +68,25 @@ describe('lang-04 language reply directive', () => {
       expect(RESPONSE_SYSTEM_PROMPT_BASE).toMatch(/NEVER characterize/i);
       expect(RESPONSE_SYSTEM_PROMPT_BASE).toMatch(/concerning/i);
     });
+
+    it('mca-16: does not instruct in-thread intake', () => {
+      expect(RESPONSE_SYSTEM_PROMPT_BASE).toMatch(/FAQ \+ a booking-link handoff/i);
+      expect(RESPONSE_SYSTEM_PROMPT_BASE).not.toMatch(/ALWAYS ask for ALL fields/i);
+      expect(RESPONSE_SYSTEM_PROMPT_BASE).not.toMatch(
+        /Our booking flow collects: full name/i
+      );
+      expect(RESPONSE_SYSTEM_PROMPT_BASE).not.toContain(
+        'Please share these details'
+      );
+    });
+
+    it('greeting identity is receptionist, not a doctor assistant', () => {
+      expect(RESPONSE_SYSTEM_PROMPT_BASE).toContain("I'm the receptionist");
+      expect(RESPONSE_SYSTEM_PROMPT_BASE).not.toContain("practice's assistant");
+      expect(RESPONSE_SYSTEM_PROMPT_BASE).toMatch(
+        /Never introduce yourself as a doctor's assistant/
+      );
+    });
   });
 
   describe('generateResponse system prompt', () => {
@@ -123,6 +142,38 @@ describe('lang-04 language reply directive', () => {
     it('turnLanguage other → English directive', async () => {
       const system = await systemPromptFor('other');
       expect(system).toContain('LANGUAGE: Reply in English.');
+    });
+
+    it('mca-16: collecting_all does not ask for name/phone/reason', async () => {
+      const mockCreate = jest.fn().mockResolvedValue({
+        choices: [{ message: { content: 'Here is the booking link path.' } }],
+        usage: { total_tokens: 10 },
+      } satisfies MockCompletion);
+      mockedOpenai.getOpenAIClient.mockReturnValue({
+        chat: { completions: { create: mockCreate } },
+      } as never);
+      mockedOpenai.getOpenAIConfig.mockReturnValue({
+        model: 'gpt-5.2',
+        maxTokens: 256,
+      });
+
+      await generateResponse({
+        ...baseInput,
+        currentIntent: 'book_appointment',
+        turnLanguage: 'en',
+        state: { step: 'collecting_all', collectedFields: ['name'] },
+        context: { missingFields: ['phone', 'reason_for_visit'] },
+      });
+
+      const firstCall = (mockCreate.mock.calls as unknown as unknown[][])[0];
+      const args = firstCall?.[0] as {
+        messages: Array<{ role: string; content: string }>;
+      };
+      const system = args.messages.find((m) => m.role === 'system')?.content ?? '';
+      expect(system).toContain('Do not ask for name, age, gender, phone');
+      expect(system).toContain('owned booking page');
+      expect(system).not.toContain('Please share these details');
+      expect(system).not.toContain('Just need your **age**');
     });
   });
 

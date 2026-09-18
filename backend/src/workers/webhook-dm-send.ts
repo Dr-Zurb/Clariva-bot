@@ -63,6 +63,14 @@ export async function sendInstagramDmWithLocksAndFallback(
 
   const isRecovery = context === 'conflict_recovery';
 
+  if (!replyText.trim()) {
+    logger.info(
+      { correlationId, eventId, provider },
+      'Instagram DM: empty reply; skipping Graph send'
+    );
+    return { status: 'sent', usedRecipientFallback: false };
+  }
+
   if (pageId) {
     const sendLockAcquired = await tryAcquireInstagramSendLock(pageId, senderId, eventId);
     if (!sendLockAcquired) {

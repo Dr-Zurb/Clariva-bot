@@ -7,6 +7,7 @@
 
 import { getSupabaseAdminClient } from '../config/database';
 import { env } from '../config/env';
+import { shouldSkipAutomatedMetaSend } from './automated-messaging-opt-out';
 import {
   findConversationById,
   getConversationLanguage,
@@ -32,7 +33,9 @@ import {
   type ConversationState,
 } from '../types/conversation';
 import type { ServiceCatalogV1 } from '../utils/service-catalog-schema';
-import { ensurePatientMrnIfEligible, findPatientByIdWithAdmin } from './patient-service';
+import { ensurePatientMrnIfEligible, findPatientByIdWithAdmin, updatePatient } from './patient-service';
+import { logConsentEvent } from '../utils/audit-logger';
+import type { UpdatePatient } from '../types';
 import { getActiveEpisodeForPatientDoctorService } from './care-episode-service';
 import {
   findServiceOfferingByKey,
@@ -312,6 +315,44 @@ export interface PublicBookingSelectionInput {
   catalogServiceKey?: string;
   catalogServiceId?: string;
   consultationModality?: ConsultationModality;
+  /** mca-13: owned-page intake for a placeholder conversation patient. */
+  patientName?: string;
+  patientPhone?: string;
+  reasonForVisit?: string;
+  consentGranted?: boolean;
+}
+
+export type PublicCheckoutIntakeResolution =
+  | { kind: 'ready'; reasonForVisit?: string }
+  | { kind: 'apply'; name: string; phone: string; reasonForVisit?: string }
+  | { kind: 'incomplete' };
+
+/**
+ * Decide whether checkout can use the existing patient row or must apply
+ * owned-page intake. Does not log identity fields.
+ */
+export function resolvePublicCheckoutIntake(
+  patient: { name?: string | null; phone?: string | null } | null,
+  intake: Pick<
+    PublicBookingSelectionInput,
+    'patientName' | 'patientPhone' | 'reasonForVisit' | 'consentGranted'
+  >
+): PublicCheckoutIntakeResolution {
+  const reasonForVisit = intake.reasonForVisit?.trim() || undefined;
+  const existingName = patient?.name?.trim() ?? '';
+  const existingPhone = patient?.phone?.trim() ?? '';
+  if (existingName && existingPhone) {
+    return { kind: 'ready', reasonForVisit };
+  }
+  if (!patient) {
+    return { kind: 'incomplete' };
+  }
+  const name = intake.patientName?.trim() ?? '';
+  const phone = intake.patientPhone?.trim() ?? '';
+  if (name && phone && intake.consentGranted === true) {
+    return { kind: 'apply', name, phone, reasonForVisit };
+  }
+  return { kind: 'incomplete' };
 }
 
 /**
@@ -556,7 +597,14 @@ export async function processSlotSelection(
   const accessToken = await getInstagramAccessTokenForDoctor(doctorId, correlationId);
   if (accessToken) {
     try {
-      await sendInstagramMessage(recipientId, message, correlationId, accessToken);
+      const optOut = await shouldSkipAutomatedMetaSend({
+        conversationId,
+        correlationId,
+        ifMissing: 'skip',
+      });
+      if (!optOut.skip) {
+        await sendInstagramMessage(recipientId, message, correlationId, accessToken);
+      }
     } catch {
       // Fail-open: selection saved, state updated; user can still confirm in chat
     }
@@ -629,11 +677,39 @@ export async function processSlotSelectionAndPay(
   }
 
   const patientIdToUse = state.bookingForOther?.bookingForPatientId ?? conversation.patient_id;
-  const patient = await findPatientByIdWithAdmin(patientIdToUse, correlationId);
-  if (!patient || !patient.name || !patient.phone) {
-    throw new NotFoundError('Patient details not found. Please complete the booking flow in chat first.');
+  let patient = await findPatientByIdWithAdmin(patientIdToUse, correlationId);
+  if (!patient) {
+    throw new NotFoundError('Patient not found');
   }
-  const effectiveState = applyPublicBookingSelectionsToState(
+  const checkoutIntake = resolvePublicCheckoutIntake(patient, {
+    patientName: options?.patientName,
+    patientPhone: options?.patientPhone,
+    reasonForVisit: options?.reasonForVisit,
+    consentGranted: options?.consentGranted,
+  });
+  if (checkoutIntake.kind === 'incomplete') {
+    throw new ValidationError('Complete your details on this booking page to continue.');
+  }
+  if (checkoutIntake.kind === 'apply') {
+    patient = await updatePatient(
+      patient.id,
+      {
+        name: checkoutIntake.name,
+        phone: checkoutIntake.phone,
+        consent_status: 'granted',
+        consent_granted_at: new Date(),
+        consent_method: 'owned_booking_page',
+      } as UpdatePatient,
+      correlationId
+    );
+    void logConsentEvent({
+      correlationId,
+      patientId: patient.id,
+      status: 'granted',
+      method: 'owned_booking_page',
+    });
+  }
+  let effectiveState = applyPublicBookingSelectionsToState(
     state,
     doctorSettings,
     {
@@ -643,6 +719,12 @@ export async function processSlotSelectionAndPay(
     },
     options?.isReschedule === true
   );
+  if (checkoutIntake.reasonForVisit) {
+    effectiveState = mergeBooking(effectiveState, {
+      reasonForVisit: checkoutIntake.reasonForVisit,
+    });
+    await updateConversationState(conversationId, effectiveState, correlationId);
+  }
 
   const dateStr = slotStart.slice(0, 10);
   const alreadyHasAppointment = await hasAppointmentOnDate(
@@ -667,7 +749,7 @@ export async function processSlotSelectionAndPay(
     );
   }
 
-  const reasonForVisit = state.booking?.reasonForVisit ?? 'Not provided';
+  const reasonForVisit = effectiveState.booking?.reasonForVisit ?? 'Not provided';
   const parts: string[] = [];
   if (state.booking?.extraNotes?.trim()) parts.push(state.booking?.extraNotes.trim());
   if (doctorSettings?.default_notes?.trim()) parts.push(doctorSettings.default_notes.trim());
@@ -900,13 +982,20 @@ export async function processRescheduleSlotSelection(
     const accessToken = await getInstagramAccessTokenForDoctor(doctorId, correlationId);
     if (accessToken) {
       try {
-        const language = await getConversationLanguage(conversationId, correlationId);
-        await sendInstagramMessage(
-          recipientId,
-          buildAppointmentRescheduledConfirmDm({ language, dateDisplay: dateStr }),
+        const optOut = await shouldSkipAutomatedMetaSend({
+          conversationId,
           correlationId,
-          accessToken
-        );
+          ifMissing: 'skip',
+        });
+        if (!optOut.skip) {
+          const language = await getConversationLanguage(conversationId, correlationId);
+          await sendInstagramMessage(
+            recipientId,
+            buildAppointmentRescheduledConfirmDm({ language, dateDisplay: dateStr }),
+            correlationId,
+            accessToken
+          );
+        }
       } catch (err) {
         logger.warn(
           { correlationId, appointmentId, error: err instanceof Error ? err.message : String(err) },

@@ -108,6 +108,35 @@ describe("AuthMethodPicker", () => {
     });
   });
 
+  it("signin: missing email-status route still attempts password sign-in", async () => {
+    checkEmailStatus.mockResolvedValue({
+      ok: false,
+      unavailable: true,
+      message: "Could not verify email. Please try again.",
+    });
+    signInWithPassword.mockResolvedValue({
+      ok: true,
+      user: { user_metadata: { profile_completed: true } },
+    });
+
+    render(<AuthMethodPicker mode="signin" />);
+    fireEvent.change(screen.getByLabelText(/^email$/i), {
+      target: { value: "doc@example.com" },
+    });
+    fireEvent.change(screen.getByLabelText(/^password$/i), {
+      target: { value: "secret12" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^sign in$/i }));
+
+    await waitFor(() => {
+      expect(signInWithPassword).toHaveBeenCalledWith(
+        "doc@example.com",
+        "secret12"
+      );
+      expect(routeAfterAuth).toHaveBeenCalled();
+    });
+  });
+
   it("signin: unregistered email shows no-account copy", async () => {
     checkEmailStatus.mockResolvedValue({
       ok: true,
@@ -205,6 +234,32 @@ describe("AuthMethodPicker", () => {
       expect(push).toHaveBeenCalledWith("/dashboard/getting-started");
       expect(refresh).toHaveBeenCalled();
       expect(routeAfterAuth).not.toHaveBeenCalled();
+    });
+  });
+
+  it("signup: missing email-status route still sends OTP", async () => {
+    checkEmailStatus.mockResolvedValue({
+      ok: false,
+      unavailable: true,
+      message: "Could not verify email. Please try again.",
+    });
+    sendEmailOtp.mockResolvedValue({ ok: true });
+
+    render(<AuthMethodPicker mode="signup" />);
+    fireEvent.change(screen.getByLabelText(/^full name$/i), {
+      target: { value: "Ada Sharma" },
+    });
+    fireEvent.change(screen.getByLabelText(/^email$/i), {
+      target: { value: "doc@example.com" },
+    });
+    fireEvent.change(screen.getByLabelText(/^password$/i), {
+      target: { value: "secret12" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /create account/i }));
+
+    await screen.findByLabelText(/verification code/i);
+    expect(sendEmailOtp).toHaveBeenCalledWith("doc@example.com", {
+      createIfMissing: true,
     });
   });
 

@@ -161,10 +161,11 @@ export function AuthMethodPicker({ mode }: AuthMethodPickerProps) {
         // failed after Supabase created the row) may re-request a code.
         const status = await checkEmailStatus(trimmed);
         if (!status.ok) {
-          setError(status.message);
-          return;
-        }
-        if (status.exists && status.confirmed) {
+          if (!status.unavailable) {
+            setError(status.message);
+            return;
+          }
+        } else if (status.exists && status.confirmed) {
           setError("An account already exists — sign in instead.");
           return;
         }
@@ -184,14 +185,14 @@ export function AuthMethodPicker({ mode }: AuthMethodPickerProps) {
       // AP-D18: unknown email → clear "no account" (not generic wrong-password).
       const status = await checkEmailStatus(trimmed);
       if (!status.ok) {
-        setError(status.message);
-        return;
-      }
-      if (!status.exists) {
+        if (!status.unavailable) {
+          setError(status.message);
+          return;
+        }
+      } else if (!status.exists) {
         setError("No account found — create one.");
         return;
-      }
-      if (!status.confirmed) {
+      } else if (!status.confirmed) {
         setError(
           "Finish creating your account — use Create account to get a new code."
         );

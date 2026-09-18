@@ -11,6 +11,7 @@ import {
 import {
   CONTROL_GATES,
   emergencyGate,
+  messagingOptOutGate,
   openCrisisGate,
   receptionistPausedGate,
   revokeConsentGate,
@@ -99,6 +100,7 @@ const BOOKING_ENTRY_BRANCHES = new Set([
   'consultation_channel_pick_reason_first',
   'book_for_someone_else',
   'booking_start_ai',
+  'booking_start_link_first',
   'booking_start_returning_reason',
   'booking_start_returning_ready',
   'booking_continue_ai',
@@ -168,19 +170,21 @@ describe('STAGE_ROUTER scaffold (rcp-03 / rcp-08)', () => {
     }
   });
 
-  it('CONTROL_GATES order remains revoke → emergency → open-crisis → paused (SAFETY-01)', () => {
+  it('CONTROL_GATES order remains revoke → emergency → open-crisis → opt-out → paused (SAFETY-01)', () => {
     // Compared by identity: the acute and open-crisis gates share the
     // `emergency_safety` name, so names alone cannot pin the order.
     expect(CONTROL_GATES).toEqual([
       revokeConsentGate,
       emergencyGate,
       openCrisisGate,
+      messagingOptOutGate,
       receptionistPausedGate,
     ]);
     expect(CONTROL_GATES.map((g) => g.name)).toEqual([
       'revoke_consent',
       'emergency_safety',
       'emergency_safety',
+      'automated_messaging_opt_out',
       'receptionist_paused',
     ]);
   });

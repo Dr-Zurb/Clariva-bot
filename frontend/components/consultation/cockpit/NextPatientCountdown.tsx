@@ -41,6 +41,20 @@ export function cancelStorageKey(appointmentId: string): string {
   return `pf11_cancelled_${appointmentId}`;
 }
 
+/**
+ * The park can be written after this component mounts — reopening a done
+ * visit or editing an issued Rx parks mid-countdown. Re-read at fire time
+ * so a stale `cancelled` snapshot never advances the doctor.
+ */
+function isParked(appointmentId: string): boolean {
+  try {
+    return sessionStorage.getItem(cancelStorageKey(appointmentId)) === "1";
+  } catch {
+    // private mode / SSR
+    return false;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Public surface
 // ---------------------------------------------------------------------------
@@ -162,9 +176,7 @@ export function NextPatientCountdown({
   const [cancelled, setCancelled] = useState(false);
 
   useEffect(() => {
-    if (
-      sessionStorage.getItem(cancelStorageKey(currentAppointmentId)) === "1"
-    ) {
+    if (isParked(currentAppointmentId)) {
       setCancelled(true);
     }
   }, [currentAppointmentId]);
@@ -183,15 +195,7 @@ export function NextPatientCountdown({
     if (!next) return;
     if (instantFiredRef.current) return;
     if (cancelled) return;
-    try {
-      if (
-        sessionStorage.getItem(cancelStorageKey(currentAppointmentId)) === "1"
-      ) {
-        return;
-      }
-    } catch {
-      // private mode / SSR
-    }
+    if (isParked(currentAppointmentId)) return;
     instantFiredRef.current = true;
     router.push(next.url);
   }, [flowAdvance, next, router, cancelled, currentAppointmentId]);
@@ -215,12 +219,13 @@ export function NextPatientCountdown({
     if (flowAdvance !== "countdown") return;
     if (!next || cancelled) return;
     if (seconds > 0) return;
+    if (isParked(currentAppointmentId)) return;
 
     router.push(next.url);
     onDone?.();
     // `onDone` deliberately excluded — callers should memoize if needed.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [seconds, flowAdvance, next, cancelled, router]);
+  }, [seconds, flowAdvance, next, cancelled, router, currentAppointmentId]);
 
   // ── Render guards ─────────────────────────────────────────────────────────
 

@@ -896,7 +896,9 @@ describe('RBH-02 webhook worker characterization', () => {
       );
       expect(mockReplyComment).toHaveBeenCalledWith(
         'comment-id-99',
-        'Check your DM for more information.',
+        expect.stringMatching(
+          /^(?:@[A-Za-z0-9._]{1,30} )?(?:Check your DM for more information\.|I sent you a private message with the details\.|Please open your DMs — I replied there\.)$/
+        ),
         'doctor-token',
         'corr-comment'
       );

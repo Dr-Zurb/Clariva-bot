@@ -7,9 +7,8 @@ import { describe, expect, it } from '@jest/globals';
 import {
   applyEmergencyNumberFloor,
   assistantMessageIsEmergencyEscalationCopy,
-  EMERGENCY_REAFFIRM_RESPONSE_EN,
-  EMERGENCY_RESPONSE_EN,
   isEmergencyUserMessage,
+  MEDICAL_QUERY_RESPONSE_EN,
   resolveSafetyMessage,
 } from '../../../src/utils/safety-messages';
 import {
@@ -18,14 +17,11 @@ import {
   openCrisisGate,
   type DmGateContext,
 } from '../../../src/workers/dm/control-gates';
-import {
-  isOpenEmergencyCrisis,
-  type ConversationState,
-} from '../../../src/types/conversation';
+import { isOpenEmergencyCrisis, type ConversationState } from '../../../src/types/conversation';
 
 const ACUTE_PHRASES = [
-  'wife collapsed can\'t wake her',
-  'chest pain and can\'t breathe',
+  "wife collapsed can't wake her",
+  "chest pain and can't breathe",
   'mild chest discomfort after gym',
   'emergency',
   'saans nahi aa rahi behosh ho gayi',
@@ -105,30 +101,30 @@ describe('emergency SAFETY ratchet invariant', () => {
     expect(emergencyGate.fires(ctx)).toBe(true);
   });
 
-  it('first escalation uses hospital-capable copy; reaffirm uses call-dispatch copy', async () => {
+  it('intercept uses receptionist copy — never 112', async () => {
     const first = await emergencyGate.handle(
       gateCtx({
-        text: 'wife collapsed can\'t wake her',
+        text: "wife collapsed can't wake her",
         intentResult: { intent: 'emergency', confidence: 1 },
       })
     );
     expect(first).toMatchObject({ branch: 'emergency_safety' });
-    expect(first.reply).toBe(EMERGENCY_RESPONSE_EN);
-    expect(assistantMessageIsEmergencyEscalationCopy(first.reply)).toBe(true);
+    expect(first.reply).toBe(MEDICAL_QUERY_RESPONSE_EN);
+    expect(first.reply.toLowerCase()).not.toContain('112');
+    expect(assistantMessageIsEmergencyEscalationCopy(first.reply)).toBe(false);
 
-    const reaffirm = await emergencyGate.handle(
+    const again = await emergencyGate.handle(
       gateCtx({
         text: 'no hospital nearby',
         intentResult: { intent: 'emergency', confidence: 0.9 },
         recentMessages: [
           { sender_type: 'patient', content: 'wife collapsed' },
-          { sender_type: 'system', content: EMERGENCY_RESPONSE_EN },
+          { sender_type: 'system', content: MEDICAL_QUERY_RESPONSE_EN },
         ],
       })
     );
-    expect(reaffirm.reply).toBe(EMERGENCY_REAFFIRM_RESPONSE_EN);
-    expect(reaffirm.reply.toLowerCase()).not.toContain('nearest hospital');
-    expect(assistantMessageIsEmergencyEscalationCopy(reaffirm.reply)).toBe(true);
+    expect(again.reply).toBe(MEDICAL_QUERY_RESPONSE_EN);
+    expect(again.reply.toLowerCase()).not.toContain('112');
   });
 
   it('localized reaffirm + first copies are recognized as escalation', () => {
@@ -140,18 +136,18 @@ describe('emergency SAFETY ratchet invariant', () => {
     }
   });
 
-  it('emergencyGate persists safety.escalatedAt', async () => {
+  it('emergencyGate does not persist safety.escalatedAt', async () => {
     const result = await emergencyGate.handle(
       gateCtx({
         text: 'papa behosh padhe hain floor pe',
         intentResult: { intent: 'greeting', confidence: 0.4 },
       })
     );
-    expect(result.nextState.safety?.escalatedAt).toBeTruthy();
-    expect(isOpenEmergencyCrisis(result.nextState)).toBe(true);
+    expect(result.nextState.safety?.escalatedAt).toBeFalsy();
+    expect(isOpenEmergencyCrisis(result.nextState)).toBe(false);
   });
 
-  it('openCrisisGate reaffirms vague follow-ups while crisis is open (kuch batao)', async () => {
+  it('openCrisisGate intercepts vague follow-ups with receptionist copy, not 112', async () => {
     const ctx = gateCtx({
       text: 'kuch batao',
       intentResult: { intent: 'medical_query', confidence: 0.8 },
@@ -165,8 +161,8 @@ describe('emergency SAFETY ratchet invariant', () => {
     expect(openCrisisGate.fires(ctx)).toBe(true);
     const result = await openCrisisGate.handle(ctx);
     expect(result.branch).toBe('emergency_safety');
-    expect(result.reply).toBe(EMERGENCY_REAFFIRM_RESPONSE_EN);
-    expect(isOpenEmergencyCrisis(result.nextState)).toBe(true);
+    expect(result.reply).toBe(MEDICAL_QUERY_RESPONSE_EN);
+    expect(result.reply.toLowerCase()).not.toContain('112');
   });
 
   it('openCrisisGate does not fire on positive stability (booking resume allowlist)', () => {
@@ -182,7 +178,7 @@ describe('emergency SAFETY ratchet invariant', () => {
     expect(openCrisisGate.fires(ctx)).toBe(false);
   });
 
-  it('number floor + markEmergencyCrisisOpen enables open-crisis reaffirm on follow-up', () => {
+  it('number floor helper still exists; Meta crisis follow-up is receptionist, not 112', async () => {
     const improvised =
       "I'm really sorry you're dealing with an emergency. Please call your local emergency number " +
       'right now or go to the nearest emergency department.';
@@ -202,5 +198,6 @@ describe('emergency SAFETY ratchet invariant', () => {
       state: afterFloor,
     });
     expect(openCrisisGate.fires(followUp)).toBe(true);
+    expect((await openCrisisGate.handle(followUp)).reply.toLowerCase()).not.toContain('112');
   });
 });

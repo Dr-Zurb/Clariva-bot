@@ -90,7 +90,7 @@ export const SCENARIOS: Scenario[] = [
         label: 'symptom → deflection, no 112',
         text: 'I have had a mild fever for three days',
         expect: {
-          branch: ['medical_safety', 'reason_first_triage_ask_more'],
+          branch: 'medical_safety',
           intent: 'medical_query',
           replyContains: [MEDICAL_DEFLECTION_EN],
           replyOmits: [EMERGENCY_EN],
@@ -176,47 +176,39 @@ export const SCENARIOS: Scenario[] = [
   // -------------------------------------------------------------------------
   {
     id: 'fees-reason-first',
-    title: 'Fee ask defers to reason-first, then quotes',
+    title: 'Fee ask quotes in-thread; clinical follow-up hands /book',
     tags: ['fees', 'catalog'],
     checklist: '3.1, 3.2, 3.3',
     note: 'Requires a configured service catalogue with fees.',
     turns: [
       {
-        label: 'fee ask → reason-first, no prices yet',
+        label: 'fee ask → quote',
         text: 'how much is a consultation?',
         expect: {
-          branch: ['reason_first_triage_ask_more', 'fee_deterministic_idle'],
+          branch: 'fee_deterministic_idle',
           intent: ['ask_question', 'check_availability'],
         },
       },
       {
-        label: 'give reason → asks for anything else',
+        label: 'give reason → booking link, no symptom interview',
         text: 'knee pain for about two weeks',
-        expect: { branch: ['reason_first_triage_ask_more', 'reason_first_triage_confirm'] },
-      },
-      {
-        label: 'close the list → fee quote',
-        text: "no that's it",
-        expect: {
-          branch: ['reason_first_triage_fee_narrow', 'reason_first_triage_confirm'],
-          replyMatches: '\\d',
-        },
+        expect: { branch: ['booking_start_link_first', 'medical_safety'] },
       },
     ],
   },
   {
     id: 'fees-ambiguous-yes',
-    title: 'Bare "yes" to "anything else?" asks what to add',
+    title: 'In-flight reason-first leftover hands /book',
     tags: ['fees'],
     checklist: '3.4',
-    note: 'Requires reason-first triage to be reachable for this doctor.',
+    note: 'Legacy ask_more threads no longer interview; they hand the owned booking page.',
     turns: [
       { label: 'fee ask', text: 'what are your charges?', expect: {} },
       { label: 'give reason', text: 'back pain since last month', expect: {} },
       {
-        label: 'bare yes → clarify, do not treat as a reason',
+        label: 'bare yes → booking link, not a clinical add-on',
         text: 'yes',
-        expect: { branch: 'reason_first_triage_ask_more_ambiguous_yes' },
+        expect: { branch: ['booking_start_link_first', 'fee_deterministic_idle'] },
       },
     ],
   },
@@ -226,7 +218,7 @@ export const SCENARIOS: Scenario[] = [
   // -------------------------------------------------------------------------
   {
     id: 'booking-one-shot-details',
-    title: 'All details in one message reach confirm without re-asking',
+    title: 'Booking details in chat still hand /book (no confirm read-back)',
     tags: ['booking', 'core'],
     checklist: '4.1a, 4.1f',
     turns: [
@@ -236,29 +228,27 @@ export const SCENARIOS: Scenario[] = [
         expect: { intent: ['book_appointment', 'check_availability'] },
       },
       {
-        label: 'all fields at once → confirm read-back',
+        label: 'details in chat → owned-page link, no read-back',
         text: 'Ravi Kumar, 34, male, 9876543210, persistent knee pain',
         expect: {
-          branch: ['booking_collection', 'confirm_details'],
-          step: ['confirm_details', 'collecting_all'],
-          replyContains: ['Ravi'],
+          branch: ['booking_start_link_first', 'slot_selection', 'book_responded'],
+          replyOmits: ['Ravi', '9876543210'],
         },
       },
     ],
   },
   {
     id: 'booking-partial-details',
-    title: 'Partial details ask only for what is missing',
+    title: 'Partial details in chat hand /book instead of asking for the rest',
     tags: ['booking'],
     checklist: '4.1b',
     turns: [
       { label: 'ask to book', text: 'book an appointment please', expect: {} },
       {
-        label: 'name + phone only → asks for the rest, not everything',
+        label: 'name + phone only → booking link, no missing-field ask',
         text: 'Anita Sharma, 9812345678',
         expect: {
-          branch: ['booking_collection', 'confirm_details'],
-          step: ['collecting_all', 'confirm_details'],
+          branch: ['booking_start_link_first', 'slot_selection', 'book_responded'],
         },
       },
     ],

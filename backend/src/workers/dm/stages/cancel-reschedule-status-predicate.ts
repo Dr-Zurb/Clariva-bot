@@ -25,6 +25,12 @@ import {
   userMessageSignalsPostEmergencyStability,
 } from '../../../utils/safety-messages';
 import { emergencyGate } from '../control-gates';
+import {
+  isClinicalAdviceUserMessage,
+  isHoursFaqUserMessage,
+  isLocationFaqUserMessage,
+  isThanksOnlyUserMessage,
+} from '../../../utils/instagram-faq-copy';
 import type { DmTurnContext } from '../stage-router';
 
 export const STATUS_INTENTS = new Set([
@@ -73,7 +79,11 @@ export function matchesIdleFeeTriageMainBlock(ctx: DmTurnContext): boolean {
   ) {
     return true;
   }
-  if (state.triage?.reasonFirstTriagePhase && !inCollection && (!stageOf(state) || stageOf(state) === 'responded')) {
+  if (
+    state.triage?.reasonFirstTriagePhase &&
+    !inCollection &&
+    (!stageOf(state) || stageOf(state) === 'responded')
+  ) {
     return true;
   }
   if (
@@ -86,6 +96,16 @@ export function matchesIdleFeeTriageMainBlock(ctx: DmTurnContext): boolean {
     return true;
   }
   if (intentResult.intent === 'medical_query' && !inCollection) return true;
+  if (!inCollection && isClinicalAdviceUserMessage(text)) return true;
+  if (
+    !inCollection &&
+    (!stageOf(state) || stageOf(state) === 'responded') &&
+    (isHoursFaqUserMessage(text) ||
+      isLocationFaqUserMessage(text) ||
+      (isThanksOnlyUserMessage(text) && !isPostBookingAcknowledgment(text, recent)))
+  ) {
+    return true;
+  }
   if (signalsFeePricing && !userExplicitlyWantsToBookNow(text) && inCollection) return true;
   if (
     signalsFeePricing &&
@@ -118,24 +138,35 @@ export function legacyClaimsPatientMatchConfirmation(ctx: DmTurnContext): boolea
   const recent = recentAsDmShape(recentMessages);
   return (
     stageOf(state) === 'awaiting_match_confirmation' ||
-    (effectiveAskedForMatch(state, recent) && (state.bookingForOther?.pendingMatchPatientIds?.length ?? 0) > 0)
+    (effectiveAskedForMatch(state, recent) &&
+      (state.bookingForOther?.pendingMatchPatientIds?.length ?? 0) > 0)
   );
 }
 
 /** book_for_someone_else mid-chain (rcp-08; not booking funnel). */
 export function legacyClaimsBookForSomeoneElse(ctx: DmTurnContext): boolean {
   const { state, intentResult } = ctx;
+  const step = stageOf(state);
   return (
     intentResult.intent === 'book_for_someone_else' &&
-    (stageOf(state) === 'responded' || stageOf(state) === 'awaiting_slot_selection')
+    (!step || step === 'responded' || step === 'awaiting_slot_selection')
   );
 }
 
 /** Book-intent entry branches (rcp-08 booking_entry stage). */
 export function legacyClaimsBookingEntrySteps(ctx: DmTurnContext): boolean {
-  const { channelReplyPick, isBookIntent, justStartingCollection, inCollection, state } = ctx;
+  const {
+    channelReplyPick,
+    isBookIntent,
+    justStartingCollection,
+    inCollection,
+    state,
+    intentResult,
+  } = ctx;
   if (channelReplyPick) return true;
   if (legacyClaimsBookForSomeoneElse(ctx)) return true;
+  const step = stageOf(state);
+  if (intentResult.intent === 'check_availability' && (!step || step === 'responded')) return true;
   if (isBookIntent && (justStartingCollection || inCollection)) return true;
   if (isBookIntent && stageOf(state) === 'responded') return true;
   return false;
@@ -167,7 +198,9 @@ export function legacyClaimsBookingFunnelSteps(ctx: DmTurnContext): boolean {
 }
 
 /** Branches after status intents, before book-path idle fee and book_responded. */
-export function legacyClaimsBetweenStatusIntentsAndCollectionBookPaths(ctx: DmTurnContext): boolean {
+export function legacyClaimsBetweenStatusIntentsAndCollectionBookPaths(
+  ctx: DmTurnContext
+): boolean {
   const { isBookIntent, justStartingCollection, inCollection } = ctx;
 
   if (legacyClaimsBookForSomeoneElse(ctx)) return true;

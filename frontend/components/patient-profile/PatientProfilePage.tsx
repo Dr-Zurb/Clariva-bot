@@ -150,9 +150,28 @@ export default function PatientProfilePage({
     setAdvanceAfterFinish(false);
   }, [appt.id]);
 
+  /**
+   * Landing on a visit that is already completed means the doctor came
+   * back to revise it — that is not queue flow. Park every advance
+   * engine for this token (this page's `<AdvanceToNextPatient>` and the
+   * pf-11 countdown inside `<EndedCard>`) before those surfaces mount.
+   * `armAdvance` lifts the park when a live visit is finished here.
+   */
+  const landedAppointmentRef = useRef<string | null>(null);
+  if (landedAppointmentRef.current !== appt.id) {
+    landedAppointmentRef.current = appt.id;
+    if (appt.status === "completed") {
+      try {
+        sessionStorage.setItem(cancelStorageKey(appt.id), "1");
+      } catch {
+        // private mode / SSR
+      }
+    }
+  }
+
   const armAdvance = useCallback((appointmentId: string) => {
-    // A Print earlier on this visit parked pf-11; finishing re-enables it
-    // unless a print dialog is still open (navigation closes Chrome's preview).
+    // Only Send & finish + print should jump. Keep the park if the
+    // system print dialog is still open (navigation would close it).
     if (!isPrintAdvanceHeld()) {
       try {
         sessionStorage.removeItem(cancelStorageKey(appointmentId));
@@ -162,6 +181,15 @@ export default function PatientProfilePage({
     }
     setAdvanceAfterFinish(true);
   }, []);
+
+  const parkAdvanceForEdit = useCallback(() => {
+    setAdvanceAfterFinish(false);
+    try {
+      sessionStorage.setItem(cancelStorageKey(appt.id), "1");
+    } catch {
+      // private mode / SSR
+    }
+  }, [appt.id]);
 
   const clearFinishErrorLater = useCallback(() => {
     if (finishErrorTimer.current) clearTimeout(finishErrorTimer.current);
@@ -314,7 +342,8 @@ export default function PatientProfilePage({
     if (finishBusy || finishInFlightRef.current) return false;
     if (appt.status === "completed") {
       clearConsultSteppedAway(appt.id);
-      armAdvance(appt.id);
+      // Already finished. Revising a completed visit is not queue
+      // flow — stay on this token.
       return true;
     }
     if (appt.status === "cancelled" || appt.status === "no_show") {
@@ -333,7 +362,6 @@ export default function PatientProfilePage({
       curr.id === appointmentId ? markAppointmentFinishedLocally(curr) : curr
     );
     clearConsultSteppedAway(appointmentId);
-    armAdvance(appointmentId);
 
     void postAppointmentWrapUp(token, appointmentId, {})
       .then((res) => {
@@ -356,7 +384,7 @@ export default function PatientProfilePage({
       });
 
     return true;
-  }, [appt, finishBusy, token, clearFinishErrorLater, armAdvance]);
+  }, [appt, finishBusy, token, clearFinishErrorLater]);
 
   // Re-entering the cockpit means the doctor is actively on this visit again.
   useEffect(() => {
@@ -559,6 +587,8 @@ export default function PatientProfilePage({
                 token={token}
                 finishBusy={finishBusy}
                 onFinish={handleFinishVisit}
+                onArmAdvance={() => armAdvance(appt.id)}
+                onParkAdvanceForEdit={parkAdvanceForEdit}
                 onSent={handleRxSent}
               />
             }

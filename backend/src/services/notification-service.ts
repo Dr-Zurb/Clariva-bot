@@ -12,17 +12,14 @@
 import { getSupabaseAdminClient } from '../config/database';
 import { env } from '../config/env';
 import { sendEmail } from '../config/email';
-import {
-  sendInstagramMessage,
-  sendInstagramImage,
-  sendInstagramFile,
-} from './instagram-service';
+import { sendInstagramMessage } from './instagram-service';
 import { sendSms } from './twilio-sms-service';
 import { getInstagramAccessTokenForDoctor } from './instagram-connect-service';
 import { getFacebookPageAccessTokenForDoctor } from './facebook-connect-service';
 import { getDoctorSettings } from './doctor-settings-service';
 import { logAuditEvent } from '../utils/audit-logger';
 import type { ConversationLanguage } from '../utils/conversation-language';
+import { shouldSkipAutomatedMetaSend } from './automated-messaging-opt-out';
 import { getConversationLanguage } from './conversation-service';
 import {
   buildAppointmentReminder24hDm,
@@ -50,7 +47,6 @@ import type {
 } from '../types/notification';
 import { logger } from '../config/logger';
 import { redactPhiForAI } from './ai-service';
-import { createAttachmentSignedUrlForDelivery } from './prescription-attachment-service';
 import { generatePrescriptionPdf } from './prescription-pdf-service';
 import { prescriptionPdfFilenameFromRow } from '../utils/prescription-pdf-filename';
 import { mintRxToken, buildShareUrl } from './prescription-token-service';
@@ -286,19 +282,21 @@ async function resolveInstagramRecipientForPatient(
  * Send payment confirmation DM to patient after payment webhook.
  * Resolves recipient via appointment.patient_id (per-doctor row) with
  * doctor-scoped conversation fallback; book-for-other via appointment.conversation_id.
- * Includes newly assigned Patient ID (P-xxxxx) when provided (migration 046).
+ * MCA-DL-1 / mca-12: Instagram body is appointment time only — do not
+ * put MRN or other identifiers in the Meta channel. Callers may still
+ * pass `patientMrn`; it is ignored on this path.
  *
  * @param appointmentId - Appointment ID (confirmed after payment)
  * @param appointmentDateIso - Appointment date (ISO string) for message
  * @param correlationId - Request correlation ID
- * @param patientMrn - Newly assigned or existing MRN to include in message (optional)
+ * @param patientMrn - Ignored (kept so existing callers do not break)
  * @returns true if sent or skipped (no patient/platform); false on send failure (logged)
  */
 export async function sendPaymentConfirmationToPatient(
   appointmentId: string,
   appointmentDateIso: string,
   correlationId: string,
-  patientMrn?: string | null
+  _patientMrn?: string | null
 ): Promise<boolean> {
   const admin = getSupabaseAdminClient();
   if (!admin) {
@@ -349,13 +347,21 @@ export async function sendPaymentConfirmationToPatient(
   const message = buildPaymentConfirmationMessage({
     language,
     appointmentDateDisplay: dateStr,
-    patientMrn: patientMrn?.trim() || undefined,
     modality,
   });
 
   const doctorToken = appointment.doctor_id
     ? await getInstagramAccessTokenForDoctor(appointment.doctor_id, correlationId)
     : null;
+
+  const optOut = await shouldSkipAutomatedMetaSend({
+    conversationId: appointment.conversation_id,
+    correlationId,
+    ifMissing: 'allow',
+  });
+  if (optOut.skip) {
+    return true;
+  }
 
   try {
     await sendInstagramMessage(recipientId, message, correlationId, doctorToken ?? undefined);
@@ -478,6 +484,14 @@ export async function sendConsultationLinkToPatient(
   }
 
   if (igRecipientId) {
+    const optOut = await shouldSkipAutomatedMetaSend({
+      conversationId: appointment.conversation_id,
+      correlationId,
+      ifMissing: 'allow',
+    });
+    if (optOut.skip) {
+      return true;
+    }
     const doctorToken = appointment.doctor_id
       ? await getInstagramAccessTokenForDoctor(appointment.doctor_id, correlationId)
       : null;
@@ -532,8 +546,6 @@ export interface SendPrescriptionResult {
   publicLink?: string;
 }
 
-const PRESCRIPTION_DELIVERY_URL_EXPIRY = 3600; // 1 hr for Meta fetch
-const INSTAGRAM_IMAGE_TYPES = ['image/jpeg', 'image/png'];
 /**
  * 24h share-link TTL aligns with the PDF service's signed URL TTL —
  * patients revisiting the link within 24h hit a fresh signed URL via
@@ -669,14 +681,13 @@ export async function sendPrescriptionToPatient(
     return { sent: false, reason: 'prescription_not_found' };
   }
 
-  const [appResult, medResult, attResult] = await Promise.all([
+  const [appResult, medResult] = await Promise.all([
     admin
       .from('appointments')
       .select('id, patient_id, doctor_id, conversation_id')
       .eq('id', prescription.appointment_id)
       .single(),
     admin.from('prescription_medicines').select('*').eq('prescription_id', prescriptionId).order('sort_order'),
-    admin.from('prescription_attachments').select('*').eq('prescription_id', prescriptionId),
   ]);
 
   if (appResult.error || !appResult.data) {
@@ -693,8 +704,6 @@ export async function sendPrescriptionToPatient(
     duration?: string | null;
     instructions?: string | null;
   }>;
-  const attachments = (attResult.data ?? []) as Array<{ file_path: string; file_type: string | null }>;
-
   const [doctorSettings, patientRow, igRecipientId, doctorToken] = await Promise.all([
     getDoctorSettings(appointment.doctor_id),
     appointment.patient_id
@@ -719,19 +728,13 @@ export async function sendPrescriptionToPatient(
   );
 
   // ────────────────────────────────────────────────────────────────────
-  // T3.17 — PDF + share link assembly (best-effort, non-blocking).
+  // T3.17 / MCA-DL-1 — PDF + share link assembly (best-effort).
   //
-  // The pre-B2 pipeline shipped only text + image attachments. We now
-  // also try to attach the branded PDF to both channels and append a
-  // share-link to every body so the patient has a canonical "open Rx"
-  // surface that survives both expired IG conversation windows and
-  // deleted emails.
-  //
-  // Failure of PDF generation here MUST NOT abort the send — we still
-  // ship the legacy text body. Per master-batch decision 17 each
-  // channel succeeds/fails independently, and per decision 18 the
-  // `generatePrescriptionPdf` 5-min cache prevents redundant renders
-  // on rapid resends.
+  // Email keeps the branded PDF + medicine summary. Instagram gets a
+  // generic ready-notice + HMAC share URL only — no PDF, image, or
+  // medicine list in the Meta channel. If the share URL cannot be
+  // minted, Instagram is skipped (fail closed). PDF generation failure
+  // MUST NOT abort email.
   // ────────────────────────────────────────────────────────────────────
   let pdfStoragePath: string | undefined;
   let pdfSignedUrl: string | undefined;
@@ -767,10 +770,7 @@ export async function sendPrescriptionToPatient(
     );
   }
 
-  // Pre-fetch the PDF as a Buffer for email attachment. We do this
-  // ONCE outside the email branch so a single 24h signed URL fetch
-  // services both Resend (Buffer attach) and the IG `attachment.payload.url`
-  // path (URL passthrough — Meta fetches it server-side, no Buffer needed).
+  // Pre-fetch the PDF as a Buffer for email attachment only.
   if (pdfSignedUrl && patientEmail && !pdfBuffer) {
     try {
       const res = await fetch(pdfSignedUrl);
@@ -794,98 +794,38 @@ export async function sendPrescriptionToPatient(
   // `Promise.allSettled` collect outcomes. Inside each branch we still
   // wrap legacy try/catch so existing observability + audit footprints
   // remain identical. The channel boolean (`instagramSent`,
-  // `emailSent`) is set ONLY on confirmed delivery — partial successes
-  // (image sent but PDF failed) are still counted as `instagramSent: true`
-  // because the patient received SOMETHING actionable.
+  // `emailSent`) is set ONLY on confirmed delivery.
   // ────────────────────────────────────────────────────────────────────
   const sendInstagramChannel = async (): Promise<void> => {
     if (!igRecipientId || !doctorToken) return;
-
-    const imageAttachments = attachments.filter(
-      (a) => a.file_type && INSTAGRAM_IMAGE_TYPES.includes(a.file_type),
-    );
-    for (const att of imageAttachments) {
-      try {
-        const url = await createAttachmentSignedUrlForDelivery(
-          att.file_path,
-          PRESCRIPTION_DELIVERY_URL_EXPIRY,
-        );
-        await sendInstagramImage(igRecipientId, url, correlationId, doctorToken);
-        instagramSent = true;
-      } catch (err) {
-        logger.warn(
-          { correlationId, prescriptionId, error: err instanceof Error ? err.message : String(err) },
-          'Prescription image DM failed (fallback to text)',
-        );
-      }
+    const optOut = await shouldSkipAutomatedMetaSend({
+      conversationId: appointment.conversation_id,
+      correlationId,
+      ifMissing: 'allow',
+    });
+    if (optOut.skip) return;
+    if (!publicLink) {
+      logger.info(
+        { correlationId, prescriptionId },
+        'Prescription IG skipped (no share URL — clinical content stays off Meta)'
+      );
+      return;
     }
 
-    // PDF attachment (T3.17). Best-effort; non-fatal if it fails so
-    // the patient still receives the text body fallback below.
-    if (pdfSignedUrl) {
-      try {
-        await sendInstagramFile(igRecipientId, pdfSignedUrl, correlationId, doctorToken);
-        instagramSent = true;
-      } catch (err) {
-        logger.warn(
-          { correlationId, prescriptionId, error: err instanceof Error ? err.message : String(err) },
-          'Prescription PDF DM failed (fallback to text body)',
-        );
-      }
-    }
+    const igTextBody = buildPrescriptionReadyPingDm({
+      language: 'en',
+      practiceName,
+      viewUrl: publicLink,
+    });
 
-    // Text body — augmented with the share link when available so the
-    // patient has a canonical "open Rx" surface in-thread.
-    const igTextBody = publicLink
-      ? `${textSummary}\n\nView online: ${publicLink}`
-      : textSummary;
-
-    if (!instagramSent && (prescription.type === 'structured' || prescription.type === 'both' || medicines.length > 0)) {
-      try {
-        await sendInstagramMessage(igRecipientId, igTextBody, correlationId, doctorToken);
-        instagramSent = true;
-      } catch (err) {
-        logger.warn(
-          { correlationId, prescriptionId, error: err instanceof Error ? err.message : String(err) },
-          'Prescription text DM failed',
-        );
-      }
-    } else if (instagramSent && publicLink) {
-      // PDF or image was already delivered above; surface the share
-      // link as a separate short message so the patient has an in-thread
-      // tap target. Failure is non-fatal — the PDF/image is the primary
-      // delivery and we already counted instagramSent=true.
-      try {
-        await sendInstagramMessage(
-          igRecipientId,
-          `Your prescription from ${practiceName} is ready. View online: ${publicLink}`,
-          correlationId,
-          doctorToken,
-        );
-      } catch (err) {
-        logger.warn(
-          { correlationId, prescriptionId, error: err instanceof Error ? err.message : String(err) },
-          'Prescription share-link DM failed (non-fatal — PDF/image already delivered)',
-        );
-      }
-    }
-    if (!instagramSent && prescription.type === 'photo' && imageAttachments.length === 0) {
-      try {
-        await sendInstagramMessage(
-          igRecipientId,
-          publicLink
-            ? `Your prescription from ${practiceName} has been saved. View online: ${publicLink}`
-            : `Your prescription from ${practiceName} has been saved.`,
-          correlationId,
-          doctorToken,
-        );
-        instagramSent = true;
-      } catch (err) {
-        logger.warn(
-          { correlationId, prescriptionId, error: err instanceof Error ? err.message : String(err) },
-          'Prescription DM failed',
-        );
-      }
+    try {
+      await sendInstagramMessage(igRecipientId, igTextBody, correlationId, doctorToken);
+      instagramSent = true;
+    } catch (err) {
+      logger.warn(
+        { correlationId, prescriptionId, error: err instanceof Error ? err.message : String(err) },
+        'Prescription ready-notice DM failed'
+      );
     }
   };
 
@@ -1404,6 +1344,14 @@ async function dispatchFanOut(params: {
     if (!channels.igRecipientId) {
       return { channel: 'instagram_dm', status: 'skipped', reason: 'no_recipient' };
     }
+    const optOut = await shouldSkipAutomatedMetaSend({
+      conversationId: channels.conversationId,
+      correlationId,
+      ifMissing: 'allow',
+    });
+    if (optOut.skip) {
+      return { channel: 'instagram_dm', status: 'skipped', reason: 'patient_opted_out' };
+    }
     try {
       const resp = await sendInstagramMessage(
         channels.igRecipientId,
@@ -1428,6 +1376,14 @@ async function dispatchFanOut(params: {
   const fbTask = (async (): Promise<FanOutChannelOutcome> => {
     if (!channels.fbRecipientId) {
       return { channel: 'facebook_dm', status: 'skipped', reason: 'no_recipient' };
+    }
+    const optOut = await shouldSkipAutomatedMetaSend({
+      conversationId: channels.conversationId,
+      correlationId,
+      ifMissing: 'allow',
+    });
+    if (optOut.skip) {
+      return { channel: 'facebook_dm', status: 'skipped', reason: 'patient_opted_out' };
     }
     try {
       // Same Graph `/me/messages` helper as IG; Page token selects facebook.com.
@@ -1944,7 +1900,6 @@ export async function sendPrevisitNotifyToPatient(input: {
         language,
         practiceName: channels.practiceName,
         whenLabel,
-        patientName,
         minutesLeft: minutesLeftActual ?? undefined,
       });
       emailSubject = firstName
@@ -1968,7 +1923,6 @@ export async function sendPrevisitNotifyToPatient(input: {
           language,
           practiceName: channels.practiceName,
           joinUrl,
-          patientName,
           whenLabel,
           minutesLeft: minutesLeftActual ?? undefined,
         });
@@ -1983,7 +1937,6 @@ export async function sendPrevisitNotifyToPatient(input: {
           practiceName: channels.practiceName,
           joinUrl,
           whenLabel,
-          patientName,
         });
         emailSubject = firstName
           ? `Hi ${firstName} — starting now (${whenLabel}) — Halo Aid`
@@ -1997,7 +1950,6 @@ export async function sendPrevisitNotifyToPatient(input: {
           minutesLeft,
           minutesLeftActual: minutesLeftActual ?? undefined,
           whenLabel,
-          patientName,
         });
         const leftLabel =
           minutesLeftActual != null
@@ -2569,6 +2521,14 @@ export async function notifyPatientOfDoctorReplay(input: {
     if (!channels.igRecipientId) {
       return { channel: 'instagram_dm', status: 'skipped', reason: 'no_recipient' };
     }
+    const optOut = await shouldSkipAutomatedMetaSend({
+      conversationId: ctx.conversationId,
+      correlationId,
+      ifMissing: 'allow',
+    });
+    if (optOut.skip) {
+      return { channel: 'instagram_dm', status: 'skipped', reason: 'patient_opted_out' };
+    }
     try {
       const resp = await sendInstagramMessage(
         channels.igRecipientId,
@@ -3004,6 +2964,14 @@ export async function sendPostConsultChatHistoryDm(input: {
     if (!channels.igRecipientId) {
       return { channel: 'instagram_dm', status: 'skipped', reason: 'no_recipient' };
     }
+    const optOut = await shouldSkipAutomatedMetaSend({
+      conversationId: channels.conversationId,
+      correlationId,
+      ifMissing: 'allow',
+    });
+    if (optOut.skip) {
+      return { channel: 'instagram_dm', status: 'skipped', reason: 'patient_opted_out' };
+    }
     try {
       const resp = await sendInstagramMessage(
         channels.igRecipientId,
@@ -3164,21 +3132,6 @@ export async function sendDeskBookingConfirmationToPatient(
       return true;
     }
 
-    let patientMrn: string | undefined;
-    const patientId = (apt as { patient_id?: string | null }).patient_id;
-    if (patientId) {
-      const { data: patient } = await admin
-        .from('patients')
-        .select('medical_record_number')
-        .eq('id', patientId)
-        .maybeSingle();
-      const raw = (patient as { medical_record_number?: string | null } | null)
-        ?.medical_record_number;
-      if (raw?.trim()) {
-        patientMrn = raw.trim();
-      }
-    }
-
     const doctorSettings = channels.doctorId
       ? await getDoctorSettings(channels.doctorId)
       : null;
@@ -3205,7 +3158,6 @@ export async function sendDeskBookingConfirmationToPatient(
     const message = buildDeskBookingConfirmationMessage({
       language,
       appointmentDateDisplay: formatAppointmentDate(appointmentIso, timezone),
-      patientMrn,
     });
 
     const outcomes = await dispatchFanOut({

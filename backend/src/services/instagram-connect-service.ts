@@ -37,11 +37,10 @@ import type { InsertDoctorInstagram } from '../types/database';
 const INSTAGRAM_OAUTH_AUTHORIZE = 'https://www.instagram.com/oauth/authorize';
 const INSTAGRAM_OAUTH_ACCESS_TOKEN = 'https://api.instagram.com/oauth/access_token';
 const INSTAGRAM_GRAPH_BASE = 'https://graph.instagram.com';
-/** Business Login for Instagram scopes (messages + comments; no content_publish for MVP). */
+/** Business Login scopes for the first App Review file (basic + messages). Comments stay in-repo; add the scope back when that file is submitted. */
 const INSTAGRAM_BUSINESS_SCOPES = [
   'instagram_business_basic',
   'instagram_business_manage_messages',
-  'instagram_business_manage_comments',
 ];
 const META_HTTP_TIMEOUT_MS = 10000;
 

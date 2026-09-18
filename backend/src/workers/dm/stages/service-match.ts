@@ -6,9 +6,7 @@ import { logger } from '../../../config/logger';
 import {
   getCollectedData,
   clearCollectedData,
-  tryRecoverAndSetFromMessages,
 } from '../../../services/collection-service';
-import { createPatientForBooking } from '../../../services/patient-service';
 import { buildBookingPageUrl } from '../../../services/slot-selection-service';
 import {
   matchServiceCatalogOffering,
@@ -23,8 +21,6 @@ import {
   buildBookForOtherSelfNudgeMessage,
   buildConsentOptionalExtrasMessage,
   buildFollowUpServiceConfirmUnclearMessage,
-  buildIntakeRequestMessage,
-  buildPatientMatchConfirmUnclearMessage,
   buildPhoneDisplayFallbackLabel,
 } from '../../../utils/dm-copy';
 import type { ConversationLanguage } from '../../../utils/conversation-language';
@@ -62,6 +58,7 @@ import {
   parseReturningFollowUpReply,
   transitionToConsentAfterFollowUpAccept,
 } from '../returning-followup-offer';
+import { applyReadyPatientBookingPath } from '../booking-entry-ready-path';
 import { isServiceMatchTurn } from './service-match-predicate';
 
 async function enrichStateWithServiceCatalogMatch(
@@ -442,7 +439,6 @@ export const serviceMatchStage: DmStageHandler = {
       const parsed = parseMatchConfirmationReply(text, matchCount);
       const useExisting = parsed === 'yes' || parsed === '1';
       const useSecond = parsed === '2' && matchCount >= 2;
-      const createNew = parsed === 'no' || parsed === 'unclear';
 
       if (useExisting || useSecond) {
         const chosenId = useSecond ? matchIds[1]! : matchIds[0]!;
@@ -471,71 +467,23 @@ export const serviceMatchStage: DmStageHandler = {
             : baseSlotMsg;
           state = setStage(shared, 'awaiting_slot_selection');
         }
-      } else if (createNew) {
-        let collectedBeforePersist = await getCollectedData(conversation.id);
-        if (!collectedBeforePersist?.name?.trim() || !collectedBeforePersist?.phone?.trim()) {
-          const recovered = await tryRecoverAndSetFromMessages(
-            conversation.id,
-            recentMessages,
-            correlationId
-          );
-          if (recovered) collectedBeforePersist = await getCollectedData(conversation.id);
-        }
-        if (!collectedBeforePersist?.name?.trim() || !collectedBeforePersist?.phone?.trim()) {
-          replyText = buildIntakeRequestMessage({
-            language: ctx.turnLanguage,
-            variant: 'retry-not-received',
-            missing: ['name', 'age', 'phone', 'reason_for_visit'],
-          });
-          state = { ...state, updatedAt: new Date().toISOString() };
-        } else {
-          const newPatient = await createPatientForBooking(
-            doctorId,
-            {
-              name: collectedBeforePersist.name.trim(),
-              phone: collectedBeforePersist.phone.trim(),
-              age: collectedBeforePersist.age,
-              gender: collectedBeforePersist.gender,
-              email: collectedBeforePersist.email,
-            },
-            correlationId
-          );
-          await clearCollectedData(conversation.id);
-          const shared: ConversationState = mergeBookingForOther(
-            mergeBooking(
-              { ...state, lastIntent: intentResult.intent, updatedAt: new Date().toISOString() },
-              {
-                reasonForVisit:
-                  state.booking?.reasonForVisit ?? collectedBeforePersist.reason_for_visit,
-              }
-            ),
-            {
-              bookingForPatientId: newPatient.id,
-              bookingForSomeoneElse: false,
-              pendingMatchPatientIds: undefined,
-            }
-          );
-          if (isSlotBookingBlockedPendingStaffReview(shared)) {
-            const gate = transitionToAwaitingStaffServiceConfirmation(
-              shared,
-              doctorSettings,
-              intentResult.intent,
-              {}, ctx.turnLanguage);
-            state = gate.state;
-            replyText = gate.replyText;
-          } else {
-            const slotLink = buildBookingPageUrl(conversation.id, doctorId);
-            const baseSlotMsg = formatBookingLinkDm({ language: ctx.turnLanguage, slotLink, doctorSettings });
-            replyText = shared.bookingForOther?.pendingSelfBooking
-              ? `${baseSlotMsg}\n\n${buildBookForOtherSelfNudgeMessage({ language: ctx.turnLanguage })}`
-              : baseSlotMsg;
-            state = setStage(shared, 'awaiting_slot_selection');
-          }
-        }
       } else {
-        replyText =
-          buildPatientMatchConfirmUnclearMessage({ language: ctx.turnLanguage });
-        state = { ...state, updatedAt: new Date().toISOString() };
+        // no / unclear — do not collect name/phone/reason in-thread (MCA-DL-4).
+        const cleared = mergeBookingForOther(
+          { ...state, lastIntent: intentResult.intent, updatedAt: new Date().toISOString() },
+          { pendingMatchPatientIds: undefined }
+        );
+        const ready = applyReadyPatientBookingPath({
+          state: cleared,
+          intent: intentResult.intent,
+          conversationId: conversation.id,
+          doctorId,
+          doctorSettings,
+          patient: null,
+          language: ctx.turnLanguage,
+        });
+        state = ready.state;
+        replyText = ready.replyText;
       }
     }
 

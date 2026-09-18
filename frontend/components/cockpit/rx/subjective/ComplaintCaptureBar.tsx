@@ -15,6 +15,21 @@ import {
 } from "@/lib/cockpit/should-request-ai-parse";
 import { createEmptyComplaint } from "@/components/cockpit/rx/RxFormContext";
 import { buildComplaintDetailSummary } from "@/lib/cockpit/complaint-card-state";
+import { useDoctorComplaintCombos } from "@/hooks/useDoctorComplaintCombos";
+import type { DoctorComplaintCombo } from "@/lib/api/doctor-complaint-combos";
+import {
+  formatComplaintComboHint,
+  matchComplaintCombos,
+} from "@/lib/cockpit/complaint-combos";
+
+export interface ComplaintComboCapture {
+  complaintName: string;
+  category: string | null;
+  severityBand: string | null;
+  laterality: string | null;
+  character: string | null;
+  associatedNames: string[];
+}
 
 export interface ComplaintCapturePayload {
   name: string;
@@ -22,6 +37,8 @@ export interface ComplaintCapturePayload {
   /** Doctor's original typed text when a catalog row matched — parsed for fields
    *  while `name` stays the canonical catalog name. Absent for free text. */
   rawText?: string;
+  /** Attested habit pack — apply fields, skip duration/parse. */
+  combo?: ComplaintComboCapture;
 }
 
 export interface ComplaintCaptureBarProps {
@@ -65,6 +82,22 @@ export function ComplaintCaptureBar({
 }: ComplaintCaptureBarProps) {
   const [draft, setDraft] = useState("");
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const { combos, clearCombo } = useDoctorComplaintCombos(token ?? "");
+
+  const matchingCombos = useMemo(
+    () => (token ? matchComplaintCombos(combos, draft) : []),
+    [combos, draft, token]
+  );
+
+  const extraOptions = useMemo(
+    () =>
+      matchingCombos.map((combo, idx) => ({
+        id: `${combo.nameKey}:${combo.lastUsedAt}:${idx}`,
+        label: formatComplaintComboHint(combo),
+        badge: idx === 0 ? "Most frequent" : undefined,
+      })),
+    [matchingCombos]
+  );
 
   const focusInput = useCallback(() => {
     requestAnimationFrame(() => inputRef.current?.focus());
@@ -74,11 +107,52 @@ export function ComplaintCaptureBar({
     (payload: ComplaintCapturePayload) => {
       const trimmed = payload.name.trim();
       if (!trimmed) return;
-      onCapture({ name: trimmed, category: payload.category, rawText: payload.rawText });
+      onCapture({
+        name: trimmed,
+        category: payload.category,
+        rawText: payload.rawText,
+        combo: payload.combo,
+      });
       setDraft("");
       focusInput();
     },
     [onCapture, focusInput],
+  );
+
+  const comboCapture = useCallback((combo: DoctorComplaintCombo): ComplaintComboCapture => ({
+    complaintName: combo.complaintName,
+    category: combo.category,
+    severityBand: combo.severityBand,
+    laterality: combo.laterality,
+    character: combo.character,
+    associatedNames: combo.associatedNames,
+  }), []);
+
+  const commitComboById = useCallback(
+    (id: string) => {
+      const idx = extraOptions.findIndex((option) => option.id === id);
+      const combo = matchingCombos[idx];
+      if (!combo) return;
+      const category = combo.category && isComplaintCategory(combo.category)
+        ? combo.category
+        : undefined;
+      emitCapture({
+        name: combo.complaintName,
+        category,
+        combo: comboCapture(combo),
+      });
+    },
+    [comboCapture, emitCapture, extraOptions, matchingCombos]
+  );
+
+  const clearComboById = useCallback(
+    (id: string) => {
+      const idx = extraOptions.findIndex((option) => option.id === id);
+      const combo = matchingCombos[idx];
+      if (!combo) return;
+      void clearCombo(combo);
+    },
+    [clearCombo, extraOptions, matchingCombos]
   );
 
   const handleCommit = useCallback(
@@ -132,6 +206,9 @@ export function ComplaintCaptureBar({
               value={draft}
               onChange={setDraft}
               onCommit={handleCommit}
+              extraOptions={extraOptions}
+              onSelectExtra={commitComboById}
+              onClearExtra={clearComboById}
               token={token}
               disabled={disabled}
               ariaLabel={inputAriaLabel}

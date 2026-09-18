@@ -3,11 +3,20 @@
  * Channel-free (no Instagram/transport); Phase 2/3 reuse the same gate list.
  */
 
+import {
+  isStartMessagingText,
+  isStopMessagingText,
+  persistAutomatedMessagingOptIn,
+  persistAutomatedMessagingOptOut,
+} from '../../services/automated-messaging-opt-out';
 import { handleRevocation } from '../../services/consent-service';
-import { buildReceptionistPauseDefaultMessage } from '../../utils/dm-copy';
+import {
+  buildAutomatedMessagingStartAckMessage,
+  buildAutomatedMessagingStopAckMessage,
+  buildReceptionistPauseDefaultMessage,
+} from '../../utils/dm-copy';
 import {
   isEmergencyUserMessage,
-  recentThreadHasAssistantEmergencyEscalation,
   resolveSafetyMessage,
   userMessageSignalsPostEmergencyStability,
 } from '../../utils/safety-messages';
@@ -41,6 +50,8 @@ export interface DmGateContext {
   conversationId: string;
   patientId: string | null;
   correlationId: string;
+  /** Migration 239 stamp. NULL/omitted = not opted out. */
+  automatedMessagingOptedOutAt?: string | null;
 }
 
 export interface DmGateResult {
@@ -58,8 +69,9 @@ export interface DmControlGate {
 }
 
 /** RBH-09 / lang-21: English default pause copy (re-export for callers that only need `en`). */
-export const DEFAULT_RECEPTIONIST_PAUSE_MESSAGE =
-  buildReceptionistPauseDefaultMessage({ language: 'en' });
+export const DEFAULT_RECEPTIONIST_PAUSE_MESSAGE = buildReceptionistPauseDefaultMessage({
+  language: 'en',
+});
 
 /**
  * Pause handoff copy. Custom doctor message is returned **verbatim** (LANG5-D4) —
@@ -77,17 +89,7 @@ export function resolveReceptionistPauseMessage(
   return buildReceptionistPauseDefaultMessage({ language });
 }
 
-function threadHasPriorEmergencyEscalation(ctx: DmGateContext): boolean {
-  if (isOpenEmergencyCrisis(ctx.state)) return true;
-  return recentThreadHasAssistantEmergencyEscalation(
-    ctx.recentMessages.map((m) => ({
-      sender_type: m.sender_type,
-      content: m.content ?? '',
-    }))
-  );
-}
-
-/** Mark open crisis window (also used by outbound emergency-number floor). */
+/** Legacy helper — Meta send no longer opens a crisis window. Kept for tests. */
 export function markEmergencyCrisisOpen(
   state: ConversationState,
   opts?: { preserveEscalatedAt?: boolean }
@@ -146,39 +148,47 @@ export const revokeConsentGate: DmControlGate = {
 };
 
 /**
- * SAFETY ratchet (invariant):
- * - Acute regex hit always escalates and cannot be vetoed by collection/pause (revoke still wins).
- * - Classifier may escalate (`intent === emergency`) but never blocks a regex hit.
- * - Conversation funnel state (`inCollection`, step) must not affect eligibility.
+ * Meta/IG never classifies or directs emergency (no 112/108). The gate still
+ * intercepts so mid-funnel collection cannot continue on an acute phrase.
+ * Reply is the same receptionist line as medical_query. No /book on this turn.
  */
 export const emergencyGate: DmControlGate = {
   name: 'emergency_safety',
   rationale:
-    'DL-2 Safety ratchet: acute regex OR classified emergency outranks pause, booking, and stage logic; funnel state never suppresses eligibility (revoke still wins the head chain).',
+    'Intercept acute regex OR classified emergency so intake cannot continue; Meta reply is receptionist FAQ only — no 112, no appointment link (revoke still wins the head chain).',
   fires(ctx) {
-    // Ratchet: do not read ctx.inCollection — funnel state must not suppress eligibility.
+    // Do not read ctx.inCollection — funnel state must not suppress the intercept.
     return isEmergencyUserMessage(ctx.text) || ctx.intentResult.intent === 'emergency';
   },
   handle(ctx) {
-    const priorEscalation = threadHasPriorEmergencyEscalation(ctx);
     return {
       branch: 'emergency_safety',
-      reply: resolveSafetyMessage('emergency', ctx.turnLanguage, {
-        emergencyVariant: priorEscalation ? 'reaffirm' : 'first',
-      }),
-      nextState: markEmergencyCrisisOpen(ctx.state),
+      reply: resolveSafetyMessage('medical_query', ctx.turnLanguage),
+      nextState: mergeTriage(
+        {
+          ...ctx.state,
+          lastIntent: 'emergency',
+          step: 'responded',
+          updatedAt: new Date().toISOString(),
+        },
+        {
+          reasonFirstTriagePhase: undefined,
+          postMedicalConsultFeeAckSent: undefined,
+          lastMedicalDeflectionAt: undefined,
+        }
+      ),
     };
   },
 };
 
 /**
- * While a crisis window is open, reaffirm by default.
- * Allowlist: positive stability evidence (stages resume booking). Revoke wins earlier in the chain.
+ * Legacy crisis window: still intercept vague follow-ups so stages do not
+ * collect, but reply is receptionist FAQ — never 112.
  */
 export const openCrisisGate: DmControlGate = {
   name: 'emergency_safety',
   rationale:
-    'Open crisis inversion: after escalatedAt, ordinary branches must not speak — reaffirm 112 unless the patient signals stability (booking resume) or revoke.',
+    'If escalatedAt is still set, intercept vague follow-ups with receptionist FAQ (no 112). Stability allowlist falls through to booking.',
   fires(ctx) {
     if (!isOpenEmergencyCrisis(ctx.state)) return false;
     if (userMessageSignalsPostEmergencyStability(ctx.text)) return false;
@@ -187,10 +197,87 @@ export const openCrisisGate: DmControlGate = {
   handle(ctx) {
     return {
       branch: 'emergency_safety',
-      reply: resolveSafetyMessage('emergency', ctx.turnLanguage, {
-        emergencyVariant: 'reaffirm',
-      }),
-      nextState: markEmergencyCrisisOpen(ctx.state, { preserveEscalatedAt: true }),
+      reply: resolveSafetyMessage('medical_query', ctx.turnLanguage),
+      nextState: {
+        ...ctx.state,
+        lastIntent: ctx.intentResult.intent,
+        step: 'responded',
+        updatedAt: new Date().toISOString(),
+      },
+    };
+  },
+};
+
+function isOptedOutOfAutomatedMessaging(ctx: DmGateContext): boolean {
+  const stamp = ctx.automatedMessagingOptedOutAt;
+  return typeof stamp === 'string' && stamp.trim().length > 0;
+}
+
+/**
+ * Messaging opt-out (mca-07). After emergency, before pause.
+ * Stop phrases persist the flag and acknowledge. Mere inbound after stop
+ * does not re-enable automation (empty reply). Explicit START clears it.
+ */
+export const messagingOptOutGate: DmControlGate = {
+  name: 'automated_messaging_opt_out',
+  rationale:
+    'MCA-DL-6 / Dev Policies §5: stop automated Meta messages immediately; acute intercept still wins (receptionist FAQ, not 112); doctor manual reply stays open.',
+  fires(ctx) {
+    if (isStopMessagingText(ctx.text)) return true;
+    if (!isOptedOutOfAutomatedMessaging(ctx)) return false;
+    return true;
+  },
+  async handle(ctx) {
+    const optedOut = isOptedOutOfAutomatedMessaging(ctx);
+    if (optedOut && isStartMessagingText(ctx.text)) {
+      await persistAutomatedMessagingOptIn(ctx.conversationId, ctx.correlationId);
+      return {
+        branch: 'automated_messaging_opt_in',
+        reply: buildAutomatedMessagingStartAckMessage({ language: ctx.turnLanguage }),
+        nextState: {
+          ...ctx.state,
+          lastIntent: ctx.intentResult.intent,
+          step: 'responded',
+          updatedAt: new Date().toISOString(),
+        },
+      };
+    }
+
+    if (isStopMessagingText(ctx.text)) {
+      if (optedOut) {
+        return {
+          branch: 'automated_messaging_opt_out',
+          reply: '',
+          nextState: {
+            ...ctx.state,
+            lastIntent: ctx.intentResult.intent,
+            step: 'responded',
+            updatedAt: new Date().toISOString(),
+          },
+        };
+      }
+      await persistAutomatedMessagingOptOut(ctx.conversationId, ctx.correlationId);
+      return {
+        branch: 'automated_messaging_opt_out',
+        reply: buildAutomatedMessagingStopAckMessage({ language: ctx.turnLanguage }),
+        nextState: {
+          ...ctx.state,
+          lastIntent: ctx.intentResult.intent,
+          step: 'responded',
+          updatedAt: new Date().toISOString(),
+        },
+      };
+    }
+
+    return {
+      branch: 'automated_messaging_opt_out',
+      reply: '',
+      nextState: {
+        ...ctx.state,
+        lastIntent: ctx.intentResult.intent,
+        step: 'responded',
+        updatedAt: new Date().toISOString(),
+      },
     };
   },
 };
@@ -217,13 +304,14 @@ export const receptionistPausedGate: DmControlGate = {
 };
 
 /**
- * DL-2 priority order (SAFETY-01): revoke → acute emergency → open-crisis reaffirm → paused.
- * Open-crisis gate runs before pause so a paused doctor still gets crisis reaffirm.
+ * DL-2 priority order (SAFETY-01): revoke → acute intercept → (open-crisis disabled) → messaging opt-out → paused.
+ * Acute intercept still outranks pause and STOP so we do not collect; reply is receptionist FAQ, not 112.
  */
 export const CONTROL_GATES: DmControlGate[] = [
   revokeConsentGate,
   emergencyGate,
   openCrisisGate,
+  messagingOptOutGate,
   receptionistPausedGate,
 ];
 

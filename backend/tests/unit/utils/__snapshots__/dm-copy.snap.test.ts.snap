@@ -507,17 +507,13 @@ exports[`dm-copy snapshots lang-22 / book-for-other next intro 1`] = `"Got it. I
 exports[`dm-copy snapshots lang-22 / booking link queue 1`] = `
 "Join the queue for your visit here: https://book.example/q
 
-Choose a day, then confirm - you'll get a token number. Wait times are approximate.
-
-Every consult is audio-recorded as part of the medical record. You have the same access as the clinic, self-serve for 90 days. When the clinic replays a recording, that access is logged and you are notified."
+Choose a day, then confirm - you'll get a token number. Wait times are approximate."
 `;
 
 exports[`dm-copy snapshots lang-22 / booking link slot 1`] = `
-"Pick your slot and complete payment here: https://book.example/s
+"Open this link to get an appointment: https://book.example/s
 
-You'll be redirected back to this chat when done.
-
-Every consult is audio-recorded as part of the medical record. You have the same access as the clinic, self-serve for 90 days. When the clinic replays a recording, that access is logged and you are notified."
+You'll be redirected back to this chat when done."
 `;
 
 exports[`dm-copy snapshots lang-22 / consent persist failure 1`] = `"I had trouble saving your details — please reply **Yes** again to retry, or say 'book appointment' to re-share them."`;
@@ -551,6 +547,10 @@ exports[`dm-copy snapshots lang-23 / throttle ack 1`] = `"I see your messages �
 exports[`dm-copy snapshots lang-23 / welcome-back (phi) 1`] = `"Welcome back, **Priya**! Great to hear from you again."`;
 
 exports[`dm-copy snapshots lang-24 / LLM empty fallback 1`] = `"I didn't quite get that. Could you rephrase? Or say 'book appointment', 'check availability', 'cancel appointment', or 'reschedule appointment' if that's what you need."`;
+
+exports[`dm-copy snapshots mca-07 / automated messaging start ack 1`] = `"Automated messages are on again. How can I help?"`;
+
+exports[`dm-copy snapshots mca-07 / automated messaging stop ack 1`] = `"I'll stop sending automated messages here. Your doctor can still reply. Send START if you want them again."`;
 
 exports[`dm-copy snapshots nonTextAck / default 1`] = `"I can't read images or voice notes yet — could you type your message instead? I'll take it from there."`;
 

@@ -26,7 +26,7 @@ export interface ResolveSafetyMessageOptions {
 
 /** English defaults (backward compatible exports). */
 export const MEDICAL_QUERY_RESPONSE_EN =
-  "I'm the scheduling assistant. I can't give medical advice here. Book a teleconsult through this chat, or discuss your concerns with the doctor during your visit.";
+  "I'm the receptionist. I can help with timings, availability, or a booking link.";
 
 export const EMERGENCY_RESPONSE_EN =
   'Please call emergency services (in India: **112** or **108**) or go to the nearest hospital immediately.';
@@ -37,17 +37,17 @@ export const EMERGENCY_REAFFIRM_RESPONSE_EN =
 
 const MEDICAL_QUERY_BY_LOCALE: Record<SafetyMessageLocale, string> = {
   en: MEDICAL_QUERY_RESPONSE_EN,
-  hi: 'मैं अपॉइंटमेंट बुक करने में मदद करने वाला सहायक हूँ। मैं यहाँ चिकित्सा सलाह नहीं दे सकता। कृपया इस चैट से टेलीकंसल्ट बुक करें, या विज़िट के दौरान डॉक्टर से अपनी बात साझा करें।',
-  pa: 'ਮੈਂ ਸਿਰਫ਼ ਅਪਾਇੰਟਮੈਂਟ ਲਈ ਸਹਾਇਕ ਹਾਂ। ਮੈਂ ਇੱਥੇ ਵੈਦਕ ਸਲਾਹ ਨਹੀਂ ਦੇ ਸਕਦਾ। ਕਿਰਪਾ ਕਰਕੇ ਇਸ ਚੈਟ ਰਾਹੀਂ ਟੈਲੀਕੰਸਲਟ ਬੁੱਕ ਕਰੋ, ਜਾਂ ਦੌਰਾਨ ਡਾਕਟਰ ਨਾਲ ਗੱਲ ਕਰੋ।',
+  hi: 'मैं रिसेप्शनिस्ट हूँ। समय, उपलब्धता, या बुकिंग लिंक में मदद कर सकता हूँ।',
+  pa: 'Main receptionist haan. Timings, availability, ya booking link vich madad kar sakda haan.',
 };
 
 /** Roman Hindi - for users typing Hinglish without Devanagari */
 const MEDICAL_QUERY_LATIN_HI =
-  'Main appointment booking assistant hoon. Main yahan medical advice nahi de sakta. Kripaya is chat se teleconsult book karein, ya visit ke dauran doctor se baat karein.';
+  'Main receptionist hoon. Timings, availability, ya booking link mein madad kar sakta hoon.';
 
 /** Roman Punjabi */
 const MEDICAL_QUERY_LATIN_PA =
-  'Main sirf appointment layi assistant haan. Main ithe medical salah nahi de sakda. Kirpa karke is chat rahi teleconsult book karo, jaan visit dauran doctor naal gal karo.';
+  'Main receptionist haan. Timings, availability, ya booking link vich madad kar sakda haan.';
 
 const EMERGENCY_BY_LOCALE: Record<SafetyMessageLocale, string> = {
   en: EMERGENCY_RESPONSE_EN,

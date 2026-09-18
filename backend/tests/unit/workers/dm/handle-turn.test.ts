@@ -1,9 +1,9 @@
 /**
  * rcp-08 / SAFETY-01: executeDmTurn pipeline tests.
  *
- * Emergency is in HEAD_CONTROL_GATES before pause and before resolveStage, so an
- * emergency turn parked at a flow-step gate (or while the doctor is paused) routes
- * to `emergency_safety`. Classified emergency intent escalates mid-collection too.
+ * Acute intercept is in HEAD_CONTROL_GATES before pause and before resolveStage, so
+ * an acute phrase mid-funnel (or while paused) still short-circuits. Reply is the
+ * receptionist FAQ — Meta never sends 112.
  */
 
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
@@ -16,6 +16,7 @@ import { executeDmTurn } from '../../../../src/workers/dm/handle-turn';
 import type { DmTurnContext } from '../../../../src/workers/dm/stage-router';
 import type { Conversation } from '../../../../src/types/database';
 import type { ConversationState } from '../../../../src/types/conversation';
+import { MEDICAL_QUERY_RESPONSE_EN } from '../../../../src/utils/safety-messages';
 
 function minimalTurnCtx(overrides: Partial<DmTurnContext> = {}): DmTurnContext {
   const state: ConversationState = {
@@ -109,6 +110,9 @@ describe('executeDmTurn — emergency head gate (rcp-08)', () => {
     expect(result.branch).toBe('emergency_safety');
     expect(result.nextState.step).toBe('responded');
     expect(result.nextState.lastIntent).toBe('emergency');
+    expect(result.reply).toContain(MEDICAL_QUERY_RESPONSE_EN);
+    expect(result.reply).not.toContain('https://example.com/book');
+    expect(result.reply.toLowerCase()).not.toContain('112');
     expect(ctx.runGenerateResponse).not.toHaveBeenCalled();
   });
 
@@ -143,7 +147,7 @@ describe('executeDmTurn — emergency head gate (rcp-08)', () => {
     expect(ctx.runGenerateResponse).not.toHaveBeenCalled();
   });
 
-  it('open crisis: vague medical_query follow-up reaffirms instead of medical deflection', async () => {
+  it('open crisis: vague follow-up stays intercepted as receptionist FAQ, not 112', async () => {
     const state: ConversationState = {
       step: 'responded',
       collectedFields: [],
@@ -171,8 +175,9 @@ describe('executeDmTurn — emergency head gate (rcp-08)', () => {
     const result = await executeDmTurn(ctx);
 
     expect(result.branch).toBe('emergency_safety');
-    expect(result.reply.toLowerCase()).toContain('112');
-    expect(result.reply.toLowerCase()).not.toContain('scheduling assistant');
+    expect(result.reply).toContain(MEDICAL_QUERY_RESPONSE_EN);
+    expect(result.reply).not.toContain('https://example.com/book');
+    expect(result.reply.toLowerCase()).not.toContain('112');
     expect(ctx.runGenerateResponse).not.toHaveBeenCalled();
   });
 

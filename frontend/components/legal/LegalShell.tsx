@@ -76,6 +76,13 @@ export function LegalShell({ children, activeHref }: LegalShellProps) {
             >
               founder@haloaid.com
             </a>
+            {" · "}
+            <a
+              href="mailto:founder@haloaid.com?subject=Security%20issue"
+              className="text-primary underline-offset-4 hover:underline"
+            >
+              Report a security issue
+            </a>
           </address>
           <p>
             © 2026 Halo Aid.{" "}

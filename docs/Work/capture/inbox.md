@@ -387,3 +387,11 @@ Add new items **below** this line (or at the top of the list—stay consistent).
 - [x] 2026-09-07 — **Front desk: basic history + report uploading.** Promoted → [`plan-desk-visit-prep.md`](../Product%20plans/plan-desk-visit-prep.md).
 - [ ] 2026-09-07 — **Revisit last-medicines handling.**
 - [ ] 2026-09-08 — **Rx edit window, same-day return, last-visit ghosts.** Same-day revise + Phase 2 gated (`rxl-05`…`29`) with residuals. `lvc` Phase 3 gated (`lvc-12`…`15`) with residuals; not Shipped. Capture: [`notes/2026-09-08-rx-edit-return-last-visit.md`](notes/2026-09-08-rx-edit-return-last-visit.md).
+- [ ] 2026-09-15 — **Patient opt-out intent in the IG/FB bot** (Meta Dev Policies §5): promoted to [`meta-channel-align` P2](../Daily-plans/September%202026/15-09-2026/meta-channel-align/p2-patient-opt-out/) — escalate (migration). Do not run on Auto.
+- [x] 2026-09-15 — **Vary the public comment reply** — promoted and shipped in `mca-02` (P1).
+- [x] 2026-09-15 — **Meta incident-notification step** — shipped in `mca-04` (`SECURITY.md` step 6).
+- [x] 2026-09-15 — **Service-provider list** (Platform Terms §5.a, audit F5): written 2026-09-17 — [`meta-terms/2026-09-15/service-providers.md`](../../Reference/engineering/compliance/meta-terms/2026-09-15/service-providers.md). DPA/contact `⟨fill⟩` still founder.
+- [x] 2026-09-17 — **App Review reject: don’t talk policy** (busy doctors / misinfo / “support clinicians”). Notes only for a broken demo. Healthcare no → same app only if they named a fixable tape issue; no second app; else bio `/book`. On M3 in `Business/tracks.md`.
+- [ ] 2026-09-17 — **[/book · parked]** Standing urgency notice on the owned `/book` page (static, not a classifier): what to include / not include for emergency-looking phrases. Not now. Instagram DMs never classify or direct emergency (no 112).
+- [x] 2026-09-18 — **Meta §5 Healthcare exact line** — [`notes/2026-09-18-meta-healthcare-clause.md`](notes/2026-09-18-meta-healthcare-clause.md). Snapshot 2026-09-15.
+- [ ] 2026-09-15 — **Finder-style duplicate `* 2.ts`…`* 8.ts` copies** of Meta handlers and other services. Not imported. Cleanup later so no one edits the wrong copy.

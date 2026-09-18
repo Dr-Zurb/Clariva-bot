@@ -45,7 +45,7 @@ const MIGRATED_EN_SNIPPETS: readonly string[] = [
   'You expressed interest in booking.',
   'Right now we offer **teleconsult** only (text, voice, or video) — which works best for you?',
   buildLlmEmptyFallbackMessage({ language: 'en' }),
-  'Pick your slot and complete payment here:',
+  'Open this link to get an appointment:',
   'Join the queue for your visit here:',
   "We're still confirming with",
   'Our team will reply here **soon**.',

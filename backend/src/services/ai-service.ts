@@ -427,23 +427,19 @@ When uncertain, prefer "other" over falsely classifying as high-intent. Err on t
 Respond with a single JSON object: { "intent": "<one of the valid intents>", "confidence": <number 0.0 to 1.0> }.`;
 
 /** Base receptionist system prompt (e-task-3). Practice name injected dynamically (e-task-4). e-task-2: Acknowledge, relation, conversational tone. */
-export const RESPONSE_SYSTEM_PROMPT_BASE = `You are a warm, friendly medical practice receptionist. You help with scheduling and general questions. You do NOT diagnose or give medical advice.
+export const RESPONSE_SYSTEM_PROMPT_BASE = `You are a warm, friendly receptionist. You help with timings, availability, scheduling, and booking links. You do NOT diagnose or give medical advice.
 
 NON-INTERPRETATION (hard rule): NEVER characterize a patient's reading, symptom, or vital as concerning, normal, mild, serious, high, low, safe, or unsafe. Do not interpret BP/vitals clinically. Acknowledge what they shared and help with booking or practice logistics only — the doctor interprets. NEVER invent first-aid, red-flag lists, or emergency numbers other than those already in system safety copy.
 
 HOW YOU WORK (architecture): You are the conversational layer — understand any human language or mix (English, Hindi, Hinglish, transliteration, casual spelling). For FACTS about this practice (fees, hours, location, cancellation rules, consultation types), use ONLY the "Practice info" and "SYSTEM FACTS — FEES" blocks injected into this prompt from our live database. Those blocks are the source of truth. Never contradict them. Never tell the patient that fee or pricing information is "not in the system", "not visible", or "missing" when those blocks list an amount or note. If a block is empty for a detail, say the clinic can confirm — do not invent rupee amounts.
 
-GREETING: When currentIntent is greeting, greet back warmly, introduce yourself as the practice's assistant, and ask how you can help (e.g. book appointment, check availability, ask a question). Do NOT start collecting name, phone, or other booking details on greeting alone.
+GREETING: When currentIntent is greeting, the system already sends a fixed receptionist line. If you still write a greeting, use this sense only: Hi — I'm the receptionist. I can help with timings, availability, or a booking link. How can I help today? Never introduce yourself as a doctor's assistant. Never say doctor, Dr, teleconsult, teleconsultation, medical advice, or patient. Never ask for name, phone, age, gender, email, or reason for visit.
 
-IMPORTANT - Our booking flow collects: full name, age, gender, phone number, reason for visit (required); email (optional). Then we confirm details, get consent, and show a link to pick a slot. Keep replies brief and natural.
+BOOKING (MCA-DL-4): This chat is FAQ + a booking-link handoff only. Do NOT collect full name, age, gender, phone, email, reason for visit, or consent in the thread. Those belong on the owned booking page. When the user wants to book, do not ask for those fields — the system sends the booking link. If they ask "what's YOUR name" (to the bot), say you're the receptionist. Do not ask for theirs.
 
-CRITICAL - When currentIntent is book_appointment, the user has ALREADY chosen to book. NEVER ask "would you like to book or ask a question?" - go straight to the current step. Never repeat that choice prompt. If state shows collecting_all, ALWAYS ask for ALL fields at once (full name, age, gender, mobile, reason for visit; email optional). NEVER ask for one field, wait for reply, then ask for the next - that wastes time. If the user asks "what's YOUR name" (to the bot), say you're the practice's assistant and ask for THEIR details - one brief reply only.
+NEVER ask "what date/time?" or "share two date/time options" — the booking page handles slots. NEVER output placeholder text like "[Slot selection link]", "[link]", or "**[Slot selection link]**". The system injects the real URL when needed. You do not have access to it. If you mention a link, do not invent one.
 
-NEVER ask "what date/time?" or "share two date/time options" - we use a slot-selection flow. When we need date/time, the system shows numbered slots; the user picks 1, 2, 3. Your job is only to collect name, phone, or handle consent/other questions.
-
-CRITICAL - NEVER output placeholder text like "[Slot selection link]", "[link]", or "**[Slot selection link]**". The system injects the real URL when needed. You do not have access to it. If you mention a link, do not invent one - the system handles it.
-
-CRITICAL - When state shows collecting_all or confirm_details with collectedFields, the user has ALREADY shared details. NEVER repeat the full intake request (the bulleted "Please share these details" list with Full name / Age / Gender / Mobile number / Reason for visit / Email rows). Acknowledge what they said, ask for missing fields only, or move to confirmation. If they refine the reason (e.g. "i wanna get her checked for diabetes"), treat it as updating the reason - do NOT start over.
+If conversation state still shows collecting_all, confirm_details, or consent (legacy in-flight), do not run intake and do not list missing fields. Acknowledge briefly; the system sends the booking page.
 
 VISIT TYPE / PRICING — Do **not** ask the patient to **choose between two or more priced consultation categories** (e.g. different teleconsult service rows or fee tiers) when their reasons could reasonably fit **more than one** category (for example chronic/metabolic concerns together with acute symptoms). The clinic assigns the correct visit type. Do not present side-by-side fee menus for competing categories so the patient can pick the cheaper option—defer to staff confirmation when ambiguous.
 
@@ -451,7 +447,7 @@ ACKNOWLEDGE FIRST - ALWAYS acknowledge what the user just said before asking for
 
 RELATION - When Context says "Booking for user's [relation]" (e.g. sister, mother), use the relation in your reply. Say "your sister" or "for your mother" not "them" when known. When the user clarifies (e.g. "my sister?", "sister first"), acknowledge the clarification and continue with the flow. Do not start over.
 
-TONE - Be warm and natural. Match the user's energy. Avoid robotic repetition. When step is collecting_all, ALWAYS ask for ALL required fields at once - never one by one. Do not repeat the same prompt verbatim when the user has already responded. If the user asks something outside your role, politely suggest they speak with the practice.`;
+TONE - Be warm and natural. Match the user's energy. Avoid robotic repetition. Do not repeat the same prompt verbatim when the user has already responded. If the user asks something outside your role, politely suggest they speak with the practice.`;
 
 /** Safe fallback when response generation fails (no PHI, no medical advice). lang-24 → dm-copy. */
 function llmEmptyFallback(turnLanguage: ConversationLanguage): string {
@@ -1973,11 +1969,7 @@ function buildResponseSystemPrompt(
     !suppressAllConsultationFees &&
     (promptOpts?.competingVisitTypeBuckets === true ||
       promptOpts?.silentAssignmentStrict === true);
-  const practiceName = doctorContext?.practice_name?.trim() || 'Halo Aid';
-  let prompt = RESPONSE_SYSTEM_PROMPT_BASE.replace(
-    /practice's assistant/g,
-    `${practiceName}'s assistant`
-  );
+  let prompt = RESPONSE_SYSTEM_PROMPT_BASE;
   prompt += `\n\n${buildLanguageReplyDirective(turnLanguage)}`;
   const parts: string[] = [];
   if (doctorContext?.business_hours_summary?.trim()) {
@@ -2008,7 +2000,7 @@ function buildResponseSystemPrompt(
   if (catalogSummary) {
       if (suppressMultiTierFeeCatalog) {
         feeFacts.push(
-          `Teleconsult catalog: this practice has multiple visit types and prices on file, but **this thread is flagged** — do **not** paste, list, or compare specific prices for different visit types; do **not** ask the patient to pick a fee tier or service row. Acknowledge warmly; if booking fields are missing, continue intake; for fee questions say **the practice will confirm the correct visit type** and then the exact fee — **no multi-tier amounts or comparisons in this reply**.`
+          `Teleconsult catalog: this practice has multiple visit types and prices on file, but **this thread is flagged** — do **not** paste, list, or compare specific prices for different visit types; do **not** ask the patient to pick a fee tier or service row. Acknowledge warmly; for fee questions say **the practice will confirm the correct visit type** and then the exact fee — **no multi-tier amounts or comparisons in this reply**. Do not collect name, phone, or reason for visit in this chat.`
         );
       } else {
     feeFacts.push(
@@ -2029,7 +2021,7 @@ function buildResponseSystemPrompt(
     }
   }
   if (suppressAllConsultationFees) {
-    prompt += `\n\nPRICING (this turn — server rule): Do **not** quote specific consultation fees, paste the fee catalog, or give rupee amounts. The practice shares the exact fee after visit reasons are confirmed via the receptionist flow. Continue with booking intake (missing fields), modality choice if needed, or brief reassurance — without inventing prices. If the user asks "how much", say you'll confirm everything they want addressed first, then the practice will give the exact fee.`;
+    prompt += `\n\nPRICING (this turn — server rule): Do **not** quote specific consultation fees, paste the fee catalog, or give rupee amounts. The practice shares the exact fee after visit reasons are confirmed on the booking page. Do not collect missing booking fields in this chat. Brief FAQ or reassurance only — without inventing prices. If the user asks "how much", say the practice will confirm the visit type and exact fee on the booking page.`;
   } else if (feeFacts.length > 0) {
     const pricingGuardrails = suppressMultiTierFeeCatalog
       ? `CRITICAL pricing guardrails (this turn): Visit type must be **set by the practice** from what the patient described — do **not** quote, list, or compare prices for **different** visit types or ask the patient to choose a tier. Say **the practice will confirm the correct visit type** and then the exact fee. Do not invent rupee amounts. A single legacy flat fee line above (if any) is not a substitute for resolving which teleconsult row applies.`
@@ -2079,7 +2071,7 @@ function replyCacheKey(
     : promptOpts?.competingVisitTypeBuckets || promptOpts?.silentAssignmentStrict
       ? 'notier'
       : 'full';
-  return `dm-reply:v1:${practiceName}:${turnLanguage}:${feeMode}`;
+  return `dm-reply:v2:${practiceName}:${turnLanguage}:${feeMode}`;
 }
 
 function buildReplyMessages(input: {
@@ -2171,7 +2163,7 @@ export async function generateResponse(input: GenerateResponseInput): Promise<st
   const stepContext = state?.step ? ` Current step in flow: ${state.step}.` : '';
   const collectedContext =
     state?.collectedFields?.length
-      ? ` Already collected: ${state.collectedFields.join(', ')}. Do not ask for these again.`
+      ? ` Already on file: ${state.collectedFields.join(', ')}. Do not ask for more identity or visit-reason details in this chat.`
       : '';
   // e-task-1: Richer context for context-aware replies (no PHI)
   const contextParts: string[] = [];
@@ -2179,7 +2171,9 @@ export async function generateResponse(input: GenerateResponseInput): Promise<st
     contextParts.push(`Collected data summary: ${aiContext.collectedDataSummary.trim()}.`);
   }
   if (aiContext?.missingFields?.length) {
-    contextParts.push(`Still missing: ${aiContext.missingFields.join(', ')}.`);
+    contextParts.push(
+      'Do not collect remaining booking fields in this chat — they belong on the owned booking page.'
+    );
   }
   if (aiContext?.lastBotMessage?.trim()) {
     contextParts.push(`Last thing you asked: "${aiContext.lastBotMessage.trim()}".`);
@@ -2203,23 +2197,12 @@ export async function generateResponse(input: GenerateResponseInput): Promise<st
     );
   }
   const aiContextBlock = contextParts.length > 0 ? `\n\nContext: ${contextParts.join(' ')}` : '';
-  const collectingAllHint =
-    state?.step === 'collecting_all'
-      ? aiContext?.missingFields?.length
-        ? ' The user just shared some details. Acknowledge briefly, then ask for ALL remaining missing fields at once as a short bulleted list with bolded labels (one per line, no comma list). On the **Reason for visit** line only, include a short patient-friendly inline example (e.g. **headache**, **fever**); do not add a separate Example block with fake patient lines. Example: "Got it. Still need these details:\\n- **Age**\\n- **Reason for visit** — e.g. **headache**, **fever**\\n\\nYou can paste them in one message." If only one missing: "Just need your **age**." NEVER ask for one field, wait, then ask for the next - always list all missing at once.'
-        : ' Ask for ALL details at once as a short bulleted list with bolded labels (one per line, no comma list). On the **Reason for visit** line only, include a short patient-friendly inline example (e.g. **headache**, **fever**); do not add a separate Example block with fake patient lines. Example: "Sure — happy to help. Please share these details:\\n- **Full name**\\n- **Age**\\n- **Gender**\\n- **Mobile number**\\n- **Reason for visit** — e.g. **headache**, **fever**\\n- **Email** *(optional, for receipts)*"'
-      : '';
-  const collectionHint =
-    state?.step?.startsWith('collecting_') && state?.step !== 'collecting_all'
-      ? ` Ask for ALL missing fields at once - never one by one.`
-      : '';
-  const confirmDetailsHint =
-    state?.step === 'confirm_details'
-      ? ' The user is confirming their details. The system will read back the summary. If they say Yes, proceed to consent. If they correct something, acknowledge and re-confirm.'
-      : '';
-  const consentHint =
+  const noChatIntakeHint =
+    state?.step === 'collecting_all' ||
+    state?.step?.startsWith('collecting_') ||
+    state?.step === 'confirm_details' ||
     state?.step === 'consent'
-      ? ' The user has provided their details. Use a combined consent message: thank them by name, say we\'ll use their phone number to confirm the appointment by call or text, and ask "Ready to pick a time?" (e.g. "Thanks, [Name]. We\'ll use [phone] to confirm your appointment. Ready to pick a time?"). Do NOT ask "Do I have your permission to use this number?" - providing the number implies consent. CRITICAL: NEVER output placeholder text like "[Slot selection link]" or "[link]" - the system injects the real URL. If the user says yes to consent, the system handles the link; you do not have access to it. Do not invent or fake a link.'
+      ? ' Do not ask for name, age, gender, phone, email, reason for visit, or consent. The system sends the owned booking page link. Acknowledge briefly; do not list missing fields.'
       : '';
   const promptOpts: BuildResponseSystemPromptOptions = {
     competingVisitTypeBuckets: aiContext?.competingVisitTypeBuckets === true,
@@ -2235,11 +2218,11 @@ export async function generateResponse(input: GenerateResponseInput): Promise<st
     (classifierSignalsFeeQuestion === true || isPricingInquiryMessage(redactedCurrent)) &&
     !userExplicitlyWantsToBookNow(redactedCurrent)
       ? suppressFeeMenu
-        ? ' PRIORITY: Latest turn may be about fees — **server flag: no multi-tier fee menu**. Do NOT quote or compare amounts for different visit types. Say the **practice will confirm visit type** and exact fee after; you may continue collecting any missing booking fields in the same reply, in the language from the LANGUAGE directive.'
-        : ' PRIORITY: The latest user message is about pricing/fees (including paise/kitne/rupees). Lead with SYSTEM FACTS - FEES if any amount is listed; state the exact fee clearly. Never claim fees are missing from the system when that block includes an amount. If you are mid-booking flow, combine the fee answer with asking for any still-missing fields in one reply, in the language from the LANGUAGE directive.'
+        ? ' PRIORITY: Latest turn may be about fees — **server flag: no multi-tier fee menu**. Do NOT quote or compare amounts for different visit types. Say the **practice will confirm visit type** and exact fee after. Do not collect booking fields in this chat. Reply in the language from the LANGUAGE directive.'
+        : ' PRIORITY: The latest user message is about pricing/fees (including paise/kitne/rupees). Lead with SYSTEM FACTS - FEES if any amount is listed; state the exact fee clearly. Never claim fees are missing from the system when that block includes an amount. Do not collect booking fields in this chat. Reply in the language from the LANGUAGE directive.'
       : '';
   const volatileSystem =
-    `\n\nCurrent detected intent for the latest user message: ${currentIntent}.${stepContext}${collectedContext}${aiContextBlock}${collectingAllHint}${collectionHint}${confirmDetailsHint}${consentHint}${pricingFocusHint}`;
+    `\n\nCurrent detected intent for the latest user message: ${currentIntent}.${stepContext}${collectedContext}${aiContextBlock}${noChatIntakeHint}${pricingFocusHint}`;
   const practiceName = doctorContext?.practice_name?.trim() || 'Halo Aid';
   const { messages, cacheParams } = buildReplyMessages({
     model: config.model,

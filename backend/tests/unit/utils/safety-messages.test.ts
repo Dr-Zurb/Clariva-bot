@@ -22,15 +22,15 @@ import {
 
 describe('safety-messages (RBH-15)', () => {
   describe('resolveSafetyMessage', () => {
-    it('returns Gurmukhi medical copy for pa language', () => {
+    it('returns receptionist copy for pa language', () => {
       const msg = resolveSafetyMessage('medical_query', 'pa');
-      expect(msg).toContain('ਸਹਾਇਕ');
+      expect(msg.toLowerCase()).toContain('receptionist');
       expect(msg).not.toContain('scheduling assistant');
     });
 
     it('returns Roman Punjabi medical for pa-Latn', () => {
       const msg = resolveSafetyMessage('medical_query', 'pa-Latn');
-      expect(msg.toLowerCase()).toContain('appointment');
+      expect(msg.toLowerCase()).toContain('receptionist');
       expect(msg.toLowerCase()).toContain('main');
     });
 
@@ -54,13 +54,14 @@ describe('safety-messages (RBH-15)', () => {
     it('returns Roman Hindi medical_query for hi-Latn (not English)', () => {
       const msg = resolveSafetyMessage('medical_query', 'hi-Latn');
       expect(msg.toLowerCase()).toContain('main');
-      expect(msg.toLowerCase()).toMatch(/appointment|doctor|book|teleconsult|visit/);
+      expect(msg.toLowerCase()).toMatch(/receptionist|booking|hours|availability/);
       expect(msg).not.toContain("I'm the scheduling assistant");
     });
 
     it('returns English medical_query for en', () => {
       const msg = resolveSafetyMessage('medical_query', 'en');
       expect(msg).toBe(MEDICAL_QUERY_RESPONSE_EN);
+      expect(msg).not.toMatch(/medical advice|teleconsult|doctor|scheduling assistant/i);
     });
 
     it('returns English medical_query for other (LANG-D7)', () => {

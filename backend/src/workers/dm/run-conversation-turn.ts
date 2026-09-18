@@ -45,7 +45,6 @@ import {
 import { createMessage, getRecentMessages } from '../../services/message-service';
 import {
   logDmEmergencyIntentDowngraded,
-  logDmEmergencyNumberFloorApplied,
   logDmLanguageDecision,
 } from '../../services/webhook-metrics';
 import {
@@ -96,19 +95,9 @@ import {
   resolveTurnLanguage,
   type ConversationLanguage,
 } from '../../utils/conversation-language';
-import {
-  buildFallbackReplyMessage,
-  FALLBACK_REPLY_EN,
-} from '../../utils/dm-copy';
-import {
-  applyEmergencyNumberFloor,
-  isEmergencyUserMessage,
-} from '../../utils/safety-messages';
-import {
-  DEFAULT_RECEPTIONIST_PAUSE_MESSAGE,
-  markEmergencyCrisisOpen,
-  type DmGateContext,
-} from './control-gates';
+import { buildFallbackReplyMessage, FALLBACK_REPLY_EN } from '../../utils/dm-copy';
+import { isEmergencyUserMessage } from '../../utils/safety-messages';
+import { DEFAULT_RECEPTIONIST_PAUSE_MESSAGE, type DmGateContext } from './control-gates';
 import { executeDmTurn } from './handle-turn';
 import type { DmTurnContext, DmTurnResult } from './stage-router';
 
@@ -218,7 +207,11 @@ async function buildAiContextForResponse(
   const collectedFields = state.collectedFields ?? [];
   const allFields = ['name', 'phone', 'age', 'gender', 'reason_for_visit', 'email'] as const;
   const summaryParts = allFields.map((f) => {
-    const has = collectedFields.includes(f) || (collected && (collected as Record<string, unknown>)[f] != null && (collected as Record<string, unknown>)[f] !== '');
+    const has =
+      collectedFields.includes(f) ||
+      (collected &&
+        (collected as Record<string, unknown>)[f] != null &&
+        (collected as Record<string, unknown>)[f] !== '');
     return `${f}: [${has ? 'provided' : 'missing'}]`;
   });
   ctx.collectedDataSummary = summaryParts.join(', ');
@@ -245,7 +238,9 @@ async function buildAiContextForResponse(
   return ctx;
 }
 
-function getDoctorContextFromSettings(settings: DoctorSettingsRow | null): DoctorContext | undefined {
+function getDoctorContextFromSettings(
+  settings: DoctorSettingsRow | null
+): DoctorContext | undefined {
   if (!settings) return undefined;
   const catalogAi = formatServiceCatalogForAiContext({
     service_offerings_json: settings.service_offerings_json,
@@ -361,11 +356,7 @@ export async function runConversationTurn(
             ? await getInstagramAccessTokenForDoctor(doctorId, correlationId)
             : await getFacebookPageAccessTokenForDoctor(doctorId, correlationId);
         if (!token) return;
-        const profile = await fetchMessengerUserProfile(
-          senderId,
-          token,
-          correlationId
-        );
+        const profile = await fetchMessengerUserProfile(senderId, token, correlationId);
         if (needsUsername && profile.username) {
           await setPatientPlatformUsernameIfEmpty(
             patientIdForUsername,
@@ -374,11 +365,7 @@ export async function runConversationTurn(
           );
         }
         if (profile.profilePic) {
-          await setCachedPlatformAvatar(
-            channelForUsername,
-            senderId,
-            profile.profilePic
-          );
+          await setCachedPlatformAvatar(channelForUsername, senderId, profile.profilePic);
         }
       } catch (err) {
         logger.debug(
@@ -474,12 +461,9 @@ export async function runConversationTurn(
     .map((m) => m.content ?? '')
     .slice(-LANGUAGE_ACCUMULATION_WINDOW);
   const storedLanguage = conversation.language ?? null;
-  const markerResolution = resolveTurnLanguage(
-    storedLanguage,
-    text,
-    priorPatientTexts,
-    { acuteEmergency: isEmergencyUserMessage(text) }
-  );
+  const markerResolution = resolveTurnLanguage(storedLanguage, text, priorPatientTexts, {
+    acuteEmergency: isEmergencyUserMessage(text),
+  });
   const classifierLanguage = coerceClassifierLanguage(intentResult.language);
   const languageResolution = applyClassifierLanguageRatchet(
     markerResolution,
@@ -491,14 +475,10 @@ export async function runConversationTurn(
     }
   );
   const turnLanguage = languageResolution.language;
-  const languagePersist = languageResolution.changed
-    ? { language: turnLanguage }
-    : undefined;
+  const languagePersist = languageResolution.changed ? { language: turnLanguage } : undefined;
   const markerCounts = countLatinLanguageMarkers(text);
   const classifierAgreed =
-    classifierLanguage === 'unknown'
-      ? null
-      : classifierLanguage === turnLanguage;
+    classifierLanguage === 'unknown' ? null : classifierLanguage === turnLanguage;
   logDmLanguageDecision({
     correlationId,
     storedBefore: storedLanguage,
@@ -509,8 +489,7 @@ export async function runConversationTurn(
     paMarkerCount: markerCounts.paMarkerCount,
     paExclusiveCount: markerCounts.paExclusiveCount,
     accumulationWindowSize: priorPatientTexts.length,
-    classifierLanguage:
-      classifierLanguage === 'unknown' ? null : classifierLanguage,
+    classifierLanguage: classifierLanguage === 'unknown' ? null : classifierLanguage,
     classifierAgreed,
   });
   // In-memory only: gates/stages always see a concrete language (never null).
@@ -603,8 +582,7 @@ export async function runConversationTurn(
     state.lastPromptKind === 'match_pick' ||
     state.lastPromptKind === 'staff_service_pending' ||
     state.lastPromptKind === 'complaint_clarification';
-  const justStartingCollection =
-    isBookIntent && !state.step && !(state.collectedFields?.length);
+  const justStartingCollection = isBookIntent && !state.step && !state.collectedFields?.length;
   const classifierSignalsFeePricing = intentSignalsFeeOrPricing(intentResult, text);
   const classifierFeeThreadCont = classifierSignalsFeeThreadContinuation(
     intentResult,
@@ -627,10 +605,11 @@ export async function runConversationTurn(
       const reply = await generateResponse({
         ...input,
         turnLanguage,
-        classifierSignalsFeeQuestion:
-          input.classifierSignalsFeeQuestion ?? signalsFeePricing,
+        classifierSignalsFeeQuestion: input.classifierSignalsFeeQuestion ?? signalsFeePricing,
       });
-      return conflictRecovery ? reply || buildFallbackReplyMessage({ language: turnLanguage }) : reply;
+      return conflictRecovery
+        ? reply || buildFallbackReplyMessage({ language: turnLanguage })
+        : reply;
     } finally {
       timing.dmGenerateMs += Date.now() - t;
     }
@@ -646,8 +625,7 @@ export async function runConversationTurn(
       return await generateResponseWithActions({
         ...input,
         turnLanguage,
-        classifierSignalsFeeQuestion:
-          input.classifierSignalsFeeQuestion ?? signalsFeePricing,
+        classifierSignalsFeeQuestion: input.classifierSignalsFeeQuestion ?? signalsFeePricing,
       });
     } finally {
       timing.dmGenerateMs += Date.now() - t;
@@ -665,6 +643,7 @@ export async function runConversationTurn(
     conversationId: conversation.id,
     patientId: conversation.patient_id ?? null,
     correlationId,
+    automatedMessagingOptedOutAt: conversation.automated_messaging_opted_out_at ?? null,
   };
 
   const turnCtx: DmTurnContext = {
@@ -714,7 +693,10 @@ export async function runConversationTurn(
     fallbackReply: buildFallbackReplyMessage({ language: turnLanguage }),
   };
 
-  const stageResult = await executeDmTurn(turnCtx, conflictRecovery ? { conflictRecovery: true } : undefined);
+  const stageResult = await executeDmTurn(
+    turnCtx,
+    conflictRecovery ? { conflictRecovery: true } : undefined
+  );
   if (!conflictRecovery && stageResult.branch === 'receptionist_paused') {
     logger.info(
       { correlationId, eventId, doctorId, conversationId: conversation.id },
@@ -725,30 +707,20 @@ export async function runConversationTurn(
   const dmRoutingBranch: DmHandlerBranch = conflictRecovery
     ? 'conflict_recovery_ai'
     : stageResult.branch;
-  let replyText = stageResult.reply;
+  const replyText = stageResult.reply;
   state = stageResult.nextState;
 
-  // Output floor: LLM may improvise emergency guidance without 112/108 when the gate
-  // never fired. Append localized escalation + open crisis window so follow-ups reaffirm.
-  const emergencyFloor = applyEmergencyNumberFloor(replyText, turnLanguage);
-  if (emergencyFloor.applied) {
-    replyText = emergencyFloor.reply;
-    state = markEmergencyCrisisOpen(state);
-    logDmEmergencyNumberFloorApplied({
-      correlationId,
-      branch: dmRoutingBranch,
-    });
+  if (replyText.trim()) {
+    await createMessage(
+      {
+        conversation_id: conversation.id,
+        platform_message_id: `sys-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+        sender_type: 'system',
+        content: replyText,
+      },
+      correlationId
+    );
   }
-
-  await createMessage(
-    {
-      conversation_id: conversation.id,
-      platform_message_id: `sys-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
-      sender_type: 'system',
-      content: replyText,
-    },
-    correlationId
-  );
 
   let stateStepAfter = state.step ?? null;
 
@@ -840,12 +812,7 @@ export async function runConversationTurn(
     }
 
     stateStepAfter = stateToPersist.step ?? null;
-    await updateConversationState(
-      conversation.id,
-      stateToPersist,
-      correlationId,
-      languagePersist
-    );
+    await updateConversationState(conversation.id, stateToPersist, correlationId, languagePersist);
   }
 
   logInstagramDmRouting({

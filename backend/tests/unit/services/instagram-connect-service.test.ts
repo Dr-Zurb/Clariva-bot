@@ -310,7 +310,7 @@ describe('Instagram Login OAuth (ilr-18)', () => {
     expect(url).toContain('client_id=ig-app-id-test');
     expect(url).toContain('instagram_business_basic');
     expect(url).toContain('instagram_business_manage_messages');
-    expect(url).toContain('instagram_business_manage_comments');
+    expect(url).not.toContain('instagram_business_manage_comments');
     expect(url).not.toContain('pages_show_list');
     expect(url).not.toContain('facebook.com');
     expect(url).toContain('state=signed-state');

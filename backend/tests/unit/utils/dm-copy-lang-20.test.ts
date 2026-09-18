@@ -136,7 +136,7 @@ describe('lang-20 cancel/reschedule/status copy', () => {
 
   it('empty cancel/reschedule uses resolveNoUpcomingAppointmentsMessage (dedup)', () => {
     expect(resolveNoUpcomingAppointmentsMessage('en')).toBe(
-      "You don't have any upcoming appointments. Say 'book appointment' to schedule one."
+      "You don't have any upcoming appointments."
     );
   });
 

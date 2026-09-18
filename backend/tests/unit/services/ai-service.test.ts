@@ -802,7 +802,7 @@ describe('AI Service', () => {
         prompt_cache_options?: { mode: string; ttl: string };
         messages: { content: unknown }[];
       };
-      expect(lunaArg.prompt_cache_key).toBe('dm-reply:v1:Test Clinic:en:full');
+      expect(lunaArg.prompt_cache_key).toBe('dm-reply:v2:Test Clinic:en:full');
       expect(lunaArg.prompt_cache_options).toEqual({ mode: 'explicit', ttl: '30m' });
       const lunaParts = lunaArg.messages[0].content as Array<{
         prompt_cache_breakpoint?: { mode: string };

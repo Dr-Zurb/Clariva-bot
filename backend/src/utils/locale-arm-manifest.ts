@@ -413,7 +413,7 @@ export const LOCALE_ARM_MANIFEST: readonly LocaleArmManifestEntry[] = [
   },
   {
     familyId: 'comment-public-reply',
-    builder: 'DM_COPY_ENGLISH_ONLY_EXCEPTIONS.COMMENT_PUBLIC_REPLY',
+    builder: 'buildCommentPublicReplyText',
     status: 'enByPolicy',
     enByPolicyReason: 'Public comment reply visible to everyone, not a DM',
   },

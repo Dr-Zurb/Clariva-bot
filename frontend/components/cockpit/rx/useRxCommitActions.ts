@@ -345,6 +345,10 @@ export interface UseRxCommitActionsArgs {
   cockpitState: CockpitState;
   /** Fired after send when finishing. Print does not wait for it. */
   onFinish?: () => void | Promise<void>;
+  /** Arm next-patient jump after first-time send + finish + print. */
+  onArmAdvance?: () => void;
+  /** Drop a leftover automove when the doctor edits an ended visit. */
+  onParkAdvanceForEdit?: () => void;
   onSent?: (prescriptionId: string) => void | Promise<void>;
   onSuccess?: () => void;
   /** When false, skip context registration (standalone tests). */
@@ -395,6 +399,8 @@ export function useRxCommitActions({
   token,
   cockpitState,
   onFinish,
+  onArmAdvance,
+  onParkAdvanceForEdit,
   onSent,
   onSuccess,
   registerActions = true,
@@ -506,6 +512,20 @@ export function useRxCommitActions({
   const canFinish =
     cockpitState !== "terminal" &&
     ((Boolean(onFinish) && cockpitState !== "ended") || issuedPendingReissue);
+
+  const endedDirtyPrevRef = useRef({
+    ended: cockpitState === "ended",
+    dirty: isDirty,
+  });
+  useEffect(() => {
+    const prev = endedDirtyPrevRef.current;
+    const ended = cockpitState === "ended";
+    const becameDirty = isDirty && !prev.dirty;
+    if (becameDirty && prev.ended && ended) {
+      onParkAdvanceForEdit?.();
+    }
+    endedDirtyPrevRef.current = { ended, dirty: isDirty };
+  }, [cockpitState, isDirty, onParkAdvanceForEdit]);
 
   const buildPreviewViewModel = useCallback((): PatientRxViewModel => {
     const meta = doctorMetaRef.current;
@@ -1036,13 +1056,11 @@ export function useRxCommitActions({
         setCommitError("Prescription was not saved. Please try again.");
         return;
       }
-      // Print parks navigation until the dialog closes. Finish-only clears
-      // a stale park so wrap-up can automove.
+      // Print parks navigation until the dialog closes. Finish without
+      // print must not automove — same rule for a new visit and a revise.
       if (shouldPrint) {
         beginPrintAdvanceHold();
         setAdvanceCancelled(true);
-      } else if (shouldFinish) {
-        setAdvanceCancelled(false);
       }
 
       // Always render from the just-saved draft. A preview-warmed PDF can
@@ -1102,7 +1120,7 @@ export function useRxCommitActions({
               ? printErr.message
               : "Could not open the print dialog"
           );
-          if (shouldFinish) {
+          if (shouldFinish && cockpitState !== "ended") {
             setPreviewOpen(false);
             void Promise.resolve(onFinish?.())
               .catch(() => {
@@ -1117,11 +1135,20 @@ export function useRxCommitActions({
       }
 
       if (shouldFinish) {
+        if (cockpitState === "ended") {
+          // Revision / reopen — stay on this token. Queue jump is
+          // only for a first-time live OPD wrap-up.
+          onParkAdvanceForEdit?.();
+          if (shouldPrint) setPreviewOpen(false);
+          return;
+        }
         setPreviewOpen(false);
-        if (!shouldPrint) setAdvanceCancelled(false);
         void Promise.resolve(onFinish?.()).catch(() => {
           // handleFinishVisit already surfaces wrap-up errors.
         });
+        if (shouldPrint) {
+          onArmAdvance?.();
+        }
       }
     } catch (err) {
       setCommitError(
@@ -1140,6 +1167,9 @@ export function useRxCommitActions({
     onSuccess,
     onSent,
     onFinish,
+    onArmAdvance,
+    onParkAdvanceForEdit,
+    cockpitState,
   ]);
 
   const handleSaveAndSend = useCallback(async () => {
@@ -1208,7 +1238,7 @@ export function useRxCommitActions({
   const finishVisit = useCallback(() => {
     if (requestRevisionIfNeeded("finish")) return;
     setPreviewOpen(false);
-    setAdvanceCancelled(false);
+    setAdvanceCancelled(true);
     if (cockpitState !== "ended") onFinish?.();
   }, [cockpitState, onFinish, requestRevisionIfNeeded, setAdvanceCancelled]);
 
@@ -1304,7 +1334,7 @@ export function useRxCommitActions({
             await printPrescription();
           } else {
             setPreviewOpen(false);
-            setAdvanceCancelled(false);
+            setAdvanceCancelled(true);
             if (cockpitState !== "ended") onFinish?.();
           }
           if (!printAfterSendRef.current) {

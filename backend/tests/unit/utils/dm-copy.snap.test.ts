@@ -39,6 +39,8 @@ import {
   buildLlmEmptyFallbackMessage,
   buildPatientMatchConfirmMessage,
   buildPostBookingAckMessage,
+  buildAutomatedMessagingStartAckMessage,
+  buildAutomatedMessagingStopAckMessage,
   buildReceptionistPauseDefaultMessage,
   buildRescheduleChoiceListMessage,
   buildReturningFollowUpConfirmMessage,
@@ -734,6 +736,14 @@ const cases: readonly SnapCase[] = [
   {
     name: 'lang-21 / receptionist pause default',
     render: () => buildReceptionistPauseDefaultMessage({ language: 'en' }),
+  },
+  {
+    name: 'mca-07 / automated messaging stop ack',
+    render: () => buildAutomatedMessagingStopAckMessage({ language: 'en' }),
+  },
+  {
+    name: 'mca-07 / automated messaging start ack',
+    render: () => buildAutomatedMessagingStartAckMessage({ language: 'en' }),
   },
   {
     name: 'lang-21 / locale hi / consent denied (Roman hi arm)',

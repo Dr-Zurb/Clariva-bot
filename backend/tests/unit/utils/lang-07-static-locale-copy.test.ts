@@ -13,8 +13,7 @@ const mockedOpenai = openai as jest.Mocked<typeof openai>;
 
 const CONSENT_EN =
   "I didn't catch that — please reply **Yes** to consent and continue, or **No** to cancel.";
-const STATUS_EN =
-  "You don't have any upcoming appointments. Say 'book appointment' to schedule one.";
+const STATUS_EN = "You don't have any upcoming appointments.";
 
 describe('lang-07 static locale copy (no network)', () => {
   const languages: ConversationLanguage[] = [
@@ -54,13 +53,14 @@ describe('lang-07 static locale copy (no network)', () => {
     expect(mockedOpenai.getOpenAIClient).not.toHaveBeenCalled();
   });
 
-  it('locale invariants survive translation (Yes/No tokens, book appointment)', () => {
+  it('locale invariants survive translation (Yes/No tokens, empty-status lead)', () => {
     for (const language of languages) {
       const consent = resolveConsentUnclearMessage(language);
       expect(consent).toContain('**Yes**');
       expect(consent).toContain('**No**');
-      expect(resolveNoUpcomingAppointmentsMessage(language)).toContain(
-        'book appointment'
+      expect(resolveNoUpcomingAppointmentsMessage(language).length).toBeGreaterThan(0);
+      expect(resolveNoUpcomingAppointmentsMessage(language).toLowerCase()).not.toContain(
+        "say 'book appointment'"
       );
     }
   });
@@ -68,6 +68,8 @@ describe('lang-07 static locale copy (no network)', () => {
   it('preserves markdown bold markers (placeholder-style tokens)', () => {
     expect(resolveConsentUnclearMessage('en')).toContain('**Yes**');
     expect(resolveConsentUnclearMessage('en')).toContain('**No**');
-    expect(resolveNoUpcomingAppointmentsMessage('hi-Latn')).toContain('book appointment');
+    expect(resolveNoUpcomingAppointmentsMessage('hi-Latn')).toBe(
+      'Aapke koi upcoming appointments nahi hain.'
+    );
   });
 });

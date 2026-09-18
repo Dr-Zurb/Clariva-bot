@@ -50,6 +50,8 @@ import type { Conversation } from '../../../../../src/types/database';
 import { formatStaffServiceReviewStillPendingDm } from '../../../../../src/utils/staff-service-review-dm';
 import { deterministicServiceIdForLegacyOffering } from '../../../../../src/utils/service-catalog-schema';
 import { matchServiceCatalogOffering } from '../../../../../src/services/service-catalog-matcher';
+import { createPatientForBooking } from '../../../../../src/services/patient-service';
+import { getCollectedData } from '../../../../../src/services/collection-service';
 
 const catalogFixture = {
   version: 1 as const,
@@ -151,6 +153,26 @@ describe('serviceMatchStage', () => {
     expect(result.branch).toBe('patient_match_confirmation');
     expect(result.nextState.step).toBe('awaiting_slot_selection');
     expect(result.nextState.bookingForOther?.bookingForPatientId).toBe('p-1');
+  });
+
+  it('mca-16: awaiting_match_confirmation + no hands /book; does not collect details', async () => {
+    const ctx = minimalTurnCtx({
+      state: readConversationState({
+        step: 'awaiting_match_confirmation',
+        pendingMatchPatientIds: ['p-1'],
+        collectedFields: [],
+        updatedAt: new Date().toISOString(),
+      }),
+      text: 'no',
+    });
+
+    const result = await serviceMatchStage.handle(ctx);
+    expect(result.branch).toBe('patient_match_confirmation');
+    expect(result.nextState.step).toBe('awaiting_slot_selection');
+    expect(result.reply).toContain('https://example.com/book');
+    expect(result.nextState.bookingForOther?.pendingMatchPatientIds).toBeUndefined();
+    expect(createPatientForBooking).not.toHaveBeenCalled();
+    expect(getCollectedData).not.toHaveBeenCalled();
   });
 
   it('resolveStage routes step-gated turns here; bare yes without pending matches stays legacy', () => {

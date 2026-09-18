@@ -7,14 +7,12 @@ import type { StaticMessageLocale } from './conversation-language';
  * (capture inbox: bot-language-policy · status-empty hi/pa).
  */
 const NO_UPCOMING_APPOINTMENTS_BY_LOCALE: Record<StaticMessageLocale, string> = {
-  en: "You don't have any upcoming appointments. Say 'book appointment' to schedule one.",
-  hi: "Aapke koi upcoming appointments nahi hain. Schedule karne ke liye 'book appointment' likhein.",
-  pa: "Tuhade koi upcoming appointments nahi ne. Schedule karn layi 'book appointment' likho.",
+  en: "You don't have any upcoming appointments.",
+  hi: 'Aapke koi upcoming appointments nahi hain.',
+  pa: 'Tuhade koi upcoming appointments nahi ne.',
 };
 
-export function resolveNoUpcomingAppointmentsMessage(
-  language: ConversationLanguage
-): string {
+export function resolveNoUpcomingAppointmentsMessage(language: ConversationLanguage): string {
   return NO_UPCOMING_APPOINTMENTS_BY_LOCALE[toStaticLocale(language)];
 }
 
@@ -33,7 +31,8 @@ export function isPostBookingAcknowledgment(
     if (recentMessages[i].sender_type === 'system') {
       const c = (recentMessages[i].content ?? '').toLowerCase();
       return (
-        (c.includes('appointment') && (c.includes('confirmed') || c.includes('booked') || c.includes('pay'))) ||
+        (c.includes('appointment') &&
+          (c.includes('confirmed') || c.includes('booked') || c.includes('pay'))) ||
         c.includes('please pay here')
       );
     }

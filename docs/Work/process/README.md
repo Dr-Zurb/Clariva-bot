@@ -24,6 +24,7 @@ For "should I just do this in chat?" → [`IMPLEMENTATION-TRIAGE-PROMPT.md`](./I
 | [AGENT-EXECUTION-EFFICIENCY-GUIDE.md](./AGENT-EXECUTION-EFFICIENCY-GUIDE.md) | Model selection and cost rules |
 | [CODE_CHANGE_RULES.md](./CODE_CHANGE_RULES.md) | Rules when changing existing code |
 | [IMPLEMENTATION-TRIAGE-PROMPT.md](./IMPLEMENTATION-TRIAGE-PROMPT.md) | Direct in chat vs route through System T |
+| [IG-DM-OBSERVE-ANALYZE-FIX.md](./IG-DM-OBSERVE-ANALYZE-FIX.md) | Dummy IG DMs: observe transcript → analyze → fix → re-observe |
 
 ## Sibling folders
 

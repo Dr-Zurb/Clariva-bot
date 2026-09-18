@@ -1,6 +1,6 @@
 /**
  * rcp-02 / SAFETY-01: DL-2 control gate order + short-circuit semantics.
- * Order: revoke → acute emergency → open-crisis reaffirm → paused.
+ * Order: revoke → acute emergency → open-crisis reaffirm → messaging opt-out → paused.
  */
 
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
@@ -13,6 +13,7 @@ import {
   receptionistPausedGate,
   emergencyGate,
   openCrisisGate,
+  messagingOptOutGate,
   resolveReceptionistPauseMessage,
   type DmGateContext,
 } from '../../../src/workers/dm/control-gates';
@@ -21,6 +22,17 @@ import * as consentService from '../../../src/services/consent-service';
 jest.mock('../../../src/services/consent-service', () => ({
   handleRevocation: jest.fn(),
 }));
+jest.mock('../../../src/services/automated-messaging-opt-out', () => {
+  const actual = jest.requireActual('../../../src/services/automated-messaging-opt-out') as Record<
+    string,
+    unknown
+  >;
+  return {
+    ...actual,
+    persistAutomatedMessagingOptOut: jest.fn(async () => true),
+    persistAutomatedMessagingOptIn: jest.fn(async () => true),
+  };
+});
 
 const mockHandleRevocation = consentService.handleRevocation as jest.MockedFunction<
   typeof consentService.handleRevocation
@@ -53,17 +65,19 @@ describe('CONTROL_GATES (DL-2 order)', () => {
     mockHandleRevocation.mockResolvedValue('Revocation recorded.');
   });
 
-  it('lists gates in order: revoke → acute emergency → open crisis → paused (SAFETY-01)', () => {
+  it('lists gates in order: revoke → acute emergency → open crisis → opt-out → paused (SAFETY-01)', () => {
     expect(CONTROL_GATES).toEqual([
       revokeConsentGate,
       emergencyGate,
       openCrisisGate,
+      messagingOptOutGate,
       receptionistPausedGate,
     ]);
     expect(CONTROL_GATES.map((g) => g.name)).toEqual([
       'revoke_consent',
       'emergency_safety',
       'emergency_safety',
+      'automated_messaging_opt_out',
       'receptionist_paused',
     ]);
     expect(HEAD_CONTROL_GATES).toEqual(CONTROL_GATES);
@@ -80,12 +94,7 @@ describe('CONTROL_GATES (DL-2 order)', () => {
 
     const headResult = await evaluateControlGates(HEAD_CONTROL_GATES, ctx);
     expect(headResult?.branch).toBe('revoke_consent');
-    expect(mockHandleRevocation).toHaveBeenCalledWith(
-      'conv-1',
-      'patient-1',
-      'corr-1',
-      'en'
-    );
+    expect(mockHandleRevocation).toHaveBeenCalledWith('conv-1', 'patient-1', 'corr-1', 'en');
   });
 
   it('lang-21: revoke gate forwards turnLanguage into handleRevocation', async () => {
@@ -94,12 +103,7 @@ describe('CONTROL_GATES (DL-2 order)', () => {
       turnLanguage: 'hi-Latn',
     });
     await revokeConsentGate.handle(ctx);
-    expect(mockHandleRevocation).toHaveBeenCalledWith(
-      'conv-1',
-      'patient-1',
-      'corr-1',
-      'hi-Latn'
-    );
+    expect(mockHandleRevocation).toHaveBeenCalledWith('conv-1', 'patient-1', 'corr-1', 'hi-Latn');
   });
 
   it('paused fires before any conversion/stage logic runs', async () => {
@@ -203,6 +207,54 @@ describe('CONTROL_GATES (DL-2 order)', () => {
       intentResult: { intent: 'greeting', confidence: 1 },
     });
     expect(await evaluateControlGates(HEAD_CONTROL_GATES, ctx)).toBeNull();
+  });
+
+  it('mca-07: STOP sets the flag and acknowledges', async () => {
+    const ctx = baseCtx({ text: 'STOP' });
+    const result = await evaluateControlGates(HEAD_CONTROL_GATES, ctx);
+    expect(result?.branch).toBe('automated_messaging_opt_out');
+    expect(result?.reply).toMatch(/stop sending automated messages/i);
+    const optOut = require('../../../src/services/automated-messaging-opt-out') as {
+      persistAutomatedMessagingOptOut: jest.Mock;
+    };
+    expect(optOut.persistAutomatedMessagingOptOut).toHaveBeenCalledWith('conv-1', 'corr-1');
+  });
+
+  it('mca-07: mere inbound after opt-out does not re-enable or reply', async () => {
+    const ctx = baseCtx({
+      text: 'book tomorrow',
+      automatedMessagingOptedOutAt: '2026-09-16T00:00:00.000Z',
+    });
+    const result = await evaluateControlGates(HEAD_CONTROL_GATES, ctx);
+    expect(result?.branch).toBe('automated_messaging_opt_out');
+    expect(result?.reply).toBe('');
+    const optOut = require('../../../src/services/automated-messaging-opt-out') as {
+      persistAutomatedMessagingOptIn: jest.Mock;
+    };
+    expect(optOut.persistAutomatedMessagingOptIn).not.toHaveBeenCalled();
+  });
+
+  it('mca-07: START after opt-out clears the flag', async () => {
+    const ctx = baseCtx({
+      text: 'START',
+      automatedMessagingOptedOutAt: '2026-09-16T00:00:00.000Z',
+    });
+    const result = await evaluateControlGates(HEAD_CONTROL_GATES, ctx);
+    expect(result?.branch).toBe('automated_messaging_opt_in');
+    expect(result?.reply).toMatch(/on again/i);
+    const optOut = require('../../../src/services/automated-messaging-opt-out') as {
+      persistAutomatedMessagingOptIn: jest.Mock;
+    };
+    expect(optOut.persistAutomatedMessagingOptIn).toHaveBeenCalledWith('conv-1', 'corr-1');
+  });
+
+  it('mca-07: emergency still wins over STOP', async () => {
+    const ctx = baseCtx({
+      text: 'chest pain and cant breathe',
+      automatedMessagingOptedOutAt: '2026-09-16T00:00:00.000Z',
+    });
+    const result = await evaluateControlGates(HEAD_CONTROL_GATES, ctx);
+    expect(result?.branch).toBe('emergency_safety');
   });
 
   it('each gate exposes a non-empty rationale string', () => {

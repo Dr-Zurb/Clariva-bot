@@ -48,10 +48,7 @@ import {
  * Use when a family must stay English after review (legal, public surface, etc.).
  * LANG3-D4's transitional "English for all locales" helper was removed in lang-28.
  */
-export function enByPolicy<T>(
-  en: T,
-  _reason: string
-): Readonly<Record<StaticMessageLocale, T>> {
+export function enByPolicy<T>(en: T, _reason: string): Readonly<Record<StaticMessageLocale, T>> {
   void _reason;
   return { en, hi: en, pa: en };
 }
@@ -85,8 +82,8 @@ export const NON_TEXT_ACK_EN =
 const NON_TEXT_ACK_COPY: Readonly<Record<StaticMessageLocale, string>> = {
   en: NON_TEXT_ACK_EN,
   // Reviewed 2026-08-03 — lang-25 proof family (warm receptionist register).
-  hi: "Main abhi images ya voice notes nahi padh sakta — apna message type karke bhejein? Main aage dekh lunga.",
-  pa: "Main hun images ya voice notes nahi padh sakda — apna message type karke bhejo? Main aage dekh lavanga.",
+  hi: 'Main abhi images ya voice notes nahi padh sakta — apna message type karke bhejein? Main aage dekh lunga.',
+  pa: 'Main hun images ya voice notes nahi padh sakda — apna message type karke bhejo? Main aage dekh lavanga.',
 };
 
 export function buildNonTextAckMessage(input: NonTextAckMessageInput): string {
@@ -195,7 +192,7 @@ export function buildConfirmDetailsMessage(input: ConfirmDetailsMessageInput): s
 
   const reason = collected.reason_for_visit?.trim();
   lines.push(
-    `**${copy.labels.reason}:** ${reason && reason.length > 0 ? reason : copy.notProvided}`,
+    `**${copy.labels.reason}:** ${reason && reason.length > 0 ? reason : copy.notProvided}`
   );
 
   const email = collected.email?.trim();
@@ -235,20 +232,20 @@ const CORRECTION_FIELD_PROMPT: Readonly<
     reason_for_visit: "Got it — what's the correct **reason for visit**?",
   },
   hi: {
-    name: "Samajh gaya — sahi **full name** kya hai?",
-    age: "Samajh gaya — sahi **age** kya hai?",
-    gender: "Samajh gaya — sahi **gender** kya hai? (male / female / other)",
-    phone: "Samajh gaya — sahi **mobile number** kya hai?",
-    email: "Samajh gaya — sahi **email** kya hai?",
-    reason_for_visit: "Samajh gaya — sahi **reason for visit** kya hai?",
+    name: 'Samajh gaya — sahi **full name** kya hai?',
+    age: 'Samajh gaya — sahi **age** kya hai?',
+    gender: 'Samajh gaya — sahi **gender** kya hai? (male / female / other)',
+    phone: 'Samajh gaya — sahi **mobile number** kya hai?',
+    email: 'Samajh gaya — sahi **email** kya hai?',
+    reason_for_visit: 'Samajh gaya — sahi **reason for visit** kya hai?',
   },
   pa: {
-    name: "Samajh gaya — sahi **full name** ki hai?",
-    age: "Samajh gaya — sahi **age** ki hai?",
-    gender: "Samajh gaya — sahi **gender** ki hai? (male / female / other)",
-    phone: "Samajh gaya — sahi **mobile number** ki hai?",
-    email: "Samajh gaya — sahi **email** ki hai?",
-    reason_for_visit: "Samajh gaya — sahi **reason for visit** ki hai?",
+    name: 'Samajh gaya — sahi **full name** ki hai?',
+    age: 'Samajh gaya — sahi **age** ki hai?',
+    gender: 'Samajh gaya — sahi **gender** ki hai? (male / female / other)',
+    phone: 'Samajh gaya — sahi **mobile number** ki hai?',
+    email: 'Samajh gaya — sahi **email** ki hai?',
+    reason_for_visit: 'Samajh gaya — sahi **reason for visit** ki hai?',
   },
 };
 
@@ -269,9 +266,7 @@ export interface CorrectionFieldClarifierInput {
  * cleanly as the new value (the very next message stays in `confirm_details`
  * and re-runs `validateAndApplyExtracted` with `isCorrection: true`).
  */
-export function buildCorrectionFieldClarifierReply(
-  input: CorrectionFieldClarifierInput,
-): string {
+export function buildCorrectionFieldClarifierReply(input: CorrectionFieldClarifierInput): string {
   const locale = toStaticLocale(input.language);
   return CORRECTION_FIELD_PROMPT[locale][input.field];
 }
@@ -346,12 +341,13 @@ const INTAKE_REQUEST_COPY: Readonly<Record<StaticMessageLocale, IntakeRequestCop
     stillNeedHeader: 'Samajh gaya. Ab yeh details chahiye:',
     stillNeedFooter: 'Aap ek hi message mein paste kar sakte hain.',
     retrySelf: 'Aapki details samajh nahi aayi — kya dobara bhej sakte hain?',
-    retryRelation: 'Aapke **{{relation}}** ki details samajh nahi aayi — kya dobara bhej sakte hain?',
+    retryRelation:
+      'Aapke **{{relation}}** ki details samajh nahi aayi — kya dobara bhej sakte hain?',
     initialSelfOpen: 'Zaroor — **{{practice}}** par appointment book karne mein khushi hogi.',
     initialSelfAsk: 'Yeh details share karein (ek hi message mein paste kar sakte hain):',
-    initialAlreadyHaveReason:
-      'Pehle se aapka **reason for visit** hai. Bas kuch aur chahiye:',
-    initialRelationAsk: 'Main aapke **{{relation}}** ke liye book karne mein madad karunga. Unki details share karein:',
+    initialAlreadyHaveReason: 'Pehle se aapka **reason for visit** hai. Bas kuch aur chahiye:',
+    initialRelationAsk:
+      'Main aapke **{{relation}}** ke liye book karne mein madad karunga. Unki details share karein:',
   },
   pa: {
     labels: {
@@ -370,9 +366,9 @@ const INTAKE_REQUEST_COPY: Readonly<Record<StaticMessageLocale, IntakeRequestCop
     retryRelation: 'Tuhade **{{relation}}** di details samajh nahi aayi — ki dobara bhej sakde ho?',
     initialSelfOpen: 'Zaroor — **{{practice}}** te appointment book karn layi khushi hogi.',
     initialSelfAsk: 'Eh details share karo (ik hi message vich paste kar sakde ho):',
-    initialAlreadyHaveReason:
-      'Pehlan ton tuhada **reason for visit** hai. Bas kuch hor chahida:',
-    initialRelationAsk: 'Main tuhade **{{relation}}** layi book karn vich madad karunga. Ohna di details share karo:',
+    initialAlreadyHaveReason: 'Pehlan ton tuhada **reason for visit** hai. Bas kuch hor chahida:',
+    initialRelationAsk:
+      'Main tuhade **{{relation}}** layi book karn vich madad karunga. Ohna di details share karo:',
   },
 };
 
@@ -527,11 +523,7 @@ function defaultIntakeIntro(params: {
   if (relation) {
     return [fillIntakeTemplate(copy.initialRelationAsk, { relation })];
   }
-  return [
-    fillIntakeTemplate(copy.initialSelfOpen, { practice }),
-    '',
-    copy.initialSelfAsk,
-  ];
+  return [fillIntakeTemplate(copy.initialSelfOpen, { practice }), '', copy.initialSelfAsk];
 }
 
 /**
@@ -558,7 +550,7 @@ function defaultIntakeIntro(params: {
 export function buildIntakeRequestMessage(input: IntakeRequestInput): string {
   if (input.missing !== undefined && input.missing.length === 0) {
     throw new Error(
-      'buildIntakeRequestMessage: missing[] must be non-empty (all fields already captured is an unreachable caller state — handler should transition to confirm_details instead of asking for details).',
+      'buildIntakeRequestMessage: missing[] must be non-empty (all fields already captured is an unreachable caller state — handler should transition to confirm_details instead of asking for details).'
     );
   }
 
@@ -587,7 +579,7 @@ export function buildIntakeRequestMessage(input: IntakeRequestInput): string {
         relation,
         alreadyHaveReason: Boolean(input.alreadyHaveReason),
         copy,
-      }),
+      })
     );
   }
 
@@ -692,8 +684,7 @@ const CONSENT_OPTIONAL_EXTRAS_COPY: Readonly<
     thanksNamed: (name) => `Dhanyavaad, **${name}**.`,
     selfPhoneLine: (phoneDisplay) =>
       `Asi ${phoneDisplay} te call ya text naal tuhadi appointment confirm karange.`,
-    notesQuestion:
-      'Doctor layi koi notes? _(allergies, current medicines, kuch hor — optional)_',
+    notesQuestion: 'Doctor layi koi notes? _(allergies, current medicines, kuch hor — optional)_',
     selfCta: 'Jadon tusi time pick karna chaho tab **Yes** reply karo.',
     otherPhoneLine: (phoneDisplay, forName) =>
       `Asi ${phoneDisplay} te **${forName}** di appointment confirm karange.`,
@@ -744,7 +735,7 @@ export function buildConsentOptionalExtrasMessage(input: ConsentMessageInput): s
     const forName = input.bookingForName?.trim();
     if (!forName) {
       throw new Error(
-        'buildConsentOptionalExtrasMessage: bookingForName is required when bookingForSomeoneElse is true (consent step should not be reached before the intake step captures the patient name).',
+        'buildConsentOptionalExtrasMessage: bookingForName is required when bookingForSomeoneElse is true (consent step should not be reached before the intake step captures the patient name).'
       );
     }
     return [
@@ -884,7 +875,7 @@ const PAYMENT_CONFIRMATION_COPY: Readonly<Record<StaticMessageLocale, PaymentCon
  */
 export function formatDateWithMiddot(input: string): string {
   const match = input.match(
-    /^([A-Za-z]+,\s+[A-Za-z]+\s+\d{1,2})(?:,\s+\d{4})?,\s+(\d{1,2}:\d{2}\s*[AP]M)$/,
+    /^([A-Za-z]+,\s+[A-Za-z]+\s+\d{1,2})(?:,\s+\d{4})?,\s+(\d{1,2}:\d{2}\s*[AP]M)$/
   );
   if (!match) return input;
   return `${match[1]} · ${match[2]}`;
@@ -928,7 +919,11 @@ export function formatDateWithMiddot(input: string): string {
 export function buildPaymentConfirmationMessage(input: PaymentConfirmationInput): string {
   const locale = toStaticLocale(input.language);
   const copy = PAYMENT_CONFIRMATION_COPY[locale];
-  const parts: string[] = [copy.received, '', copy.appointmentConfirmed(input.appointmentDateDisplay)];
+  const parts: string[] = [
+    copy.received,
+    '',
+    copy.appointmentConfirmed(input.appointmentDateDisplay),
+  ];
 
   const mrn = input.patientMrn?.trim();
   if (mrn) {
@@ -1030,15 +1025,13 @@ const ABANDONED_BOOKING_REMINDER_COPY: Readonly<
  *   never call into this helper without a URL; an empty value signals a
  *   configuration bug the reminder would otherwise mask.
  */
-export function buildAbandonedBookingReminderMessage(
-  input: AbandonedBookingReminderInput,
-): string {
+export function buildAbandonedBookingReminderMessage(input: AbandonedBookingReminderInput): string {
   const locale = toStaticLocale(input.language);
   const copy = ABANDONED_BOOKING_REMINDER_COPY[locale];
   const url = input.bookingUrl?.trim();
   if (!url) {
     throw new Error(
-      'buildAbandonedBookingReminderMessage: bookingUrl is required (abandoned-booking reminder cron should never send a reminder without a resolvable booking URL — check PUBLIC_BOOKING_BASE_URL / conversation id / doctor id upstream).',
+      'buildAbandonedBookingReminderMessage: bookingUrl is required (abandoned-booking reminder cron should never send a reminder without a resolvable booking URL — check PUBLIC_BOOKING_BASE_URL / conversation id / doctor id upstream).'
     );
   }
   return [copy.opener, '', copy.linkLabel, url, '', copy.closing].join('\n');
@@ -1095,9 +1088,7 @@ type ConsultationReadyModalityCopy = {
   readonly closing: string;
 };
 
-type ConsultationReadyCopy = Readonly<
-  Record<ConsultationModality, ConsultationReadyModalityCopy>
->;
+type ConsultationReadyCopy = Readonly<Record<ConsultationModality, ConsultationReadyModalityCopy>>;
 
 const CONSULTATION_READY_COPY: Readonly<Record<StaticMessageLocale, ConsultationReadyCopy>> = {
   en: {
@@ -1190,7 +1181,7 @@ export function buildConsultationReadyDm(input: ConsultationReadyDmInput): strin
   const url = input.joinUrl?.trim();
   if (!url) {
     throw new Error(
-      'buildConsultationReadyDm: joinUrl is required (the fan-out helper computes the patient join URL via consultation-session-service before calling — empty here means an upstream config / token-mint bug).',
+      'buildConsultationReadyDm: joinUrl is required (the fan-out helper computes the patient join URL via consultation-session-service before calling — empty here means an upstream config / token-mint bug).'
     );
   }
   const practice = input.practiceName?.trim() || CONSULTATION_READY_DEFAULT_PRACTICE[locale];
@@ -1198,26 +1189,12 @@ export function buildConsultationReadyDm(input: ConsultationReadyDmInput): strin
   switch (input.modality) {
     case 'video': {
       const branch = copy.video;
-      return [
-        branch.opener(practice),
-        '',
-        branch.linkLabel,
-        url,
-        '',
-        branch.closing,
-      ].join('\n');
+      return [branch.opener(practice), '', branch.linkLabel, url, '', branch.closing].join('\n');
     }
 
     case 'text': {
       const branch = copy.text;
-      return [
-        branch.opener(practice),
-        '',
-        branch.linkLabel,
-        url,
-        '',
-        branch.closing,
-      ].join('\n');
+      return [branch.opener(practice), '', branch.linkLabel, url, '', branch.closing].join('\n');
     }
 
     case 'voice': {
@@ -1256,10 +1233,7 @@ export interface ConsultationCheckinDmInput {
   readonly minutesLeft?: number;
 }
 
-function previsitGreeting(
-  locale: StaticMessageLocale,
-  patientName: string | undefined
-): string {
+function previsitGreeting(locale: StaticMessageLocale, patientName: string | undefined): string {
   const first = patientName?.trim().split(/\s+/)[0];
   if (!first || isMissingPatientName(first)) {
     const plain: Record<StaticMessageLocale, string> = {
@@ -1302,10 +1276,7 @@ export function formatPrevisitTimeLeftPhrase(
     return phrases[locale] ?? phrases.en;
   }
   const phrases: Record<StaticMessageLocale, string> = {
-    en:
-      hours === 1
-        ? `about 1 hour ${rest} minutes`
-        : `about ${hours} hours ${rest} minutes`,
+    en: hours === 1 ? `about 1 hour ${rest} minutes` : `about ${hours} hours ${rest} minutes`,
     hi: `लगभग ${hours} घंटे ${rest} मिनट`,
     pa: `lagbhag ${hours} ghante ${rest} minute`,
   };
@@ -1318,8 +1289,7 @@ export function buildConsultationCheckinDm(input: ConsultationCheckinDmInput): s
   if (!url) {
     throw new Error('buildConsultationCheckinDm: joinUrl is required');
   }
-  const practice =
-    input.practiceName?.trim() || CONSULTATION_READY_DEFAULT_PRACTICE[locale];
+  const practice = input.practiceName?.trim() || CONSULTATION_READY_DEFAULT_PRACTICE[locale];
   const hi = previsitGreeting(locale, input.patientName);
   const when = input.whenLabel?.trim();
   const timeLeft =
@@ -1328,27 +1298,30 @@ export function buildConsultationCheckinDm(input: ConsultationCheckinDmInput): s
       : null;
 
   const openerByLocale: Record<StaticMessageLocale, string> = {
-    en: when && timeLeft
-      ? `Your visit with **${practice}** is at ${when} — ${timeLeft} left.`
-      : timeLeft
-        ? `Your visit with **${practice}** is coming up soon — ${timeLeft} left.`
-        : when
-          ? `Your visit with **${practice}** is at ${when}.`
-          : `Your visit with **${practice}** is coming up soon.`,
-    hi: when && timeLeft
-      ? `**${practice}** के साथ आपकी विज़िट ${when} पर है — ${timeLeft} बचे हैं।`
-      : timeLeft
-        ? `**${practice}** के साथ आपकी विज़िट जल्द शुरू होने वाली है — ${timeLeft} बचे हैं।`
-        : when
-          ? `**${practice}** के साथ आपकी विज़िट ${when} पर है।`
-          : `**${practice}** के साथ आपकी विज़िट जल्द शुरू होने वाली है।`,
-    pa: when && timeLeft
-      ? `**${practice}** naal tuhadi visit ${when} te hai — ${timeLeft} bache han.`
-      : timeLeft
-        ? `**${practice}** naal tuhadi visit jald shuru hon wali hai — ${timeLeft} bache han.`
-        : when
-          ? `**${practice}** naal tuhadi visit ${when} te hai.`
-          : `**${practice}** naal tuhadi visit jald shuru hon wali hai.`,
+    en:
+      when && timeLeft
+        ? `Your visit with **${practice}** is at ${when} — ${timeLeft} left.`
+        : timeLeft
+          ? `Your visit with **${practice}** is coming up soon — ${timeLeft} left.`
+          : when
+            ? `Your visit with **${practice}** is at ${when}.`
+            : `Your visit with **${practice}** is coming up soon.`,
+    hi:
+      when && timeLeft
+        ? `**${practice}** के साथ आपकी विज़िट ${when} पर है — ${timeLeft} बचे हैं।`
+        : timeLeft
+          ? `**${practice}** के साथ आपकी विज़िट जल्द शुरू होने वाली है — ${timeLeft} बचे हैं।`
+          : when
+            ? `**${practice}** के साथ आपकी विज़िट ${when} पर है।`
+            : `**${practice}** के साथ आपकी विज़िट जल्द शुरू होने वाली है।`,
+    pa:
+      when && timeLeft
+        ? `**${practice}** naal tuhadi visit ${when} te hai — ${timeLeft} bache han.`
+        : timeLeft
+          ? `**${practice}** naal tuhadi visit jald shuru hon wali hai — ${timeLeft} bache han.`
+          : when
+            ? `**${practice}** naal tuhadi visit ${when} te hai.`
+            : `**${practice}** naal tuhadi visit jald shuru hon wali hai.`,
   };
 
   const bodyByLocale: Record<StaticMessageLocale, { body: string; closing: string }> = {
@@ -1388,12 +1361,9 @@ export interface AppointmentReminder24hDmInput {
   readonly minutesLeft?: number;
 }
 
-export function buildAppointmentReminder24hDm(
-  input: AppointmentReminder24hDmInput
-): string {
+export function buildAppointmentReminder24hDm(input: AppointmentReminder24hDmInput): string {
   const locale = toStaticLocale(input.language);
-  const practice =
-    input.practiceName?.trim() || CONSULTATION_READY_DEFAULT_PRACTICE[locale];
+  const practice = input.practiceName?.trim() || CONSULTATION_READY_DEFAULT_PRACTICE[locale];
   const when = input.whenLabel?.trim() || 'your scheduled time';
   const hi = previsitGreeting(locale, input.patientName);
   const timeLeft =
@@ -1454,20 +1424,16 @@ export interface ConsultationCheckinNudgeDmInput {
   readonly patientName?: string;
 }
 
-export function buildConsultationCheckinNudgeDm(
-  input: ConsultationCheckinNudgeDmInput
-): string {
+export function buildConsultationCheckinNudgeDm(input: ConsultationCheckinNudgeDmInput): string {
   const locale = toStaticLocale(input.language);
   const url = input.joinUrl?.trim();
   if (!url) {
     throw new Error('buildConsultationCheckinNudgeDm: joinUrl is required');
   }
-  const practice =
-    input.practiceName?.trim() || CONSULTATION_READY_DEFAULT_PRACTICE[locale];
+  const practice = input.practiceName?.trim() || CONSULTATION_READY_DEFAULT_PRACTICE[locale];
   const stageMins = input.minutesLeft;
   const actualMins =
-    typeof input.minutesLeftActual === 'number' &&
-    Number.isFinite(input.minutesLeftActual)
+    typeof input.minutesLeftActual === 'number' && Number.isFinite(input.minutesLeftActual)
       ? input.minutesLeftActual
       : stageMins;
   const timeLeft = formatPrevisitTimeLeftPhrase(locale, actualMins);
@@ -1488,10 +1454,7 @@ export function buildConsultationCheckinNudgeDm(
       : `**${practice}** naal tuhadi visit ${timeLeft} vich shuru hovegi.`,
   };
 
-  const bodyByLocale: Record<
-    StaticMessageLocale,
-    { body: string; closing: string }
-  > = {
+  const bodyByLocale: Record<StaticMessageLocale, { body: string; closing: string }> = {
     en: {
       body: 'Open the waiting room now so you are ready:',
       closing: 'Stay on that page — we connect you when the doctor starts.',
@@ -1522,16 +1485,13 @@ export interface ConsultationStartingNowDmInput {
   readonly patientName?: string;
 }
 
-export function buildConsultationStartingNowDm(
-  input: ConsultationStartingNowDmInput
-): string {
+export function buildConsultationStartingNowDm(input: ConsultationStartingNowDmInput): string {
   const locale = toStaticLocale(input.language);
   const url = input.joinUrl?.trim();
   if (!url) {
     throw new Error('buildConsultationStartingNowDm: joinUrl is required');
   }
-  const practice =
-    input.practiceName?.trim() || CONSULTATION_READY_DEFAULT_PRACTICE[locale];
+  const practice = input.practiceName?.trim() || CONSULTATION_READY_DEFAULT_PRACTICE[locale];
   const when = input.whenLabel?.trim();
   const hi = previsitGreeting(locale, input.patientName);
 
@@ -1547,10 +1507,7 @@ export function buildConsultationStartingNowDm(
       : `**${practice}** naal tuhadi visit hune shuru ho rahi hai.`,
   };
 
-  const bodyByLocale: Record<
-    StaticMessageLocale,
-    { body: string; closing: string }
-  > = {
+  const bodyByLocale: Record<StaticMessageLocale, { body: string; closing: string }> = {
     en: {
       body: 'Open the waiting room now:',
       closing: 'Stay on that page — we connect you when the doctor starts.',
@@ -1631,9 +1588,7 @@ const PRESCRIPTION_READY_DEFAULT_PRACTICE = enByPolicy(
  * Deliberately short — three lines max. The patient already received the
  * content; this is a notification, not a re-delivery.
  */
-export function buildPrescriptionReadyPingDm(
-  input: PrescriptionReadyPingDmInput,
-): string {
+export function buildPrescriptionReadyPingDm(input: PrescriptionReadyPingDmInput): string {
   const locale = toStaticLocale(input.language);
   const copy = PRESCRIPTION_READY_PING_COPY[locale];
   const practice = input.practiceName?.trim() || PRESCRIPTION_READY_DEFAULT_PRACTICE[locale];
@@ -1746,21 +1701,19 @@ const PRESCRIPTION_READY_DM_DEFAULT_DOCTOR = enByPolicy(
  *   prescription row supplies the ID; either being absent here means an
  *   upstream wiring problem).
  */
-export function buildPrescriptionReadyDm(
-  input: PrescriptionReadyDmInput,
-): string {
+export function buildPrescriptionReadyDm(input: PrescriptionReadyDmInput): string {
   const locale = toStaticLocale(input.language);
   const copy = PRESCRIPTION_READY_DM_COPY[locale];
   const pdf = input.pdfUrl?.trim();
   if (!pdf) {
     throw new Error(
-      'buildPrescriptionReadyDm: pdfUrl is required (upstream prescription-attachment-service must mint the signed URL before this helper is called — empty here means an upstream wiring bug).',
+      'buildPrescriptionReadyDm: pdfUrl is required (upstream prescription-attachment-service must mint the signed URL before this helper is called — empty here means an upstream wiring bug).'
     );
   }
   const id = input.prescriptionId?.trim();
   if (!id) {
     throw new Error(
-      'buildPrescriptionReadyDm: prescriptionId is required (the prescription row supplies it — empty here means an upstream wiring bug).',
+      'buildPrescriptionReadyDm: prescriptionId is required (the prescription row supplies it — empty here means an upstream wiring bug).'
     );
   }
   const doctor = input.doctorName?.trim() || PRESCRIPTION_READY_DM_DEFAULT_DOCTOR[locale];
@@ -1810,7 +1763,7 @@ const APPOINTMENT_CONSULTATION_TYPE_LABELS = enByPolicy<
 
 export function appointmentConsultationTypeToLabel(
   type: string | null | undefined,
-  language: ConversationLanguage,
+  language: ConversationLanguage
 ): string | undefined {
   const locale = toStaticLocale(language);
   const labels = APPOINTMENT_CONSULTATION_TYPE_LABELS[locale];
@@ -1903,9 +1856,7 @@ type CancelChoiceListCopy = {
   readonly multiItemTrailer: (count: number) => string;
 };
 
-const CANCEL_CHOICE_LIST_COPY: Readonly<
-  Record<StaticMessageLocale, CancelChoiceListCopy>
-> = {
+const CANCEL_CHOICE_LIST_COPY: Readonly<Record<StaticMessageLocale, CancelChoiceListCopy>> = {
   en: {
     singleItemOpener: (dateWithSuffix) =>
       `You have one upcoming appointment: **${dateWithSuffix}**.`,
@@ -1917,8 +1868,7 @@ const CANCEL_CHOICE_LIST_COPY: Readonly<
   hi: {
     singleItemOpener: (dateWithSuffix) =>
       `Aapki ek upcoming appointment hai: **${dateWithSuffix}**.`,
-    singleItemCta:
-      'Cancel karne ke liye **Yes** reply karein, ya aur kuch batayein.',
+    singleItemCta: 'Cancel karne ke liye **Yes** reply karein, ya aur kuch batayein.',
     multiHeader: 'Kaunsi appointment cancel karni hai?',
     twoItemTrailer: '**1** ya **2** reply karein.',
     multiItemTrailer: (count) => `**1** se **${count}** tak koi number reply karein.`,
@@ -1934,9 +1884,7 @@ const CANCEL_CHOICE_LIST_COPY: Readonly<
 };
 
 function renderChoiceItemLine(item: CancelChoiceItem, idx: number): string {
-  const suffix = item.modalityLabel?.trim()
-    ? ` — ${item.modalityLabel.trim()}`
-    : '';
+  const suffix = item.modalityLabel?.trim() ? ` — ${item.modalityLabel.trim()}` : '';
   return `**${idx + 1}.** ${item.dateDisplay}${suffix}`;
 }
 
@@ -1968,25 +1916,21 @@ export function buildCancelChoiceListMessage(input: CancelChoiceListInput): stri
 
   if (input.items.length === 0) {
     throw new Error(
-      'buildCancelChoiceListMessage: items[] must be non-empty (handler should emit the "no upcoming appointments" copy instead of calling this builder).',
+      'buildCancelChoiceListMessage: items[] must be non-empty (handler should emit the "no upcoming appointments" copy instead of calling this builder).'
     );
   }
 
   if (input.items.length === 1) {
     const only = input.items[0]!;
     const suffix = only.modalityLabel?.trim() ? ` — ${only.modalityLabel.trim()}` : '';
-    return [
-      copy.singleItemOpener(`${only.dateDisplay}${suffix}`),
-      '',
-      copy.singleItemCta,
-    ].join('\n');
+    return [copy.singleItemOpener(`${only.dateDisplay}${suffix}`), '', copy.singleItemCta].join(
+      '\n'
+    );
   }
 
   const lines = input.items.map((item, idx) => renderChoiceItemLine(item, idx));
   const trailer =
-    input.items.length === 2
-      ? copy.twoItemTrailer
-      : copy.multiItemTrailer(input.items.length);
+    input.items.length === 2 ? copy.twoItemTrailer : copy.multiItemTrailer(input.items.length);
 
   return [copy.multiHeader, '', ...lines, '', trailer].join('\n');
 }
@@ -2005,10 +1949,7 @@ export function buildCancelChoiceListMessage(input: CancelChoiceListInput): stri
  *                                     auto-applied the patient's saved
  *                                     preference without staff involvement.
  */
-export type StaffReviewResolvedKind =
-  | 'confirmed'
-  | 'reassigned'
-  | 'learning_policy_autobook';
+export type StaffReviewResolvedKind = 'confirmed' | 'reassigned' | 'learning_policy_autobook';
 
 export interface StaffReviewResolvedBookingInput {
   readonly language: ConversationLanguage;
@@ -2056,10 +1997,12 @@ const STAFF_REVIEW_RESOLVED_BOOKING_COPY: Readonly<
 > = {
   en: {
     intro: {
-      confirmed: (practice, label) => `**${practice}** has confirmed your visit type: **${label}**.`,
+      confirmed: (practice, label) =>
+        `**${practice}** has confirmed your visit type: **${label}**.`,
       learning_policy_autobook: (practice, label) =>
         `**${practice}** has applied your saved visit-type preference: **${label}**.`,
-      reassigned: (practice, label) => `**${practice}** has updated your visit type to **${label}**.`,
+      reassigned: (practice, label) =>
+        `**${practice}** has updated your visit type to **${label}**.`,
     },
     linkLabel: 'Pick a time and complete your booking here:',
     closing: 'If something looks wrong, just reply here in this chat.',
@@ -2103,7 +2046,7 @@ function resolveStaffReviewIntro(
   practice: string,
   label: string,
   kind: StaffReviewResolvedKind,
-  copy: StaffReviewResolvedBookingCopy,
+  copy: StaffReviewResolvedBookingCopy
 ): string {
   return copy.intro[kind](practice, label);
 }
@@ -2132,14 +2075,14 @@ function resolveStaffReviewIntro(
  *   missing — a config bug we want surfaced, not a silent no-CTA DM.
  */
 export function buildStaffReviewResolvedBookingMessage(
-  input: StaffReviewResolvedBookingInput,
+  input: StaffReviewResolvedBookingInput
 ): string {
   const locale = toStaticLocale(input.language);
   const copy = STAFF_REVIEW_RESOLVED_BOOKING_COPY[locale];
   const url = input.bookingUrl?.trim();
   if (!url) {
     throw new Error(
-      'buildStaffReviewResolvedBookingMessage: bookingUrl is required (staff-review resolved / learning-policy autobook paths always call buildBookingPageUrl upstream — an empty value signals an upstream config bug).',
+      'buildStaffReviewResolvedBookingMessage: bookingUrl is required (staff-review resolved / learning-policy autobook paths always call buildBookingPageUrl upstream — an empty value signals an upstream config bug).'
     );
   }
   const practice = input.practiceName?.trim() || STAFF_REVIEW_DEFAULT_PRACTICE[locale];
@@ -2169,7 +2112,7 @@ export const BOOKING_AUDIO_RECORDING_DISCLOSURE =
 
 /**
  * enByPolicy family `recording-audio-disclosure`. English on every
- * thread; `formatBookingLinkDm` appends this after the localized link.
+ * thread. Shown on the owned /book page, not in the Instagram DM.
  */
 export function buildRecordingAudioDisclosureMessage(): string {
   return BOOKING_AUDIO_RECORDING_DISCLOSURE;
@@ -2250,24 +2193,23 @@ export interface BuildAccountDeletionExplainerDmInput {
  *     separate surface).
  */
 export function buildAccountDeletionExplainerDm(
-  input: BuildAccountDeletionExplainerDmInput,
+  input: BuildAccountDeletionExplainerDmInput
 ): string {
   void input.language; // LANG6-D4 / enByPolicy English-only legal copy
   const citation = input.citation?.trim();
   if (!citation) {
     throw new Error(
-      'buildAccountDeletionExplainerDm: citation is required (pass the DPDP / GDPR citation string — empty means an upstream wiring bug).',
+      'buildAccountDeletionExplainerDm: citation is required (pass the DPDP / GDPR citation string — empty means an upstream wiring bug).'
     );
   }
   if (!(input.finalizedAt instanceof Date) || Number.isNaN(input.finalizedAt.getTime())) {
     throw new Error(
-      'buildAccountDeletionExplainerDm: finalizedAt must be a valid Date (caller passed an invalid value).',
+      'buildAccountDeletionExplainerDm: finalizedAt must be a valid Date (caller passed an invalid value).'
     );
   }
   const finalizedDate = input.finalizedAt.toISOString().slice(0, 10);
   const heldUntil =
-    input.recordingsHeldUntil instanceof Date &&
-    !Number.isNaN(input.recordingsHeldUntil.getTime())
+    input.recordingsHeldUntil instanceof Date && !Number.isNaN(input.recordingsHeldUntil.getTime())
       ? input.recordingsHeldUntil.toISOString().slice(0, 10)
       : null;
   const outcome = input.recordingOutcome ?? 'severed_only';
@@ -2365,7 +2307,12 @@ export interface BuildRecordingReplayedNotificationDmInput {
 }
 
 type RecordingReplayedNotificationCopy = {
-  readonly lead: (prefix: string, practice: string, artifactWord: string, dateLabel: string) => string;
+  readonly lead: (
+    prefix: string,
+    practice: string,
+    artifactWord: string,
+    dateLabel: string
+  ) => string;
   readonly reassurance: string;
   readonly auditLine: string;
 };
@@ -2393,8 +2340,7 @@ const RECORDING_REPLAYED_NOTIFICATION_COPY: Readonly<
       `${prefix}**${practice}** te tuhade doctor ne ${dateLabel} wale consult da ${artifactWord} review kita.`,
     reassurance:
       'Eh care da normal hissa hai (doctors aksar plan refine karan layi consults dubara vekhte ne).',
-    auditLine:
-      'Har access audit hunda hai, te tusi kade vi support ton access log mang sakde ho.',
+    auditLine: 'Har access audit hunda hai, te tusi kade vi support ton access log mang sakde ho.',
   },
 };
 
@@ -2438,7 +2384,7 @@ const RECORDING_REPLAYED_DEFAULT_PRACTICE = enByPolicy(
  *   before invoking the builder.
  */
 export function buildRecordingReplayedNotificationDm(
-  input: BuildRecordingReplayedNotificationDmInput,
+  input: BuildRecordingReplayedNotificationDmInput
 ): string {
   const locale = toStaticLocale(input.language);
   const copy = RECORDING_REPLAYED_NOTIFICATION_COPY[locale];
@@ -2447,7 +2393,7 @@ export function buildRecordingReplayedNotificationDm(
     throw new Error(
       'buildRecordingReplayedNotificationDm: consultDateLabel is required ' +
         '(notifyPatientOfDoctorReplay computes this from session.actual_ended_at — ' +
-        'empty here means an upstream wiring bug or a session row missing actual_ended_at).',
+        'empty here means an upstream wiring bug or a session row missing actual_ended_at).'
     );
   }
   const practice = input.practiceName?.trim() || RECORDING_REPLAYED_DEFAULT_PRACTICE[locale];
@@ -2487,8 +2433,7 @@ const SUPPORT_STAFF_RECORDING_ACCESSED_COPY: Readonly<
       `A support agent at ${practice} accessed the ${artifactWord} of your consult on ${dateLabel}.`,
     downloadedLead: (practice, dateLabel) =>
       `A support agent at ${practice} downloaded the transcript of your consult on ${dateLabel}.`,
-    distinction:
-      'This was a support-team access, not your doctor reviewing the consult.',
+    distinction: 'This was a support-team access, not your doctor reviewing the consult.',
     auditLine: 'Every access is audited, and you can ask support for the access log anytime.',
   },
   hi: {
@@ -2496,8 +2441,7 @@ const SUPPORT_STAFF_RECORDING_ACCESSED_COPY: Readonly<
       `${practice} ke support agent ne ${dateLabel} ko aapke consult ka ${artifactWord} access kiya.`,
     downloadedLead: (practice, dateLabel) =>
       `${practice} ke support agent ne ${dateLabel} ko aapke consult ka transcript download kiya.`,
-    distinction:
-      'Yeh support-team ka access tha, doctor ka consult review nahi.',
+    distinction: 'Yeh support-team ka access tha, doctor ka consult review nahi.',
     auditLine:
       'Har access audit hota hai, aur aap kabhi bhi support se access log maang sakte hain.',
   },
@@ -2506,10 +2450,8 @@ const SUPPORT_STAFF_RECORDING_ACCESSED_COPY: Readonly<
       `${practice} de support agent ne ${dateLabel} wale consult da ${artifactWord} access kita.`,
     downloadedLead: (practice, dateLabel) =>
       `${practice} de support agent ne ${dateLabel} wale consult da transcript download kita.`,
-    distinction:
-      'Eh support-team da access si, doctor da consult review nahi.',
-    auditLine:
-      'Har access audit hunda hai, te tusi kade vi support ton access log mang sakde ho.',
+    distinction: 'Eh support-team da access si, doctor da consult review nahi.',
+    auditLine: 'Har access audit hunda hai, te tusi kade vi support ton access log mang sakde ho.',
   },
 };
 
@@ -2521,14 +2463,14 @@ const SUPPORT_STAFF_RECORDING_ACCESSED_COPY: Readonly<
  * escalationReason — staff free text stays off this surface.
  */
 export function buildSupportStaffRecordingAccessedNotificationDm(
-  input: BuildSupportStaffRecordingAccessedNotificationDmInput,
+  input: BuildSupportStaffRecordingAccessedNotificationDmInput
 ): string {
   const locale = toStaticLocale(input.language);
   const copy = SUPPORT_STAFF_RECORDING_ACCESSED_COPY[locale];
   const dateLabel = input.consultDateLabel?.trim();
   if (!dateLabel) {
     throw new Error(
-      'buildSupportStaffRecordingAccessedNotificationDm: consultDateLabel is required',
+      'buildSupportStaffRecordingAccessedNotificationDm: consultDateLabel is required'
     );
   }
   const practice = input.practiceName?.trim() || RECORDING_REPLAYED_DEFAULT_PRACTICE[locale];
@@ -2578,29 +2520,29 @@ type PostConsultChatLinkCopy = {
   readonly ttlNote: string;
 };
 
-const POST_CONSULT_CHAT_LINK_COPY: Readonly<Record<StaticMessageLocale, PostConsultChatLinkCopy>> = {
-  en: {
-    opener: (practice, dateLabel) =>
-      `Your consultation with ${practice} on ${dateLabel} is complete.`,
-    linkIntro: 'View the full conversation (chat, attachments, and system notes) any time:',
-    ttlNote: 'Available for 90 days. After that, contact support to re-open the link.',
-  },
-  hi: {
-    opener: (practice, dateLabel) =>
-      `${dateLabel} ko **${practice}** ke saath aapki consultation complete ho gayi hai.`,
-    linkIntro:
-      'Poori conversation (chat, attachments, aur system notes) kabhi bhi dekhein:',
-    ttlNote:
-      '90 days ke liye available hai. Uske baad link dobara kholne ke liye support se contact karein.',
-  },
-  pa: {
-    opener: (practice, dateLabel) =>
-      `${dateLabel} nu **${practice}** naal tuhadi consultation complete ho gayi hai.`,
-    linkIntro: 'Poori conversation (chat, attachments, te system notes) kade vi dekho:',
-    ttlNote:
-      '90 days layi available hai. Us ton baad link dubara kholan layi support naal contact karo.',
-  },
-};
+const POST_CONSULT_CHAT_LINK_COPY: Readonly<Record<StaticMessageLocale, PostConsultChatLinkCopy>> =
+  {
+    en: {
+      opener: (practice, dateLabel) =>
+        `Your consultation with ${practice} on ${dateLabel} is complete.`,
+      linkIntro: 'View the full conversation (chat, attachments, and system notes) any time:',
+      ttlNote: 'Available for 90 days. After that, contact support to re-open the link.',
+    },
+    hi: {
+      opener: (practice, dateLabel) =>
+        `${dateLabel} ko **${practice}** ke saath aapki consultation complete ho gayi hai.`,
+      linkIntro: 'Poori conversation (chat, attachments, aur system notes) kabhi bhi dekhein:',
+      ttlNote:
+        '90 days ke liye available hai. Uske baad link dobara kholne ke liye support se contact karein.',
+    },
+    pa: {
+      opener: (practice, dateLabel) =>
+        `${dateLabel} nu **${practice}** naal tuhadi consultation complete ho gayi hai.`,
+      linkIntro: 'Poori conversation (chat, attachments, te system notes) kade vi dekho:',
+      ttlNote:
+        '90 days layi available hai. Us ton baad link dubara kholan layi support naal contact karo.',
+    },
+  };
 
 const POST_CONSULT_CHAT_DEFAULT_PRACTICE = enByPolicy(
   "your doctor's practice",
@@ -2639,9 +2581,7 @@ const POST_CONSULT_CHAT_DEFAULT_PRACTICE = enByPolicy(
  * @throws when `joinUrl` or `consultDateLabel` resolves empty / whitespace
  *   — caller bug; `sendPostConsultChatHistoryDm` always supplies both.
  */
-export function buildPostConsultChatLinkDm(
-  input: BuildPostConsultChatLinkDmInput,
-): string {
+export function buildPostConsultChatLinkDm(input: BuildPostConsultChatLinkDmInput): string {
   const locale = toStaticLocale(input.language);
   const copy = POST_CONSULT_CHAT_LINK_COPY[locale];
   const joinUrl = input.joinUrl?.trim();
@@ -2649,7 +2589,7 @@ export function buildPostConsultChatLinkDm(
     throw new Error(
       'buildPostConsultChatLinkDm: joinUrl is required ' +
         '(sendPostConsultChatHistoryDm composes this from APP_BASE_URL + sessionId + HMAC token — ' +
-        'empty here means an upstream wiring bug).',
+        'empty here means an upstream wiring bug).'
     );
   }
   const dateLabel = input.consultDateLabel?.trim();
@@ -2657,19 +2597,14 @@ export function buildPostConsultChatLinkDm(
     throw new Error(
       'buildPostConsultChatLinkDm: consultDateLabel is required ' +
         '(sendPostConsultChatHistoryDm derives this from session.actual_ended_at — ' +
-        'empty here means the session row is missing actual_ended_at).',
+        'empty here means the session row is missing actual_ended_at).'
     );
   }
   const practice = input.practiceName?.trim() || POST_CONSULT_CHAT_DEFAULT_PRACTICE[locale];
 
-  return [
-    copy.opener(practice, dateLabel),
-    '',
-    copy.linkIntro,
-    joinUrl,
-    '',
-    copy.ttlNote,
-  ].join('\n');
+  return [copy.opener(practice, dateLabel), '', copy.linkIntro, joinUrl, '', copy.ttlNote].join(
+    '\n'
+  );
 }
 
 // ============================================================================
@@ -2724,8 +2659,7 @@ const TRANSCRIPT_DOWNLOADED_NOTIFICATION_COPY: Readonly<
       `**${practice}** te tuhade doctor ne ${dateLabel} wale consult di written transcript download kiti.`,
     reassurance:
       'Eh care da normal hissa hai (doctors aksar plan confirm karan layi transcripts review karde ne).',
-    auditLine:
-      'Har access audit hunda hai, te tusi kade vi support ton access log mang sakde ho.',
+    auditLine: 'Har access audit hunda hai, te tusi kade vi support ton access log mang sakde ho.',
   },
 };
 
@@ -2765,7 +2699,7 @@ const TRANSCRIPT_DOWNLOADED_DEFAULT_PRACTICE = enByPolicy(
  *   before invoking the builder).
  */
 export function buildTranscriptDownloadedNotificationDm(
-  input: BuildTranscriptDownloadedNotificationDmInput,
+  input: BuildTranscriptDownloadedNotificationDmInput
 ): string {
   const locale = toStaticLocale(input.language);
   const copy = TRANSCRIPT_DOWNLOADED_NOTIFICATION_COPY[locale];
@@ -2774,14 +2708,13 @@ export function buildTranscriptDownloadedNotificationDm(
     throw new Error(
       'buildTranscriptDownloadedNotificationDm: consultDateLabel is required ' +
         '(notifyPatientOfDoctorReplay derives this from session.actual_ended_at — ' +
-        'empty here signals an upstream wiring bug or a session row missing actual_ended_at).',
+        'empty here signals an upstream wiring bug or a session row missing actual_ended_at).'
     );
   }
   const practice = input.practiceName?.trim() || TRANSCRIPT_DOWNLOADED_DEFAULT_PRACTICE[locale];
 
   return [copy.lead(practice, dateLabel), '', copy.reassurance, copy.auditLine].join('\n');
 }
-
 
 // ============================================================================
 // Plan 09 · Task 49 — mid-consult refund status copy
@@ -2926,8 +2859,7 @@ const APPOINTMENT_PICK_NOT_FOUND_COPY: Readonly<
       "Woh appointment nahi mili. Dubara try karein ya 'reschedule appointment' likh kar start karein.",
   },
   pa: {
-    cancel:
-      "Oh appointment nahi mili. Dubara try karo ya 'cancel appointment' likh ke start karo.",
+    cancel: "Oh appointment nahi mili. Dubara try karo ya 'cancel appointment' likh ke start karo.",
     reschedule:
       "Oh appointment nahi mili. Dubara try karo ya 'reschedule appointment' likh ke start karo.",
   },
@@ -2950,8 +2882,7 @@ const CANCEL_CONFIRM_PROMPT_COPY: Readonly<
   Record<StaticMessageLocale, { body: (dateDisplay: string) => string }>
 > = {
   en: {
-    body: (dateDisplay) =>
-      `Cancel appointment on ${dateDisplay}? Reply **Yes** or **No**.`,
+    body: (dateDisplay) => `Cancel appointment on ${dateDisplay}? Reply **Yes** or **No**.`,
   },
   hi: {
     body: (dateDisplay) =>
@@ -2963,9 +2894,7 @@ const CANCEL_CONFIRM_PROMPT_COPY: Readonly<
   },
 };
 
-export function buildCancelConfirmPromptMessage(
-  input: CancelConfirmPromptMessageInput
-): string {
+export function buildCancelConfirmPromptMessage(input: CancelConfirmPromptMessageInput): string {
   const locale = toStaticLocale(input.language);
   return CANCEL_CONFIRM_PROMPT_COPY[locale].body(input.dateDisplay);
 }
@@ -2990,9 +2919,7 @@ const NUMERIC_PICK_INVALID_COPY: Readonly<
   },
 };
 
-export function buildNumericPickInvalidMessage(
-  input: NumericPickInvalidMessageInput
-): string {
+export function buildNumericPickInvalidMessage(input: NumericPickInvalidMessageInput): string {
   const locale = toStaticLocale(input.language);
   return NUMERIC_PICK_INVALID_COPY[locale].body(input.count);
 }
@@ -3038,22 +2965,17 @@ const APPOINTMENT_CANCELLED_COPY: Readonly<
   Record<StaticMessageLocale, { body: (dateDisplay: string) => string }>
 > = {
   en: {
-    body: (dateDisplay) =>
-      `Your appointment on ${dateDisplay} has been cancelled.`,
+    body: (dateDisplay) => `Your appointment on ${dateDisplay} has been cancelled.`,
   },
   hi: {
-    body: (dateDisplay) =>
-      `${dateDisplay} par aapki appointment cancel ho gayi hai.`,
+    body: (dateDisplay) => `${dateDisplay} par aapki appointment cancel ho gayi hai.`,
   },
   pa: {
-    body: (dateDisplay) =>
-      `${dateDisplay} te tuhadi appointment cancel ho gayi hai.`,
+    body: (dateDisplay) => `${dateDisplay} te tuhadi appointment cancel ho gayi hai.`,
   },
 };
 
-export function buildAppointmentCancelledMessage(
-  input: AppointmentCancelledMessageInput
-): string {
+export function buildAppointmentCancelledMessage(input: AppointmentCancelledMessageInput): string {
   const locale = toStaticLocale(input.language);
   return APPOINTMENT_CANCELLED_COPY[locale].body(input.dateDisplay);
 }
@@ -3068,9 +2990,7 @@ const CANCEL_DECLINED_COPY: Readonly<Record<StaticMessageLocale, string>> = {
   pa: 'Koi gal nahi. Tuhadi appointment hun vi scheduled hai.',
 };
 
-export function buildCancelDeclinedMessage(
-  input: CancelDeclinedMessageInput
-): string {
+export function buildCancelDeclinedMessage(input: CancelDeclinedMessageInput): string {
   return CANCEL_DECLINED_COPY[toStaticLocale(input.language)];
 }
 
@@ -3114,10 +3034,7 @@ export interface StatusSelfOnlyOtherPatientMessageInput {
 }
 
 const STATUS_SELF_ONLY_OTHER_COPY: Readonly<
-  Record<
-    StaticMessageLocale,
-    { body: (appointmentLine: string, name: string) => string }
-  >
+  Record<StaticMessageLocale, { body: (appointmentLine: string, name: string) => string }>
 > = {
   en: {
     body: (appointmentLine, name) =>
@@ -3188,26 +3105,21 @@ const STATUS_UPCOMING_LIST_COPY: Readonly<
   >
 > = {
   en: {
-    header: (count) =>
-      `You have ${count} upcoming appointment${count > 1 ? 's' : ''}:`,
+    header: (count) => `You have ${count} upcoming appointment${count > 1 ? 's' : ''}:`,
     capNote: '(showing first 10)',
   },
   hi: {
-    header: (count) =>
-      `Aapke ${count} upcoming appointment${count > 1 ? 's' : ''} hain:`,
+    header: (count) => `Aapke ${count} upcoming appointment${count > 1 ? 's' : ''} hain:`,
     capNote: '(pehle 10 dikha rahe hain)',
   },
   pa: {
-    header: (count) =>
-      `Tuhade ${count} upcoming appointment${count > 1 ? 's' : ''} ne:`,
+    header: (count) => `Tuhade ${count} upcoming appointment${count > 1 ? 's' : ''} ne:`,
     capNote: '(pehle 10 dikha rahe haan)',
   },
 };
 
 /** @phi true when lines include other-patient prefixes. */
-export function buildStatusUpcomingListMessage(
-  input: StatusUpcomingListMessageInput
-): string {
+export function buildStatusUpcomingListMessage(input: StatusUpcomingListMessageInput): string {
   const locale = toStaticLocale(input.language);
   const copy = STATUS_UPCOMING_LIST_COPY[locale];
   let out = `${copy.header(input.totalCount)}\n\n${input.statusLines.join('\n')}`;
@@ -3225,10 +3137,7 @@ export interface RescheduleChoiceListMessageInput {
 }
 
 const RESCHEDULE_CHOICE_LIST_COPY: Readonly<
-  Record<
-    StaticMessageLocale,
-    { body: (linesBlock: string, count: number) => string }
-  >
+  Record<StaticMessageLocale, { body: (linesBlock: string, count: number) => string }>
 > = {
   en: {
     body: (linesBlock, count) =>
@@ -3244,14 +3153,9 @@ const RESCHEDULE_CHOICE_LIST_COPY: Readonly<
   },
 };
 
-export function buildRescheduleChoiceListMessage(
-  input: RescheduleChoiceListMessageInput
-): string {
+export function buildRescheduleChoiceListMessage(input: RescheduleChoiceListMessageInput): string {
   const locale = toStaticLocale(input.language);
-  return RESCHEDULE_CHOICE_LIST_COPY[locale].body(
-    input.lines.join('\n'),
-    input.count
-  );
+  return RESCHEDULE_CHOICE_LIST_COPY[locale].body(input.lines.join('\n'), input.count);
 }
 
 export interface PostBookingAckMessageInput {
@@ -3264,9 +3168,7 @@ const POST_BOOKING_ACK_COPY: Readonly<Record<StaticMessageLocale, string>> = {
   pa: 'Bahut vadiya — sab set hai. Hor kuch chahida hove ta dasso.',
 };
 
-export function buildPostBookingAckMessage(
-  input: PostBookingAckMessageInput
-): string {
+export function buildPostBookingAckMessage(input: PostBookingAckMessageInput): string {
   return POST_BOOKING_ACK_COPY[toStaticLocale(input.language)];
 }
 
@@ -3300,9 +3202,7 @@ const CONSENT_PERSIST_MISSING_INFO_COPY: Readonly<Record<StaticMessageLocale, st
   pa: "Mainu tuhadi information nahi mili. Schedule karna hove ta 'book appointment' ton dubara shuru karo.",
 };
 
-export function buildConsentPersistMissingInfoMessage(
-  input: ConsentLanguageOnlyInput
-): string {
+export function buildConsentPersistMissingInfoMessage(input: ConsentLanguageOnlyInput): string {
   return CONSENT_PERSIST_MISSING_INFO_COPY[toStaticLocale(input.language)];
 }
 
@@ -3312,21 +3212,17 @@ const CONSENT_PERSIST_MISSING_PHONE_COPY: Readonly<Record<StaticMessageLocale, s
   pa: "Registration complete karan layi tuhada phone number chahida. 'book appointment' ton dubara shuru karo.",
 };
 
-export function buildConsentPersistMissingPhoneMessage(
-  input: ConsentLanguageOnlyInput
-): string {
+export function buildConsentPersistMissingPhoneMessage(input: ConsentLanguageOnlyInput): string {
   return CONSENT_PERSIST_MISSING_PHONE_COPY[toStaticLocale(input.language)];
 }
 
 const CONSENT_PERSIST_SUCCESS_COPY: Readonly<Record<StaticMessageLocale, string>> = {
   en: "Thanks! I've saved your details. How can I help you next - would you like to book an appointment or check availability?",
-  hi: "Dhanyavaad! Maine aapki details save kar li hain. Aage kaise madad kar sakta hoon — appointment book karna chahenge ya availability check karni hai?",
-  pa: "Dhanyavaad! Main tuhadi details save kar chukya haan. Agge kive madad kar sakda haan — appointment book karna chaoge ya availability check karni hai?",
+  hi: 'Dhanyavaad! Maine aapki details save kar li hain. Aage kaise madad kar sakta hoon — appointment book karna chahenge ya availability check karni hai?',
+  pa: 'Dhanyavaad! Main tuhadi details save kar chukya haan. Agge kive madad kar sakda haan — appointment book karna chaoge ya availability check karni hai?',
 };
 
-export function buildConsentPersistSuccessMessage(
-  input: ConsentLanguageOnlyInput
-): string {
+export function buildConsentPersistSuccessMessage(input: ConsentLanguageOnlyInput): string {
   return CONSENT_PERSIST_SUCCESS_COPY[toStaticLocale(input.language)];
 }
 
@@ -3346,9 +3242,7 @@ const CONSENT_REVOKE_RECORD_NOT_FOUND_COPY: Readonly<Record<StaticMessageLocale,
   pa: 'Main tuhada record nahi labhya. Je pehlan information share kiti si ta shayad pehlan hi remove ho chuki hai.',
 };
 
-export function buildConsentRevokeRecordNotFoundMessage(
-  input: ConsentLanguageOnlyInput
-): string {
+export function buildConsentRevokeRecordNotFoundMessage(input: ConsentLanguageOnlyInput): string {
   return CONSENT_REVOKE_RECORD_NOT_FOUND_COPY[toStaticLocale(input.language)];
 }
 
@@ -3358,9 +3252,7 @@ const CONSENT_REVOKE_ALREADY_REMOVED_COPY: Readonly<Record<StaticMessageLocale, 
   pa: 'Tuhada data pehlan hi remove ho chuka hai. Hor kuj madad chahidi?',
 };
 
-export function buildConsentRevokeAlreadyRemovedMessage(
-  input: ConsentLanguageOnlyInput
-): string {
+export function buildConsentRevokeAlreadyRemovedMessage(input: ConsentLanguageOnlyInput): string {
   return CONSENT_REVOKE_ALREADY_REMOVED_COPY[toStaticLocale(input.language)];
 }
 
@@ -3370,9 +3262,7 @@ const CONSENT_REVOKE_NO_STORED_DATA_COPY: Readonly<Record<StaticMessageLocale, s
   pa: "Sadde kol remove karan layi koi stored personal information nahi. Schedule karna hove ta 'book appointment' likho.",
 };
 
-export function buildConsentRevokeNoStoredDataMessage(
-  input: ConsentLanguageOnlyInput
-): string {
+export function buildConsentRevokeNoStoredDataMessage(input: ConsentLanguageOnlyInput): string {
   return CONSENT_REVOKE_NO_STORED_DATA_COPY[toStaticLocale(input.language)];
 }
 
@@ -3382,9 +3272,7 @@ const CONSENT_REVOKE_SUCCESS_COPY: Readonly<Record<StaticMessageLocale, string>>
   pa: 'Ho gaya. Main tuhadi personal information sade records ton remove kar ditti hai. Hor kuj madad chahidi?',
 };
 
-export function buildConsentRevokeSuccessMessage(
-  input: ConsentLanguageOnlyInput
-): string {
+export function buildConsentRevokeSuccessMessage(input: ConsentLanguageOnlyInput): string {
   return CONSENT_REVOKE_SUCCESS_COPY[toStaticLocale(input.language)];
 }
 
@@ -3394,10 +3282,37 @@ const RECEPTIONIST_PAUSE_DEFAULT_COPY: Readonly<Record<StaticMessageLocale, stri
   pa: 'Tuhade message layi dhanyavaad. Sadi team jadon ho sake is inbox ton personally reply karegi. Automated scheduling hun pause hai — tuhade sabr layi dhanyavaad.',
 };
 
-export function buildReceptionistPauseDefaultMessage(
-  input: ConsentLanguageOnlyInput
-): string {
+export function buildReceptionistPauseDefaultMessage(input: ConsentLanguageOnlyInput): string {
   return RECEPTIONIST_PAUSE_DEFAULT_COPY[toStaticLocale(input.language)];
+}
+
+// ---------------------------------------------------------------------------
+// Automated messaging opt-out (mca-07) — distinct from consent revoke
+// ---------------------------------------------------------------------------
+
+export const AUTOMATED_MESSAGING_STOP_ACK_EN =
+  "I'll stop sending automated messages here. Your doctor can still reply. Send START if you want them again.";
+
+const AUTOMATED_MESSAGING_STOP_ACK_COPY: Readonly<Record<StaticMessageLocale, string>> = {
+  en: AUTOMATED_MESSAGING_STOP_ACK_EN,
+  hi: 'Main yahan automated messages bhejna band karunga. Doctor ab bhi reply kar sakte hain. Dobara chahiye to START bhejein.',
+  pa: 'Main ithe automated messages bhejna band karunga. Doctor hun vi reply kar sakde han. Dobara chahide hon ta START bhejo.',
+};
+
+export const AUTOMATED_MESSAGING_START_ACK_EN = 'Automated messages are on again. How can I help?';
+
+const AUTOMATED_MESSAGING_START_ACK_COPY: Readonly<Record<StaticMessageLocale, string>> = {
+  en: AUTOMATED_MESSAGING_START_ACK_EN,
+  hi: 'Automated messages phir se on hain. Main kaise madad karun?',
+  pa: 'Automated messages phir ton on han. Main kive madad karan?',
+};
+
+export function buildAutomatedMessagingStopAckMessage(input: ConsentLanguageOnlyInput): string {
+  return AUTOMATED_MESSAGING_STOP_ACK_COPY[toStaticLocale(input.language)];
+}
+
+export function buildAutomatedMessagingStartAckMessage(input: ConsentLanguageOnlyInput): string {
+  return AUTOMATED_MESSAGING_START_ACK_COPY[toStaticLocale(input.language)];
 }
 
 // ---------------------------------------------------------------------------
@@ -3429,9 +3344,7 @@ const BOOK_FOR_OTHER_SELF_NUDGE_COPY: Readonly<Record<StaticMessageLocale, strin
 };
 
 /** Appended after a slot link — self booking nudge (LANG5-D7 single builder). */
-export function buildBookForOtherSelfNudgeMessage(
-  input: ConsentLanguageOnlyInput
-): string {
+export function buildBookForOtherSelfNudgeMessage(input: ConsentLanguageOnlyInput): string {
   return BOOK_FOR_OTHER_SELF_NUDGE_COPY[toStaticLocale(input.language)];
 }
 
@@ -3448,9 +3361,7 @@ const BOOK_FOR_RELATION_NUDGE_COPY: Readonly<
   pa: { body: (relation) => `Ki tusi apne ${relation} layi hun book karna chaoge?` },
 };
 
-export function buildBookForRelationNudgeMessage(
-  input: BookForRelationNudgeMessageInput
-): string {
+export function buildBookForRelationNudgeMessage(input: BookForRelationNudgeMessageInput): string {
   return BOOK_FOR_RELATION_NUDGE_COPY[toStaticLocale(input.language)].body(input.relation);
 }
 
@@ -3460,9 +3371,7 @@ const CONSENT_BOOK_FOR_OTHER_RETRY_INTRO_COPY: Readonly<Record<StaticMessageLoca
   pa: 'Jis person layi tusi book kar rahe ho ohna di details samajh nahi aayi — ki dubara bhej sakde ho?',
 };
 
-export function buildConsentBookForOtherRetryIntroMessage(
-  input: ConsentLanguageOnlyInput
-): string {
+export function buildConsentBookForOtherRetryIntroMessage(input: ConsentLanguageOnlyInput): string {
   return CONSENT_BOOK_FOR_OTHER_RETRY_INTRO_COPY[toStaticLocale(input.language)];
 }
 
@@ -3472,9 +3381,7 @@ const CONSENT_PERSIST_FAILURE_RETRY_COPY: Readonly<Record<StaticMessageLocale, s
   pa: "Tuhadi details save karan vich problem aayi — retry layi dubara **Yes** reply karo, ya 'book appointment' keh ke details dubara share karo.",
 };
 
-export function buildConsentPersistFailureRetryMessage(
-  input: ConsentLanguageOnlyInput
-): string {
+export function buildConsentPersistFailureRetryMessage(input: ConsentLanguageOnlyInput): string {
   return CONSENT_PERSIST_FAILURE_RETRY_COPY[toStaticLocale(input.language)];
 }
 
@@ -3511,9 +3418,7 @@ const STILL_NEED_DETAILS_INTRO_COPY: Readonly<Record<StaticMessageLocale, string
   pa: 'Hun vi eh details chahidiyan ne:',
 };
 
-export function buildStillNeedDetailsIntroMessage(
-  input: ConsentLanguageOnlyInput
-): string {
+export function buildStillNeedDetailsIntroMessage(input: ConsentLanguageOnlyInput): string {
   return STILL_NEED_DETAILS_INTRO_COPY[toStaticLocale(input.language)];
 }
 
@@ -3606,9 +3511,7 @@ export interface PatientMatchConfirmMessageInput {
 }
 
 /** @phi true — interpolates patient name(s). */
-export function buildPatientMatchConfirmMessage(
-  input: PatientMatchConfirmMessageInput
-): string {
+export function buildPatientMatchConfirmMessage(input: PatientMatchConfirmMessageInput): string {
   const locale = toStaticLocale(input.language);
   if (input.kind === 'other_number') {
     const name = input.patientName?.trim() || 'them';
@@ -3630,9 +3533,7 @@ const FOLLOW_UP_SERVICE_CONFIRM_UNCLEAR_COPY: Readonly<Record<StaticMessageLocal
   pa: 'Please **Yes** ya **No** reply karo — ki eh visit same service layi follow-up hai?',
 };
 
-export function buildFollowUpServiceConfirmUnclearMessage(
-  input: ConsentLanguageOnlyInput
-): string {
+export function buildFollowUpServiceConfirmUnclearMessage(input: ConsentLanguageOnlyInput): string {
   return FOLLOW_UP_SERVICE_CONFIRM_UNCLEAR_COPY[toStaticLocale(input.language)];
 }
 
@@ -3642,9 +3543,7 @@ const PATIENT_MATCH_CONFIRM_UNCLEAR_COPY: Readonly<Record<StaticMessageLocale, s
   pa: 'Existing record use karn layi Yes reply karo, ya naya patient banan layi No. Je multiple matches mile hon ta 1 ya 2 reply karo.',
 };
 
-export function buildPatientMatchConfirmUnclearMessage(
-  input: ConsentLanguageOnlyInput
-): string {
+export function buildPatientMatchConfirmUnclearMessage(input: ConsentLanguageOnlyInput): string {
   return PATIENT_MATCH_CONFIRM_UNCLEAR_COPY[toStaticLocale(input.language)];
 }
 
@@ -3654,9 +3553,7 @@ const TELECONSULT_CHANNEL_PICK_COPY: Readonly<Record<StaticMessageLocale, string
   pa: 'Hun asi sirf **teleconsult** offer karde haan (text, voice, ya video) — tuhade layi kehra best hai?',
 };
 
-export function buildTeleconsultChannelPickMessage(
-  input: ConsentLanguageOnlyInput
-): string {
+export function buildTeleconsultChannelPickMessage(input: ConsentLanguageOnlyInput): string {
   return TELECONSULT_CHANNEL_PICK_COPY[toStaticLocale(input.language)];
 }
 
@@ -3694,9 +3591,7 @@ const BOOK_FOR_THEM_INTRO_COPY: Readonly<Record<StaticMessageLocale, string>> = 
   pa: 'Main **ohna** layi book karn vich madad karunga. Ohna di details share karo:',
 };
 
-export function buildBookForThemIntroMessage(
-  input: ConsentLanguageOnlyInput
-): string {
+export function buildBookForThemIntroMessage(input: ConsentLanguageOnlyInput): string {
   return BOOK_FOR_THEM_INTRO_COPY[toStaticLocale(input.language)];
 }
 
@@ -3712,7 +3607,8 @@ const RETURNING_FOLLOW_UP_CONFIRM_COPY: Readonly<
     body: (label) => `Is this a **follow-up** for **${label}**? Reply **Yes** or **No**.`,
   },
   hi: {
-    body: (label) => `Kya yeh **${label}** ke liye **follow-up** hai? **Yes** ya **No** reply karein.`,
+    body: (label) =>
+      `Kya yeh **${label}** ke liye **follow-up** hai? **Yes** ya **No** reply karein.`,
   },
   pa: {
     body: (label) => `Ki eh **${label}** layi **follow-up** hai? **Yes** ya **No** reply karo.`,
@@ -3722,9 +3618,7 @@ const RETURNING_FOLLOW_UP_CONFIRM_COPY: Readonly<
 export function buildReturningFollowUpConfirmMessage(
   input: ReturningFollowUpConfirmMessageInput
 ): string {
-  return RETURNING_FOLLOW_UP_CONFIRM_COPY[toStaticLocale(input.language)].body(
-    input.serviceLabel
-  );
+  return RETURNING_FOLLOW_UP_CONFIRM_COPY[toStaticLocale(input.language)].body(input.serviceLabel);
 }
 
 const PHONE_DISPLAY_FALLBACK_LABEL_COPY: Readonly<Record<StaticMessageLocale, string>> = {
@@ -3734,9 +3628,7 @@ const PHONE_DISPLAY_FALLBACK_LABEL_COPY: Readonly<Record<StaticMessageLocale, st
 };
 
 /** Fallback phone display token (not PHI — opaque label). */
-export function buildPhoneDisplayFallbackLabel(
-  input: ConsentLanguageOnlyInput
-): string {
+export function buildPhoneDisplayFallbackLabel(input: ConsentLanguageOnlyInput): string {
   return PHONE_DISPLAY_FALLBACK_LABEL_COPY[toStaticLocale(input.language)];
 }
 
@@ -3755,6 +3647,11 @@ export const DM_COPY_ENGLISH_ONLY_EXCEPTIONS = {
   },
   COMMENT_PUBLIC_REPLY: {
     text: 'Check your DM for more information.',
+    variants: [
+      'Check your DM for more information.',
+      'I sent you a private message with the details.',
+      'Please open your DMs — I replied there.',
+    ],
     reason: 'Public comment reply visible to everyone, not a DM',
   },
   RECORDING_CONSENT_AND_ACCOUNT_DELETION: {
@@ -3763,9 +3660,38 @@ export const DM_COPY_ENGLISH_ONLY_EXCEPTIONS = {
   },
 } as const;
 
+/** Instagram username charset (letters, digits, period, underscore; max 30). */
+const COMMENT_PUBLIC_REPLY_USERNAME = /^[A-Za-z0-9._]{1,30}$/;
+
+function commentPublicReplyVariantIndex(commentId: string): number {
+  const variants = DM_COPY_ENGLISH_ONLY_EXCEPTIONS.COMMENT_PUBLIC_REPLY.variants;
+  let n = 0;
+  for (let i = 0; i < commentId.length; i += 1) {
+    n = (n + commentId.charCodeAt(i)) % variants.length;
+  }
+  return n;
+}
+
+/**
+ * Public comment reply — English forever (lang-23). Prefixes `@username`
+ * when a safe handle is present. Same comment id always picks the same
+ * variant so Meta retries stay identical.
+ */
+export function buildCommentPublicReplyText(input: {
+  commentId: string;
+  username?: string | null;
+}): string {
+  const variants = DM_COPY_ENGLISH_ONLY_EXCEPTIONS.COMMENT_PUBLIC_REPLY.variants;
+  const variant = variants[commentPublicReplyVariantIndex(input.commentId)] ?? variants[0];
+  const raw = (input.username ?? '').trim().replace(/^@/, '');
+  if (raw && COMMENT_PUBLIC_REPLY_USERNAME.test(raw)) {
+    return `@${raw} ${variant}`;
+  }
+  return variant;
+}
+
 /** English constant for the no-doctor exception path (same bytes as builder `en`). */
-export const FALLBACK_REPLY_EN =
-  DM_COPY_ENGLISH_ONLY_EXCEPTIONS.FALLBACK_REPLY_NO_DOCTOR.text;
+export const FALLBACK_REPLY_EN = DM_COPY_ENGLISH_ONLY_EXCEPTIONS.FALLBACK_REPLY_NO_DOCTOR.text;
 
 const FALLBACK_REPLY_COPY: Readonly<Record<StaticMessageLocale, string>> = {
   en: FALLBACK_REPLY_EN,
@@ -3773,9 +3699,7 @@ const FALLBACK_REPLY_COPY: Readonly<Record<StaticMessageLocale, string>> = {
   pa: 'Tuhade message layi dhanyavaad. Asi jald jawab denge.',
 };
 
-export function buildFallbackReplyMessage(
-  input: ConsentLanguageOnlyInput
-): string {
+export function buildFallbackReplyMessage(input: ConsentLanguageOnlyInput): string {
   return FALLBACK_REPLY_COPY[toStaticLocale(input.language)];
 }
 
@@ -3785,9 +3709,7 @@ const THROTTLE_ACK_COPY: Readonly<Record<StaticMessageLocale, string>> = {
   pa: 'Tuhade messages aa gaye — jawab denn layi thoda samay devo.',
 };
 
-export function buildThrottleAckMessage(
-  input: ConsentLanguageOnlyInput
-): string {
+export function buildThrottleAckMessage(input: ConsentLanguageOnlyInput): string {
   return THROTTLE_ACK_COPY[toStaticLocale(input.language)];
 }
 
@@ -3836,45 +3758,45 @@ const COMMENT_PROACTIVE_DM_TEMPLATES: Readonly<
   hi: {
     book_appointment: {
       ack: 'Aapne booking mein interest dikhaya.',
-      cta: "Schedule karna ho to yahan reply karein.",
+      cta: 'Schedule karna ho to yahan reply karein.',
     },
     check_availability: {
       ack: 'Aapne availability ke baare mein pucha.',
-      cta: "Consultation schedule karna ho to yahan reply karein.",
+      cta: 'Consultation schedule karna ho to yahan reply karein.',
     },
     pricing_inquiry: {
       ack: 'Aapne pricing ke baare mein pucha.',
-      cta: "Aur details chahiye hon to yahan reply karein.",
+      cta: 'Aur details chahiye hon to yahan reply karein.',
     },
     general_inquiry: {
       ack: 'Aapka ek sawaal tha.',
-      cta: "Connect karna ho to yahan reply karein.",
+      cta: 'Connect karna ho to yahan reply karein.',
     },
     medical_query: {
       ack: 'Hamare doctor aapke query mein madad kar sakte hain.',
-      cta: "Consultation schedule karna ho to yahan reply karein.",
+      cta: 'Consultation schedule karna ho to yahan reply karein.',
     },
   },
   pa: {
     book_appointment: {
       ack: 'Tusi booking vich interest dikhaya.',
-      cta: "Schedule karna hove ta ithe reply karo.",
+      cta: 'Schedule karna hove ta ithe reply karo.',
     },
     check_availability: {
       ack: 'Tusi availability baare puchya.',
-      cta: "Consultation schedule karna hove ta ithe reply karo.",
+      cta: 'Consultation schedule karna hove ta ithe reply karo.',
     },
     pricing_inquiry: {
       ack: 'Tusi pricing baare puchya.',
-      cta: "Hor details chahidiyan hon ta ithe reply karo.",
+      cta: 'Hor details chahidiyan hon ta ithe reply karo.',
     },
     general_inquiry: {
       ack: 'Tuhada ik sawaal si.',
-      cta: "Connect karna hove ta ithe reply karo.",
+      cta: 'Connect karna hove ta ithe reply karo.',
     },
     medical_query: {
       ack: 'Sade doctor tuhade query vich madad kar sakde ne.',
-      cta: "Consultation schedule karna hove ta ithe reply karo.",
+      cta: 'Consultation schedule karna hove ta ithe reply karo.',
     },
   },
 };
@@ -3883,9 +3805,7 @@ const COMMENT_PROACTIVE_DM_TEMPLATES: Readonly<
  * Proactive DM after a high-intent public comment (Instagram + Facebook).
  * Language from the linked conversation only (LANG5-D6) — never from comment text.
  */
-export function buildCommentProactiveDmMessage(
-  input: CommentProactiveDmMessageInput
-): string {
+export function buildCommentProactiveDmMessage(input: CommentProactiveDmMessageInput): string {
   const locale = toStaticLocale(input.language);
   const practiceName = input.practiceName?.trim() || 'Our practice';
   const specialty = input.specialty?.trim() || '';
@@ -3920,9 +3840,7 @@ const SLOT_SELECTED_FOLLOW_UP_COPY: Readonly<
   },
 };
 
-export function buildSlotSelectedFollowUpDm(
-  input: SlotSelectedFollowUpDmInput
-): string {
+export function buildSlotSelectedFollowUpDm(input: SlotSelectedFollowUpDmInput): string {
   return SLOT_SELECTED_FOLLOW_UP_COPY[toStaticLocale(input.language)].body(
     input.dateDisplay,
     input.bookingLink
@@ -3954,9 +3872,7 @@ const DUPLICATE_BOOKING_ON_DATE_COPY: Readonly<
 export function buildDuplicateBookingOnDateMessage(
   input: DuplicateBookingOnDateMessageInput
 ): string {
-  return DUPLICATE_BOOKING_ON_DATE_COPY[toStaticLocale(input.language)].body(
-    input.dateDisplay
-  );
+  return DUPLICATE_BOOKING_ON_DATE_COPY[toStaticLocale(input.language)].body(input.dateDisplay);
 }
 
 export interface AppointmentRescheduledConfirmDmInput {
@@ -3989,11 +3905,7 @@ export function buildAppointmentRescheduledConfirmDm(
 export interface WelcomeBackSegmentMessageInput {
   readonly language: ConversationLanguage;
   readonly firstName?: string;
-  readonly recencyBucket?:
-    | 'within_1_month'
-    | 'within_3_months'
-    | 'within_1_year'
-    | 'over_1_year';
+  readonly recencyBucket?: 'within_1_month' | 'within_3_months' | 'within_1_year' | 'over_1_year';
 }
 
 const WELCOME_BACK_GREETING_NAMED_COPY: Readonly<
@@ -4036,9 +3948,7 @@ const WELCOME_BACK_SUFFIX_COPY: Readonly<
   },
 };
 
-export function buildWelcomeBackSegmentMessage(
-  input: WelcomeBackSegmentMessageInput
-): string {
+export function buildWelcomeBackSegmentMessage(input: WelcomeBackSegmentMessageInput): string {
   const locale = toStaticLocale(input.language);
   const firstName = input.firstName?.trim();
   const greeting = firstName
@@ -4046,9 +3956,7 @@ export function buildWelcomeBackSegmentMessage(
     : WELCOME_BACK_GREETING_PLAIN_COPY[locale];
 
   const suffixByBucket = WELCOME_BACK_SUFFIX_COPY[locale];
-  const suffix = input.recencyBucket
-    ? suffixByBucket[input.recencyBucket]
-    : undefined;
+  const suffix = input.recencyBucket ? suffixByBucket[input.recencyBucket] : undefined;
   return suffix ? `${greeting} ${suffix}` : greeting;
 }
 
@@ -4083,9 +3991,6 @@ const LLM_EMPTY_FALLBACK_COPY: Readonly<Record<StaticMessageLocale, string>> = {
 };
 
 /** LLM empty/fail fallback (was ai-service FALLBACK_RESPONSE) — lang-24 sweep. */
-export function buildLlmEmptyFallbackMessage(
-  input: ConsentLanguageOnlyInput
-): string {
+export function buildLlmEmptyFallbackMessage(input: ConsentLanguageOnlyInput): string {
   return LLM_EMPTY_FALLBACK_COPY[toStaticLocale(input.language)];
 }
-

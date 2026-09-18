@@ -43,6 +43,10 @@ function makeAdmin(rows: Array<Record<string, unknown>>) {
     select: jest.fn().mockReturnThis(),
     eq: jest.fn().mockReturnThis(),
     limit: jest.fn().mockResolvedValue({ data: rows, error: null } as never),
+    maybeSingle: jest.fn().mockResolvedValue({
+      data: { automated_messaging_opted_out_at: null },
+      error: null,
+    } as never),
     update: jest.fn().mockReturnThis(),
   };
   chain.update.mockReturnValue({

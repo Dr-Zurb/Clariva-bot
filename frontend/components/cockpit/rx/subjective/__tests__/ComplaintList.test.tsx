@@ -31,6 +31,18 @@ vi.mock("@/lib/api/complaint-master", () => ({
   searchComplaints: vi.fn(),
 }));
 
+const mockClearComplaintCombo = vi.fn();
+const mockUseDoctorComplaintCombos = vi.fn(() => ({
+  combos: [] as unknown[],
+  isLoading: false,
+  clearCombo: mockClearComplaintCombo,
+}));
+
+vi.mock("@/hooks/useDoctorComplaintCombos", () => ({
+  useDoctorComplaintCombos: (...args: unknown[]) =>
+    mockUseDoctorComplaintCombos(...args),
+}));
+
 const prescriptionIdRef = { current: "rx-1" as string | null };
 
 function renderWithRxForm(
@@ -146,6 +158,12 @@ describe("ComplaintList", () => {
   beforeEach(() => {
     sessionStorage.clear();
     mockUpdatePrescription.mockClear();
+    mockClearComplaintCombo.mockClear();
+    mockUseDoctorComplaintCombos.mockReturnValue({
+      combos: [],
+      isLoading: false,
+      clearCombo: mockClearComplaintCombo,
+    });
     prescriptionIdRef.current = "rx-1";
     mockDefaultComplaintSearch();
   });
@@ -188,6 +206,69 @@ describe("ComplaintList", () => {
     expect(screen.getByText("Lethargy")).toBeInTheDocument();
     expect(document.activeElement).toBe(capture);
     expect(capture).toHaveValue("");
+  });
+
+  it("commits the most-frequent complaint habit as a packed card", async () => {
+    mockUseDoctorComplaintCombos.mockReturnValue({
+      combos: [
+        {
+          complaintName: "Headache",
+          nameKey: "headache",
+          category: "pain",
+          severityBand: "moderate",
+          laterality: null,
+          character: null,
+          associatedNames: ["photophobia", "nausea"],
+          useCount: 12,
+          lastUsedAt: "2026-09-01T00:00:00Z",
+        },
+      ],
+      isLoading: false,
+      clearCombo: mockClearComplaintCombo,
+    });
+
+    renderWithRxForm(<ComplaintList />);
+    const capture = getCaptureInput();
+    fireEvent.change(capture, { target: { value: "he" } });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("complaint-combo-option")).toBeInTheDocument();
+    });
+    expect(screen.getByTestId("complaint-combo-most-frequent")).toHaveTextContent(
+      "Most frequent",
+    );
+
+    fireEvent.keyDown(capture, { key: "Enter" });
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", {
+          name: /Complaint 1: Headache.*Photophobia/i,
+        }),
+      ).toBeInTheDocument();
+    });
+    expect(screen.getByTestId("complaint-card-detail-summary")).toHaveTextContent(
+      /Moderate/i,
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /Complaint 1: Headache/i }),
+    );
+    expect(
+      screen.getAllByLabelText("Duration").every((el) => {
+        return el instanceof HTMLInputElement && el.value === "";
+      }),
+    ).toBe(true);
+    expect(
+      screen.getByRole("button", {
+        name: /Associated symptom 1 of Headache: Photophobia/i,
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", {
+        name: /Associated symptom 2 of Headache: Nausea/i,
+      }),
+    ).toBeInTheDocument();
   });
 
   it("commits autocomplete match with category on Enter", async () => {

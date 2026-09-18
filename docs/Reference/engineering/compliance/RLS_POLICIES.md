@@ -359,6 +359,7 @@ CREATE POLICY "Service role can delete conversations" ...
 **Rationale:**
 - Conversations are created by webhook worker → service role for writes
 - Doctors own their conversations (doctor_id = auth.uid())
+- `automated_messaging_opted_out_at` (migration 239) is covered by the existing row policies — no new policy.
 
 ---
 

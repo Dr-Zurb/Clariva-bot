@@ -47,10 +47,10 @@ const URL = 'https://book.example/b?t=1';
 describe('lang-22 booking / staff / funnel copy', () => {
   it('booking-link families: en byte-identical + queue/slot preserved', () => {
     expect(formatBookingLinkDm({ language: 'en', slotLink: URL, doctorSettings: QUEUE })).toBe(
-      `Join the queue for your visit here: ${URL}\n\nChoose a day, then confirm - you'll get a token number. Wait times are approximate.\n\nEvery consult is audio-recorded as part of the medical record. You have the same access as the clinic, self-serve for 90 days. When the clinic replays a recording, that access is logged and you are notified.`
+      `Join the queue for your visit here: ${URL}\n\nChoose a day, then confirm - you'll get a token number. Wait times are approximate.`
     );
     expect(formatBookingLinkDm({ language: 'en', slotLink: URL, doctorSettings: SLOT })).toBe(
-      `Pick your slot and complete payment here: ${URL}\n\nYou'll be redirected back to this chat when done.\n\nEvery consult is audio-recorded as part of the medical record. You have the same access as the clinic, self-serve for 90 days. When the clinic replays a recording, that access is logged and you are notified.`
+      `Open this link to get an appointment: ${URL}\n\nYou'll be redirected back to this chat when done.`
     );
     expect(formatRescheduleLinkDm({ language: 'en', url: URL, doctorSettings: QUEUE })).toBe(
       `Pick a new day for your visit: [Reschedule](${URL})`
@@ -68,7 +68,16 @@ describe('lang-22 booking / staff / funnel copy', () => {
       "Join the queue using the link above, or say 'change' to get a new link."
     );
     expect(formatBookingAwaitingFollowUpDm({ language: 'en', doctorSettings: SLOT })).toBe(
-      "Pick your slot and complete payment using the link above, or say 'change' to get a new link."
+      "Open the link above to get an appointment, or say 'change' to get a new link."
+    );
+    expect(formatBookingLinkDm({ language: 'en', slotLink: URL, doctorSettings: SLOT })).not.toMatch(
+      /payment/i
+    );
+    expect(formatBookingLinkDm({ language: 'hi', slotLink: URL, doctorSettings: SLOT })).not.toMatch(
+      /payment/i
+    );
+    expect(formatBookingLinkDm({ language: 'pa', slotLink: URL, doctorSettings: SLOT })).not.toMatch(
+      /payment/i
     );
   });
 

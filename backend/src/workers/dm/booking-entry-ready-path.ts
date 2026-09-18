@@ -72,9 +72,10 @@ export interface ApplyReadyPatientBookingPathInput {
   language: ConversationLanguage;
 }
 
-export function applyReadyPatientBookingPath(
-  input: ApplyReadyPatientBookingPathInput
-): { state: ConversationState; replyText: string } {
+export function applyReadyPatientBookingPath(input: ApplyReadyPatientBookingPathInput): {
+  state: ConversationState;
+  replyText: string;
+} {
   const { state, intent, conversationId, doctorId, doctorSettings, language } = input;
 
   if (isSlotBookingBlockedPendingStaffReview(state)) {
@@ -89,11 +90,7 @@ export function applyReadyPatientBookingPath(
         mergeBooking(merged, { consultationType: state.booking?.consultationType }),
         { activeFlow: undefined }
       ),
-      replyText: formatAwaitingStaffServiceConfirmationDm(
-        language,
-        doctorSettings,
-        merged
-      ),
+      replyText: formatAwaitingStaffServiceConfirmationDm(language, doctorSettings, merged),
     };
   }
 
@@ -114,5 +111,17 @@ export function applyReadyPatientBookingPath(
       { activeFlow: undefined }
     ),
     replyText: formatBookingLinkDm({ language, slotLink, doctorSettings }),
+  };
+}
+
+/** Receptionist lead + the same `/book` link (Meta FAQ / empty-status / fees). */
+export function applyLeadPlusBookingLink(
+  input: ApplyReadyPatientBookingPathInput & { lead: string }
+): { state: ConversationState; replyText: string } {
+  const ready = applyReadyPatientBookingPath(input);
+  const lead = input.lead.trim();
+  return {
+    state: ready.state,
+    replyText: lead ? `${lead}\n\n${ready.replyText}` : ready.replyText,
   };
 }

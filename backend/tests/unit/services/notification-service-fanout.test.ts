@@ -375,6 +375,31 @@ describe('Notification fan-out helpers (Plan 01 · Task 16)', () => {
       );
     });
 
+    it('mca-08: opted-out conversation skips IG/FB and still sends SMS + email', async () => {
+      const supa = buildSupabaseMock({
+        session:     { found: true, modality: 'video' },
+        appointment: { found: true, phone: '+919876500001' },
+        patient:     defaultPatient(),
+        conversation: {
+          platform_conversation_id: 'ig-psid-12345',
+          automated_messaging_opted_out_at: '2026-09-16T00:00:00.000Z',
+        } as { platform_conversation_id: string },
+      });
+      database.getSupabaseAdminClient.mockReturnValue(supa);
+
+      const result = await sendConsultationReadyToPatient({ sessionId, correlationId });
+      const channelMap = Object.fromEntries(result.channels.map((c) => [c.channel, c]));
+
+      expect(channelMap.sms.status).toBe('sent');
+      expect(channelMap.email.status).toBe('sent');
+      expect(channelMap.instagram_dm).toEqual({
+        channel: 'instagram_dm',
+        status: 'skipped',
+        reason: 'patient_opted_out',
+      });
+      expect(instagramService.sendInstagramMessage).not.toHaveBeenCalled();
+    });
+
     it('passes session.modality through to the copy builder (video)', async () => {
       const supa = buildSupabaseMock({
         session:     { found: true, modality: 'video' },

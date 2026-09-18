@@ -22,10 +22,10 @@ The single place I look when planning a week. If a thread isn't here, it doesn't
 | L7 | DPIIT Startup India recognition | `NEXT` | Apply after Udyam — needed for the cheaper TM fee |
 | L8 | IP assignment from founders | `NEXT` | Print, sign two sets, scan the PDF |
 | L9 | DPDP Act + health-data posture | `NEXT` | Counsel sitting: attestation vs AI-on-transcript (blocks Phase 2) |
-| L10 | Meta platform-action clause | `NEXT` | Monday: send attorney the clause points (official APIs only; Meta may restrict accounts; no delivery/standing guarantee; liability cap) |
+| L10 | Meta platform-action clause | `NEXT` | Send the L10 draft below to ⟨attorney⟩ — briefing points only; counsel writes the clause |
 | M1 | Meta — data deletion callback | `ACTIVE` | Optional Send Request if this Facebook account ever connected Halo Aid |
 | M2 | Meta — business verification | `PARKED` | Later: open WhatsApp “needs more information” |
-| M3 | Meta — app review submission | `ACTIVE` | Record one screencast: Connect → DM reply → comment reply |
+| M3 | Meta — app review submission | `ACTIVE` | Record one screencast: Connect → DM hours/book (no comments) |
 | P1 | Desk / receptionist | `ACTIVE` | Review history-link spec; promote p1; then Opus `hl-01` |
 | P2 | Cockpit / EHR | `PARKED` | — |
 | P3 | Bot / messaging | `PARKED` | — |
@@ -34,6 +34,7 @@ The single place I look when planning a week. If a thread isn't here, it doesn't
 | G2 | Pricing | `NEXT` | Decide a number I can say out loud without flinching |
 | G3 | Cost-cut stack (Gate 1) | `ACTIVE` | Watch one consult (raw STT + replay), then disable the Twilio compose hook |
 | O1 | `capture/inbox.md` has gone feral | `NEXT` | Triage the 375 lines into `capture/features/` |
+| O2 | Cursor subscription (discount + cancel code) | `WAITING` | 30 Sep 2026: resubscribe at $118 on kivshophelpdesk@gmail.com |
 
 ---
 
@@ -149,9 +150,27 @@ Live URLs are in Meta app settings. Counsel pass (Grievance Officer, collection 
 **Next action:** at the counsel sitting, answer whether attestation may cover AI processing of transcript text (unblocks Phase 2 ship). Do not write the extraction route until that answer is yes.
 
 ### L10 · Meta platform-action clause — `NEXT`
-A clinic Instagram restriction is a platform decision, not a Halo Aid bug. The pilot / customer agreement does not yet say that. Before a 500k-follower clinic is live, counsel needs language that: Halo Aid uses only official Meta APIs; Meta controls the platform and may restrict or suspend accounts at its discretion; no guarantee of message delivery or account standing; the doctor owns the Instagram account; liability is capped.
+A clinic Instagram restriction is a platform decision, not a Halo Aid bug. The pilot / customer agreement does not yet say that. Before a 500k-follower clinic is live, counsel drafts the wording. These are briefing points only — do not paste them into the agreement as if they were a clause.
 
-**Next action:** Monday — send the attorney those five points. Do not invent the wording here.
+**Draft to send** (safety plan Phase 4, written 15 Sep 2026). To: ⟨attorney⟩.
+
+Subject: Halo Aid — Meta / Instagram platform-action language for clinic agreements
+
+We need contract language before a clinic with a large Instagram following goes live on Halo Aid. Please draft the wording. Briefing points, not proposed legal text:
+
+1. Halo Aid uses only official Meta APIs (Instagram Messaging / comments) to send and receive messages on the clinic's connected professional account.
+2. Meta controls the Instagram / Facebook platforms and may restrict, suspend, or disable accounts at its discretion.
+3. Halo Aid does not guarantee message delivery or that a connected account will remain in good standing.
+4. The doctor / clinic owns the Instagram account; Halo Aid is a software tool acting on their connection.
+5. Liability for platform actions (including account restriction) should be capped.
+6. Meta's Platform Terms treat Halo Aid as a "Tech Provider" and require us to contractually prohibit the clinic from processing Instagram-derived data in a way that violates Meta's terms (Platform Terms §5.b.ii.4.a). The agreement needs that clause.
+7. Separate question, please advise in writing: Meta's Developer Policies §5 say messaging must not be used "to facilitate direct conversations between people and healthcare providers or to send or collect any patient data obtained from healthcare providers." How does that read against (a) an appointment/FAQ receptionist bot on a clinic account, and (b) appointment reminders / prescription-ready notices sent in DMs? (Full text + our audit: `docs/Reference/engineering/compliance/meta-terms/2026-09-15/`.)
+
+Please put this in the pilot / customer agreement.
+
+**Next action:** send that draft to ⟨attorney⟩. Do not invent the wording here.
+
+**Terms audit done 15 Sep 2026:** every current Meta/Instagram terms document snapshotted and read line-by-line → [`meta-terms/2026-09-15/AUDIT.md`](../../Reference/engineering/compliance/meta-terms/2026-09-15/AUDIT.md). Biggest find is the §5 Healthcare clause (point 7 above). Engineering program: [`plan-meta-channel-align.md`](../Product%20plans/plan-meta-channel-align.md) — P1, P2, and P3 implemented 2026-09-16. This L10 sitting is still a counsel send, not a start gate.
 
 ---
 
@@ -232,21 +251,61 @@ Same Security Centre screen still shows **WhatsApp needs more information**. Not
 **Next action:** Later — open WhatsApp “needs more information” / View details.
 
 ### M3 · App review submission — `ACTIVE`
-Instagram Login app only (not Facebook Page / `pages_*`). Request **Advanced Access** for these three:
+Instagram Login app only (not Facebook Page / `pages_*`). **First file** — request **Advanced Access** for these two:
 
 - `instagram_business_basic`
 - `instagram_business_manage_messages`
-- `instagram_business_manage_comments`
 
-Each needs a screencast of a real flow + written justification. Frame as **clinic Instagram receptionist / appointment FAQs**, not diagnosis or a medical-records product.
+Comments (`instagram_business_manage_comments`) is the second file after this one is approved. Justification still written below. Frame as **clinic Instagram receptionist / appointment FAQs**, not diagnosis or a medical-records product.
 
-**This sitting:** one screencast covering Connect → Instagram login → dashboard shows connected → test DM reply → comment public reply (and DM if that’s the product path). Testers are fine.
+**Safety plan Phase 5 (checked 15 Sep 2026 against current Meta docs):** one private reply per comment within 7 days of the comment; Instagram Live only during the broadcast; follow-ups only after the person replies, then inside 24 hours; payload is `POST …/messages` with `recipient.comment_id` and `message.text` (no `messaging_type` on that path). Outside-window Graph errors are `code` 10 with subcodes `2534022`, `2018278`, or `2018065`. Sources: [private replies](https://developers.facebook.com/docs/instagram-platform/private-replies/) · [error codes](https://developers.facebook.com/docs/messenger-platform/error-codes/). Our send path matches. Do not use `HUMAN_AGENT` for automated reminders.
 
-**Then (same week, after the file exists):** App Dashboard → App Review → request Advanced Access for those three only. Paste privacy `https://haloaid.com/privacy`, terms `https://haloaid.com/terms`, data-deletion `https://haloaid.com/data-deletion-callback`. Submit. Clock is weeks.
+**Full terms audit (15 Sep 2026):** all Meta/Instagram terms snapshotted + read → [`meta-terms/2026-09-15/AUDIT.md`](../../Reference/engineering/compliance/meta-terms/2026-09-15/AUDIT.md). Submission-relevant: keep the review framing accurate (receptionist / appointment FAQs — Dev Policies §1 bans misleading Meta), and know the Dev Policies §5 Healthcare clause is with counsel (L10 point 7) before submitting claims about health data. After approval, unused permissions can be suspended in 28 days — keep flows exercised.
+
+**This sitting:** one screencast covering Connect → Instagram login → dashboard shows connected → test DM reply (hours / book). Testers are fine. Record after deploy so the booking link is the public host, not Tailscale.
+
+**Then (same week, after the file exists):** App Dashboard → App Review → request Advanced Access for `basic` + `messages` only. Paste privacy `https://haloaid.com/privacy`, terms `https://haloaid.com/terms`, data-deletion `https://haloaid.com/data-deletion-callback`. Submit. Clock is weeks.
 
 Do **not** click Security Centre → Access verification (Tech Provider). That is a different program.
 
-**Next action:** Record the one screencast (Connect → DM reply → comment reply).
+**Screencast shot list (one file, ~3–5 min, dummy patient only)**
+
+1. Halo Aid dashboard → Connect Instagram → login succeeds → account shows connected.
+2. Dummy user DMs the test clinic: “what are your hours” / “I want to book” → bot replies with FAQ and/or the booking-page link. Do **not** collect name, phone, or symptoms. Do **not** show Rx, chart, or a diagnosis.
+3. Optional 10s: dummy types STOP → ack. Proves opt-out.
+4. Do **not** tape comments or emergency/symptom lines on this file. Comments is the second file.
+
+Say on the tape, once: “This is a clinic receptionist. People message or comment; we answer appointment FAQs and send a link to book on our site.”
+
+**Paste into each permission (honest — clinic, not a generic salon bot; not a medical-records app)**
+
+`instagram_business_basic`  
+Halo Aid lets a clinic connect their Instagram professional account so they can run appointment FAQs from that account. We need basic profile/account access to complete Login, show the connected account in the clinic’s dashboard, and send replies as that account. We do not use this for ads or to scrape the graph.
+
+`instagram_business_manage_messages`  
+When someone DMs the clinic’s Instagram account about appointments (hours, fees, how to book), Halo Aid replies on the clinic’s behalf with short FAQs and a link to the clinic’s own booking page. We do not diagnose, prescribe, or collect medical history in the thread. People can type STOP to opt out of automated messages. We only message people who wrote first, inside Meta’s messaging window.
+
+`instagram_business_manage_comments`  
+When someone comments on the clinic’s Feed post asking about appointments, we post a short public reply and may send one private reply with a link to the clinic’s booking page, following Instagram’s private-reply rules (one per comment, within 7 days). We do not use comments for diagnosis or to collect patient data.
+
+**If rejected (locked 17 Sep 2026)**
+
+- Notes / appeal only fix a **broken demo** (couldn’t log in, tape missed the permission, dead URL). One short note: tester login + timestamp + “we only send a booking link.”
+- Do **not** argue policy: busy doctors, fighting health misinfo, “the platform should support clinicians.” That confirms healthcare messaging. It will not rewrite Dev Policies §5.
+- Healthcare / “not an allowed use” → do not resubmit the same story. Do not create a second app (circumvention, §7.e.i.3). `/book` in bio is the product.
+- Tape / login / comments-look-like-spam → same app only, change what they named, then resubmit. Clock resets. No published retry cap.
+- Preferred first file if we want a smaller no-surface: `basic` + `messages` only; comments later. Comment code stays.
+
+**Prep now (17 Sep 2026)** — already done: M2 verified, deletion callback live, privacy/terms live, paste-justifications written. Do not open Tech Provider Access verification.
+
+0. **First file is `basic` + `messages`.** OAuth no longer requests comments (2026-09-17). Integrations page shows Instagram only (Facebook card hidden, code stays). Comments stay in the repo; add the scope back when that file is submitted.
+1. **Deploy** frontend + backend so the demo is the current product (FAQ + `/book` link, STOP, no in-thread intake). Do not tape the old collect-name bot.
+2. **App Dashboard:** privacy / terms / data-deletion URLs set. Add **tester** roles (your IG + one dummy patient IG). Reviewer must be able to log into Halo Aid — put that login in Review Instructions.
+3. **Dry-run once** (no record): Connect → dummy DM “hours” / “I want to book” → link only. Optional STOP.
+4. **Record** the shot list above (~3–5 min). Dummy only. Say the one clinic-receptionist line.
+5. **Submit** Advanced Access for `basic` + `messages`. Paste the two justifications. Clock is weeks.
+
+**Next action:** Deploy current product, then dry-run and tape.
 **Unblocked by:** M2 verified (13 Sep). M1 callback is live enough. Policy URLs are live.
 
 ---
@@ -322,3 +381,17 @@ Steps 8 and 9 were wrongly bundled with 7. **9 does not need LiveKit** (transcod
 It's ~172 KB and 375 lines of agent-generated code follow-ups. Capture works; triage never happens. It's now write-only, which means everything in it is functionally lost.
 
 **Next action:** one triage pass — move each line into the right `capture/features/<program>/backlog.md`, delete what's stale, and cap the inbox at whatever fits on one screen.
+
+### O2 · Cursor subscription (discount + cancel code) — `WAITING`
+Noted **17 Sep 2026**. Tracker: [Halo Aid cost board](/Users/abhisheksahil/.cursor/projects/Users-abhisheksahil-Desktop-Clariva-Bot/canvases/cost-tracker.canvas.tsx) · Tool subscriptions.
+
+| Field | Value |
+|-------|-------|
+| Vendor | Cursor |
+| Plan | Discounted now |
+| Billing email | `kivshophelpdesk@gmail.com` |
+| Renews on | that Gmail |
+| Cancel code | Redeemed **17 Sep 2026**. Awaiting **30 Sep 2026**. |
+| 30 Sep 2026 | Resubscribe on that Gmail. Charge **$118**. |
+
+**Next action:** 30 Sep 2026 — on `kivshophelpdesk@gmail.com`, confirm the cancel code applied, then resubscribe. Expected charge: **$118**.

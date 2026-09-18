@@ -53,6 +53,13 @@ export function MarketingFooter() {
             >
               founder@haloaid.com
             </a>
+            {" · "}
+            <a
+              href="mailto:founder@haloaid.com?subject=Security%20issue"
+              className="underline-offset-4 hover:text-[hsl(var(--halo-navy))] hover:underline"
+            >
+              Report a security issue
+            </a>
           </address>
           <p>© 2026 Halo Aid. All rights reserved.</p>
         </div>

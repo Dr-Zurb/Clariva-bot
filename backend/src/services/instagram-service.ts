@@ -512,7 +512,7 @@ export async function fetchMessengerUserUsername(
  * lat-03: Same host preference + fallback as DM send (Instagram Login first).
  *
  * @param commentId - Instagram comment ID (from webhook value.id)
- * @param message - Reply text (use COMMENT_PUBLIC_REPLY_TEXT for outreach)
+ * @param message - Reply text (use buildCommentPublicReplyText for outreach)
  * @param accessToken - Doctor's Instagram access token (from doctor_instagram)
  * @param correlationId - For logging (no PHI)
  * @returns Reply comment ID or null on non-retryable failure
