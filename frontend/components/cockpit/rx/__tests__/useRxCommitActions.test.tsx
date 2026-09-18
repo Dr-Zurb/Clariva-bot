@@ -15,6 +15,7 @@ import {
   createEmptyComplaint,
   createEmptyRxFormFields,
   deriveHopiFromComplaints,
+  useRxForm,
 } from "@/components/cockpit/rx/RxFormContext";
 import { RxFormActionsBridgeProvider } from "@/components/cockpit/rx/RxFormActionsContext";
 import { RxSafetyProvider } from "@/components/cockpit/rx/RxSafetyContext";
@@ -905,7 +906,7 @@ describe("useRxCommitActions", () => {
     });
   });
 
-  it("prints a freshly saved PDF instead of a stale preview warm", async () => {
+  it("reuses the preview-warmed PDF when the draft is unchanged", async () => {
     const { fetchPrescriptionPdf, sendPrescriptionToPatient } =
       await import("@/lib/api");
     vi.mocked(sendPrescriptionToPatient).mockResolvedValue({
@@ -940,6 +941,61 @@ describe("useRxCommitActions", () => {
 
     await act(async () => {
       result.current.sendFinishAndPrint();
+    });
+    await waitFor(() => {
+      expect(print).toHaveBeenCalledTimes(1);
+    });
+    expect(fetchPrescriptionPdf).toHaveBeenCalledTimes(1);
+    printStub.restore();
+  });
+
+  it("fetches a new PDF when the draft changed after preview", async () => {
+    const { fetchPrescriptionPdf, sendPrescriptionToPatient, updatePrescription } =
+      await import("@/lib/api");
+    vi.mocked(sendPrescriptionToPatient).mockResolvedValue({
+      success: true,
+      data: { sent: true, channels: { email: true } },
+      meta: { timestamp: "", requestId: "" },
+    });
+    vi.mocked(updatePrescription).mockResolvedValue({
+      success: true,
+      data: { prescription: { id: "rx-1" } } as never,
+      meta: { timestamp: "", requestId: "" },
+    });
+    const print = vi.fn();
+    const printStub = installPrintIframe(print);
+    const fields = createEmptyRxFormFields();
+    fields.medicines[0] = { ...fields.medicines[0]!, medicineName: "Aspirin" };
+
+    const { result } = renderHook(
+      () => {
+        const form = useRxForm();
+        const commit = useRxCommitActions({
+          appointmentId: "appt-1",
+          patientId: "pat-1",
+          token: "token",
+          cockpitState: "live",
+          onFinish: vi.fn(),
+          registerActions: false,
+        });
+        return { form, commit };
+      },
+      { wrapper: wrapper(makeShell(fields)) }
+    );
+
+    await act(async () => {
+      result.current.commit.openPreview();
+    });
+    await waitFor(() => {
+      expect(fetchPrescriptionPdf).toHaveBeenCalledTimes(1);
+    });
+
+    await act(async () => {
+      result.current.form.setField("advice", "Rest and fluids");
+    });
+
+    await act(async () => {
+      result.current.commit.sendFinishAndPrint();
     });
     await waitFor(() => {
       expect(print).toHaveBeenCalledTimes(1);

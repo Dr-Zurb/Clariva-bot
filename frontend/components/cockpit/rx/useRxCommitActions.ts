@@ -1042,7 +1042,7 @@ export function useRxCommitActions({
     finishAfterSendRef.current = false;
     try {
       try {
-        await persistDraftForCommit({ force: shouldPrint });
+        await persistDraftForCommit();
       } catch (saveErr) {
         setCommitError(
           saveErr instanceof Error
@@ -1063,9 +1063,9 @@ export function useRxCommitActions({
         setAdvanceCancelled(true);
       }
 
-      // Always render from the just-saved draft. A preview-warmed PDF can
-      // still be the empty slip from before the last flush.
-      const printJob = shouldPrint ? loadPdfObjectUrl(rxId) : null;
+      // Preview already flushed + warmed the slip. Reuse it unless the
+      // draft was dirty (persist dropped the warm and we fetch again).
+      const printJob = shouldPrint ? takeWarmedPdf(rxId) : null;
       printJob?.catch(() => undefined);
 
       setCommitSuccess("Sending to patient…");
@@ -1162,7 +1162,7 @@ export function useRxCommitActions({
     setAdvanceCancelled,
     releasePrintAdvanceHold,
     prescriptionIdRef,
-    loadPdfObjectUrl,
+    takeWarmedPdf,
     token,
     onSuccess,
     onSent,
