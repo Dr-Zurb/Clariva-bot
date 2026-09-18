@@ -91,6 +91,12 @@ const mockSendPostConsultChatHistoryDm = jest.fn<(input: {
   correlationId: string;
 }) => Promise<unknown>>();
 
+const mockStampDanglingPauses = jest.fn<(sessionId: string, cid: string) => Promise<number>>();
+jest.mock('../../../src/services/recording-pause-service', () => ({
+  stampDanglingPausesForEndedSession: (...args: [string, string]) =>
+    mockStampDanglingPauses(...args),
+}));
+
 jest.mock('../../../src/services/notification-service', () => ({
   // Re-export every public symbol the facade or its transitive imports
   // touch. Currently `endSession` only invokes
@@ -197,6 +203,7 @@ beforeEach(() => {
   mockTextEndSession.mockResolvedValue();
   mockEmitConsultEnded.mockResolvedValue(undefined);
   mockSendPostConsultChatHistoryDm.mockResolvedValue({ skipped: true, reason: 'test-default' });
+  mockStampDanglingPauses.mockResolvedValue(0);
 });
 
 // ===========================================================================
@@ -214,6 +221,7 @@ describe('endSession — post-consult chat-history DM wiring (happy path)', () =
     await Promise.resolve();
     await Promise.resolve();
 
+    expect(mockStampDanglingPauses).toHaveBeenCalledWith('sess-uuid-1', 'corr-end-1');
     expect(mockSendPostConsultChatHistoryDm).toHaveBeenCalledTimes(1);
     expect(mockSendPostConsultChatHistoryDm).toHaveBeenCalledWith({
       sessionId:     'sess-uuid-1',

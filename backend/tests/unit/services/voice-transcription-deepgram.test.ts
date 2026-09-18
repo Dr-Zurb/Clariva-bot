@@ -4,7 +4,7 @@
  * We mock `global.fetch` — Deepgram uses the URL-pass-through pattern so
  * there's no SDK to mock. Coverage:
  *   - Missing DEEPGRAM_API_KEY → TranscriptionPermanentError.
- *   - Request shape: model=nova-2, language=multi for Hindi, Authorization
+ *   - Request shape: model=nova-3, language=multi for Hindi, Authorization
  *     header = 'Token <key>', body = `{ url: '<audioUrl>' }`.
  *   - Happy path: duration + transcript parsed from Deepgram's
  *     `results.channels[0].alternatives[0].transcript`.
@@ -94,7 +94,7 @@ describe('transcribeWithDeepgram — config errors', () => {
 // ===========================================================================
 
 describe('transcribeWithDeepgram — request shape', () => {
-  it('posts to /v1/listen with model=nova-2, language=multi for hi-IN, bearer token, url body', async () => {
+  it('posts to /v1/listen with model=nova-3, language=multi for hi-IN, bearer token, url body', async () => {
     const fetchMock = jest.fn<typeof fetch>().mockResolvedValue(
       jsonResponse(200, {
         metadata: { duration: 60 },
@@ -114,7 +114,7 @@ describe('transcribeWithDeepgram — request shape', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [urlArg, initArg] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(urlArg).toContain('https://api.deepgram.com/v1/listen');
-    expect(urlArg).toContain('model=nova-2');
+    expect(urlArg).toContain('model=nova-3');
     expect(urlArg).toContain('language=multi'); // Hindi → 'multi' for Hinglish
     expect(initArg.method).toBe('POST');
     expect(
@@ -123,6 +123,27 @@ describe('transcribeWithDeepgram — request shape', () => {
     expect(JSON.parse(initArg.body as string)).toEqual({
       url: 'https://signed.test/audio.mp3',
     });
+  });
+
+  it('honors an explicit nova-2 model for in-flight rows', async () => {
+    const fetchMock = jest.fn<typeof fetch>().mockResolvedValue(
+      jsonResponse(200, {
+        metadata: { duration: 60 },
+        results: { channels: [{ alternatives: [{ transcript: 'namaste' }] }] },
+      }),
+    );
+    global.fetch = fetchMock;
+
+    const out = await transcribeWithDeepgram({
+      audioUrl: 'https://signed.test/audio.mp3',
+      languageCode: 'hi-IN',
+      correlationId: 'c-1b',
+      model: 'nova-2',
+    });
+
+    const [urlArg] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(urlArg).toContain('model=nova-2');
+    expect(out.provider).toBe('deepgram_nova_2');
   });
 
   it('passes non-Hindi language codes through verbatim (e.g. en-US)', async () => {
@@ -141,6 +162,40 @@ describe('transcribeWithDeepgram — request shape', () => {
     });
     const [urlArg] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(urlArg).toContain('language=en-US');
+  });
+
+  // Cost-cut step 7: locally mixed raw tracks never get a public URL, so
+  // Deepgram has to receive the media as the request body instead.
+  it('posts the media itself when given bytes rather than a URL', async () => {
+    const fetchMock = jest.fn<typeof fetch>().mockResolvedValue(
+      jsonResponse(200, {
+        metadata: { duration: 60 },
+        results: { channels: [{ alternatives: [{ transcript: 'namaste' }] }] },
+      }),
+    );
+    global.fetch = fetchMock;
+
+    const bytes = Buffer.from('fLaC-payload');
+    await transcribeWithDeepgram({
+      audioBytes: { bytes, contentType: 'audio/flac', filename: 'consult.flac' },
+      languageCode: 'hi-IN',
+      correlationId: 'c-bytes',
+    });
+
+    const [, initArg] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect((initArg.headers as Record<string, string>)['Content-Type']).toBe(
+      'audio/flac',
+    );
+    expect(initArg.body).toBe(bytes);
+  });
+
+  it('rejects a call with neither a URL nor bytes', async () => {
+    global.fetch = jest.fn<typeof fetch>();
+
+    await expect(
+      transcribeWithDeepgram({ languageCode: 'hi-IN', correlationId: 'c-none' }),
+    ).rejects.toBeInstanceOf(TranscriptionPermanentError);
+    expect(global.fetch).not.toHaveBeenCalled();
   });
 });
 
@@ -165,10 +220,10 @@ describe('transcribeWithDeepgram — happy path', () => {
       correlationId: 'c-3',
     });
 
-    expect(out.provider).toBe('deepgram_nova_2');
+    expect(out.provider).toBe('deepgram_nova_3');
     expect(out.languageCode).toBe('hi-IN');
     expect(out.durationSeconds).toBe(1800);
-    expect(out.costUsdCents).toBe(13); // pinned: 1800s × $0.0043/min = 12.9¢ → 13
+    expect(out.costUsdCents).toBe(16); // pinned: 1800s × $0.0052/min = 15.6¢ → 16
     expect(out.transcriptText).toBe('doctor speaking');
   });
 });

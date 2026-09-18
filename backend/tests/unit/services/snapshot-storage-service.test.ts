@@ -8,9 +8,7 @@
  *      size cap, target enum, dimension bounds, missing JWT. These run
  *      BEFORE any DB / storage round-trip and don't need mocks beyond the
  *      bare admin client.
- *   3. Authorization branching + consent gate — patient JWT path with
- *      `decision === false` returns 403 (ForbiddenError); doctor JWT
- *      bypasses the gate.
+ *   3. Authorization branching — patient JWT session mismatch is 401.
  *
  * Storage upload + DB insert paths (steps 4-7 of the service) are NOT
  * exercised here because mocking the Supabase storage client through the
@@ -19,8 +17,8 @@
  * the manual smoke step on the C3 task file Acceptance §.
  *
  * Same doctrine as `consultation-message-service-system-emitter.test.ts`:
- * mock the admin client + the recording-consent service, exercise the
- * service-layer logic, assert on observable behavior (thrown error types,
+ * mock the admin client, exercise the service-layer logic, assert on
+ * observable behavior (thrown error types,
  * not insert payload internals — covered by the migration-content tests).
  */
 
@@ -57,10 +55,6 @@ jest.mock('../../../src/config/database', () => ({
   getSupabaseAdminClient: jest.fn(),
 }));
 
-jest.mock('../../../src/services/recording-consent-service', () => ({
-  getConsentForSession: jest.fn(),
-}));
-
 jest.mock('../../../src/services/consultation-message-service', () => ({
   emitSnapshotTaken: jest.fn(),
 }));
@@ -72,15 +66,12 @@ import {
   validateAnnotations,
 } from '../../../src/services/snapshot-storage-service';
 import * as database from '../../../src/config/database';
-import * as recordingConsent from '../../../src/services/recording-consent-service';
 import {
-  ForbiddenError,
   UnauthorizedError,
   ValidationError,
 } from '../../../src/utils/errors';
 
 const mockedDb = database as jest.Mocked<typeof database>;
-const mockedConsent = recordingConsent as jest.Mocked<typeof recordingConsent>;
 
 const VALID_SESSION_ID = '00000000-0000-0000-0000-000000000123';
 const SECRET = 'test-secret-at-least-16-chars-long';
@@ -227,7 +218,33 @@ describe('submitSnapshot — payload validation', () => {
 // 3. submitSnapshot — auth + consent gate
 // ---------------------------------------------------------------------------
 
-describe('submitSnapshot — auth + consent gate', () => {
+function mountPatientSnapshotAdmin() {
+  const upload = jest.fn(async () => ({ error: null }));
+  const createSignedUrl = jest.fn(async () => ({
+    data: { signedUrl: 'https://signed.example/snap.jpg' },
+    error: null,
+  }));
+  const insert = jest.fn(async () => ({ error: null }));
+  const maybeSingle = jest.fn(async () => ({
+    data: {
+      patient_id: '00000000-0000-0000-0000-000000000001',
+      appointment_id: '00000000-0000-0000-0000-000000000002',
+    },
+    error: null,
+  }));
+  const eq = jest.fn().mockReturnValue({ maybeSingle });
+  const select = jest.fn().mockReturnValue({ eq });
+  mockedDb.getSupabaseAdminClient.mockReturnValue({
+    storage: {
+      from: () => ({ upload, createSignedUrl }),
+    },
+    from: (table: string) =>
+      table === 'consultation_sessions' ? { select } : { insert },
+  } as never);
+  return { upload, insert };
+}
+
+describe('submitSnapshot — auth + patient store', () => {
   it('throws UnauthorizedError when the patient JWT session_id claim does not match the URL session', async () => {
     const wrongSessionJwt = buildPatientJwt('00000000-0000-0000-0000-000000000999');
     await expect(
@@ -242,68 +259,36 @@ describe('submitSnapshot — auth + consent gate', () => {
     ).rejects.toThrow(UnauthorizedError);
   });
 
-  it('throws ForbiddenError when the patient lacks recording consent', async () => {
-    mockedConsent.getConsentForSession.mockResolvedValueOnce({
-      decision: false,
-      capturedAt: new Date(),
-      version: 'v1',
+  it('stores a patient snapshot when historical consent would have been false', async () => {
+    const { upload, insert } = mountPatientSnapshotAdmin();
+    const result = await submitSnapshot({
+      sessionId: VALID_SESSION_ID,
+      bearerJwt: buildPatientJwt(VALID_SESSION_ID),
+      jpegBytes: buildJpegBuffer(),
+      target: 'self',
+      dimensions: { width: 640, height: 480 },
+      correlationId: 'corr-false',
     });
-    // Admin client must be present (decoded JWT path doesn't need it for
-    // patient branch, but consent service does).
-    mockedDb.getSupabaseAdminClient.mockReturnValue({} as never);
-
-    await expect(
-      submitSnapshot({
-        sessionId: VALID_SESSION_ID,
-        bearerJwt: buildPatientJwt(VALID_SESSION_ID),
-        jpegBytes: buildJpegBuffer(),
-        target: 'self',
-        dimensions: { width: 640, height: 480 },
-        correlationId: 'corr-1',
-      }),
-    ).rejects.toThrow(ForbiddenError);
+    expect(result.snapshotId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+    );
+    expect(upload).toHaveBeenCalled();
+    expect(insert).toHaveBeenCalled();
   });
 
-  it('throws ForbiddenError when the patient consent decision is null (never asked)', async () => {
-    // Conservative posture documented in service JSDoc: snapshots
-    // require an explicit yes, so NULL is treated the same as false.
-    mockedConsent.getConsentForSession.mockResolvedValueOnce({
-      decision: null,
-      capturedAt: null,
-      version: null,
+  it('stores a patient snapshot when historical consent would have been null', async () => {
+    const { upload, insert } = mountPatientSnapshotAdmin();
+    const result = await submitSnapshot({
+      sessionId: VALID_SESSION_ID,
+      bearerJwt: buildPatientJwt(VALID_SESSION_ID),
+      jpegBytes: buildJpegBuffer(),
+      target: 'self',
+      dimensions: { width: 640, height: 480 },
+      correlationId: 'corr-null',
     });
-    mockedDb.getSupabaseAdminClient.mockReturnValue({} as never);
-
-    await expect(
-      submitSnapshot({
-        sessionId: VALID_SESSION_ID,
-        bearerJwt: buildPatientJwt(VALID_SESSION_ID),
-        jpegBytes: buildJpegBuffer(),
-        target: 'self',
-        dimensions: { width: 640, height: 480 },
-        correlationId: 'corr-1',
-      }),
-    ).rejects.toThrow(ForbiddenError);
-  });
-
-  it('error message points the patient at the consent re-tap path', async () => {
-    mockedConsent.getConsentForSession.mockResolvedValueOnce({
-      decision: false,
-      capturedAt: new Date(),
-      version: 'v1',
-    });
-    mockedDb.getSupabaseAdminClient.mockReturnValue({} as never);
-
-    await expect(
-      submitSnapshot({
-        sessionId: VALID_SESSION_ID,
-        bearerJwt: buildPatientJwt(VALID_SESSION_ID),
-        jpegBytes: buildJpegBuffer(),
-        target: 'remote',
-        dimensions: { width: 640, height: 480 },
-        correlationId: 'corr-1',
-      }),
-    ).rejects.toThrow(/recording consent/i);
+    expect(result.url).toBe('https://signed.example/snap.jpg');
+    expect(upload).toHaveBeenCalled();
+    expect(insert).toHaveBeenCalled();
   });
 });
 
@@ -481,9 +466,7 @@ describe('validateAnnotations (Sub-batch C · task-video-C4)', () => {
 // ---------------------------------------------------------------------------
 
 describe('submitSnapshot — annotations metadata (Sub-batch C · task-video-C4)', () => {
-  it('rejects malformed annotations with ValidationError before touching consent', async () => {
-    // No consent mock; if consent runs, we'd see a different error
-    // shape. The validation gate must fire first.
+  it('rejects malformed annotations with ValidationError before storage', async () => {
     await expect(
       submitSnapshot({
         sessionId: VALID_SESSION_ID,
@@ -495,10 +478,7 @@ describe('submitSnapshot — annotations metadata (Sub-batch C · task-video-C4)
         annotations: 'not-an-array' as unknown,
       }),
     ).rejects.toThrow(ValidationError);
-
-    // And the consent service must not have been called (gate
-    // ordering doctrine).
-    expect(mockedConsent.getConsentForSession).not.toHaveBeenCalled();
+    expect(mockedDb.getSupabaseAdminClient).not.toHaveBeenCalled();
   });
 
   it('rejects annotations with an unknown kind via the same path', async () => {

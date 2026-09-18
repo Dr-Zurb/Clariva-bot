@@ -3,16 +3,15 @@
  *
  * Covers:
  *   - `selectProvider` — pure router, every row in the table.
- *   - `enqueueVoiceTranscription` — missing session, consent declined,
- *     idempotent re-enqueue (PG unique_violation), happy path, kill-switch.
+ *   - `enqueueVoiceTranscription` — missing session, idempotent
+ *     re-enqueue (PG unique_violation), happy path, kill-switch.
  *   - `processVoiceTranscription` — route to Whisper vs Deepgram, cost math
  *     pinned (18¢ for 1800s Whisper / 13¢ for 1800s Deepgram), 5xx → transient
  *     error surfaces, 4xx → permanent error surfaces.
  *
- * Mock strategy mirrors `recording-consent-service.test.ts`: we mock
- * `getSupabaseAdminClient`, `findSessionByProviderSessionId`,
- * `getConsentForSession`, and the two provider clients, then hand-roll
- * Supabase chain builders.
+ * Mock strategy: we mock `getSupabaseAdminClient`,
+ * `findSessionByProviderSessionId`, and the two provider clients, then
+ * hand-roll Supabase chain builders.
  */
 
 import { describe, expect, it, jest, beforeEach } from '@jest/globals';
@@ -38,16 +37,17 @@ jest.mock('../../../src/services/consultation-session-service', () => ({
   findSessionByProviderSessionId: jest.fn(),
 }));
 
-jest.mock('../../../src/services/recording-consent-service', () => ({
-  getConsentForSession: jest.fn(),
-}));
-
 jest.mock('../../../src/services/voice-transcription-openai', () => ({
   transcribeWithWhisper: jest.fn(),
 }));
 
 jest.mock('../../../src/services/voice-transcription-deepgram', () => ({
   transcribeWithDeepgram: jest.fn(),
+}));
+
+jest.mock('../../../src/services/voice-transcription-groq', () => ({
+  transcribeWithGroq: jest.fn(),
+  isGroqTranscriptionConfigured: jest.fn(() => false),
 }));
 
 import {
@@ -62,18 +62,19 @@ import {
 } from '../../../src/types/consultation-transcript';
 import * as database from '../../../src/config/database';
 import * as sessionService from '../../../src/services/consultation-session-service';
-import * as consentService from '../../../src/services/recording-consent-service';
 import * as whisper from '../../../src/services/voice-transcription-openai';
 import * as deepgram from '../../../src/services/voice-transcription-deepgram';
+import * as groq from '../../../src/services/voice-transcription-groq';
 
 const mockedDb = database as jest.Mocked<typeof database>;
 const mockedSession = sessionService as jest.Mocked<typeof sessionService>;
-const mockedConsent = consentService as jest.Mocked<typeof consentService>;
 const mockedWhisper = whisper as jest.Mocked<typeof whisper>;
 const mockedDeepgram = deepgram as jest.Mocked<typeof deepgram>;
+const mockedGroq = groq as jest.Mocked<typeof groq>;
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockedGroq.isGroqTranscriptionConfigured.mockReturnValue(false);
 });
 
 // ---------------------------------------------------------------------------
@@ -109,25 +110,25 @@ const FAKE_SESSION = {
 // ===========================================================================
 
 describe('selectProvider', () => {
-  it('routes Hindi → deepgram_nova_2', () => {
-    expect(selectProvider('hi')).toBe('deepgram_nova_2');
-    expect(selectProvider('hi-IN')).toBe('deepgram_nova_2');
-    expect(selectProvider('HI-IN')).toBe('deepgram_nova_2'); // case-insensitive
+  it('routes Hindi → deepgram_nova_3', () => {
+    expect(selectProvider('hi')).toBe('deepgram_nova_3');
+    expect(selectProvider('hi-IN')).toBe('deepgram_nova_3');
+    expect(selectProvider('HI-IN')).toBe('deepgram_nova_3'); // case-insensitive
   });
 
-  it('routes English variants → openai_whisper', () => {
-    expect(selectProvider('en')).toBe('openai_whisper');
-    expect(selectProvider('en-IN')).toBe('openai_whisper');
-    expect(selectProvider('en-US')).toBe('openai_whisper');
-    expect(selectProvider('en-GB')).toBe('openai_whisper');
+  it('routes English variants → groq_whisper', () => {
+    expect(selectProvider('en')).toBe('groq_whisper');
+    expect(selectProvider('en-IN')).toBe('groq_whisper');
+    expect(selectProvider('en-US')).toBe('groq_whisper');
+    expect(selectProvider('en-GB')).toBe('groq_whisper');
   });
 
-  it('routes unknown / other languages → openai_whisper (broader coverage)', () => {
-    expect(selectProvider('fr')).toBe('openai_whisper');
-    expect(selectProvider('es')).toBe('openai_whisper');
-    expect(selectProvider('zh')).toBe('openai_whisper');
-    expect(selectProvider('unknown')).toBe('openai_whisper');
-    expect(selectProvider('')).toBe('openai_whisper');
+  it('routes unknown / other languages → groq_whisper (broader coverage)', () => {
+    expect(selectProvider('fr')).toBe('groq_whisper');
+    expect(selectProvider('es')).toBe('groq_whisper');
+    expect(selectProvider('zh')).toBe('groq_whisper');
+    expect(selectProvider('unknown')).toBe('groq_whisper');
+    expect(selectProvider('')).toBe('groq_whisper');
   });
 });
 
@@ -145,28 +146,11 @@ describe('enqueueVoiceTranscription', () => {
     mockedSession.findSessionByProviderSessionId.mockResolvedValue(null);
     mockedDb.getSupabaseAdminClient.mockReturnValue({} as never);
     await enqueueVoiceTranscription({ providerSessionId: 'RM123' });
-    expect(mockedConsent.getConsentForSession).not.toHaveBeenCalled();
+    expect(mockedSession.findSessionByProviderSessionId).toHaveBeenCalled();
   });
 
-  it('skips insert when consent.decision === false', async () => {
+  it('enqueues even when a historical appointment would have declined recording', async () => {
     mockedSession.findSessionByProviderSessionId.mockResolvedValue(FAKE_SESSION as never);
-    mockedConsent.getConsentForSession.mockResolvedValue({
-      decision: false,
-      capturedAt: new Date(),
-      version: 'v1',
-    });
-    const chain = buildInsertChain({ data: null, error: null });
-    mockedDb.getSupabaseAdminClient.mockReturnValue({ from: chain.from } as never);
-
-    await enqueueVoiceTranscription({ providerSessionId: 'RM123' });
-    expect(chain.insert).not.toHaveBeenCalled();
-  });
-
-  it('defaults to on when consent lookup throws (Decision 4)', async () => {
-    mockedSession.findSessionByProviderSessionId.mockResolvedValue(FAKE_SESSION as never);
-    mockedConsent.getConsentForSession.mockRejectedValue(
-      new Error('recording_consent column missing'),
-    );
     const chain = buildInsertChain({ data: { id: 't-1' }, error: null });
     mockedDb.getSupabaseAdminClient.mockReturnValue({ from: chain.from } as never);
 
@@ -174,13 +158,8 @@ describe('enqueueVoiceTranscription', () => {
     expect(chain.insert).toHaveBeenCalledTimes(1);
   });
 
-  it('inserts a queued row with correct shape on happy path (en-IN → Whisper)', async () => {
+  it('inserts a queued row with correct shape on happy path (en-IN → Whisper fallback)', async () => {
     mockedSession.findSessionByProviderSessionId.mockResolvedValue(FAKE_SESSION as never);
-    mockedConsent.getConsentForSession.mockResolvedValue({
-      decision: true,
-      capturedAt: new Date(),
-      version: 'v1',
-    });
     const chain = buildInsertChain({ data: { id: 't-1' }, error: null });
     mockedDb.getSupabaseAdminClient.mockReturnValue({ from: chain.from } as never);
 
@@ -189,20 +168,28 @@ describe('enqueueVoiceTranscription', () => {
     expect(chain.from).toHaveBeenCalledWith('consultation_transcripts');
     expect(chain.insert).toHaveBeenCalledWith({
       consultation_session_id: 'session-uuid',
-      provider: 'openai_whisper', // 'en-IN' default → Whisper
+      provider: 'openai_whisper', // Groq unset → Whisper fallback
       language_code: 'en-IN',
       composition_sid: 'RM123',
       status: 'queued',
     });
   });
 
+  it('inserts groq_whisper when Groq is configured (en-IN default)', async () => {
+    mockedGroq.isGroqTranscriptionConfigured.mockReturnValue(true);
+    mockedSession.findSessionByProviderSessionId.mockResolvedValue(FAKE_SESSION as never);
+    const chain = buildInsertChain({ data: { id: 't-1' }, error: null });
+    mockedDb.getSupabaseAdminClient.mockReturnValue({ from: chain.from } as never);
+
+    await enqueueVoiceTranscription({ providerSessionId: 'RM123' });
+
+    expect(chain.insert).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: 'groq_whisper', language_code: 'en-IN' }),
+    );
+  });
+
   it('treats PG 23505 (unique_violation) as idempotent success, not a warning', async () => {
     mockedSession.findSessionByProviderSessionId.mockResolvedValue(FAKE_SESSION as never);
-    mockedConsent.getConsentForSession.mockResolvedValue({
-      decision: null,
-      capturedAt: null,
-      version: null,
-    });
     const chain = buildInsertChain({
       data: null,
       error: { message: 'duplicate key', code: '23505' },
@@ -220,11 +207,6 @@ describe('enqueueVoiceTranscription', () => {
 
   it('never throws — transient DB errors are swallowed', async () => {
     mockedSession.findSessionByProviderSessionId.mockResolvedValue(FAKE_SESSION as never);
-    mockedConsent.getConsentForSession.mockResolvedValue({
-      decision: true,
-      capturedAt: new Date(),
-      version: 'v1',
-    });
     const chain = buildInsertChain({
       data: null,
       error: { message: 'deadlock detected', code: '40P01' },
@@ -248,26 +230,27 @@ describe('processVoiceTranscription', () => {
     correlationId: 'corr-1',
   };
 
-  it('routes en-IN → transcribeWithWhisper', async () => {
-    const whisperResult: TranscriptResult = {
-      provider: 'openai_whisper',
+  it('routes en-IN → transcribeWithGroq', async () => {
+    const groqResult: TranscriptResult = {
+      provider: 'groq_whisper',
       languageCode: 'en-IN',
       transcriptJson: { text: 'hello' },
       transcriptText: 'hello',
       durationSeconds: 1800,
-      costUsdCents: 18,
+      costUsdCents: 2,
     };
-    mockedWhisper.transcribeWithWhisper.mockResolvedValue(whisperResult);
+    mockedGroq.transcribeWithGroq.mockResolvedValue(groqResult);
 
     const out = await processVoiceTranscription({ ...baseInput, languageCode: 'en-IN' });
-    expect(mockedWhisper.transcribeWithWhisper).toHaveBeenCalledTimes(1);
+    expect(mockedGroq.transcribeWithGroq).toHaveBeenCalledTimes(1);
+    expect(mockedWhisper.transcribeWithWhisper).not.toHaveBeenCalled();
     expect(mockedDeepgram.transcribeWithDeepgram).not.toHaveBeenCalled();
-    expect(out).toEqual(whisperResult);
+    expect(out).toEqual(groqResult);
   });
 
   it('routes hi-IN → transcribeWithDeepgram', async () => {
     const deepResult: TranscriptResult = {
-      provider: 'deepgram_nova_2',
+      provider: 'deepgram_nova_3',
       languageCode: 'hi-IN',
       transcriptJson: { results: {} },
       transcriptText: 'namaste',
@@ -302,8 +285,8 @@ describe('processVoiceTranscription', () => {
   });
 
   it('propagates TranscriptionTransientError (5xx) so the worker can retry', async () => {
-    mockedWhisper.transcribeWithWhisper.mockRejectedValue(
-      new TranscriptionTransientError('Whisper 503'),
+    mockedGroq.transcribeWithGroq.mockRejectedValue(
+      new TranscriptionTransientError('Groq 503'),
     );
     await expect(
       processVoiceTranscription({ ...baseInput, languageCode: 'en-IN' }),
@@ -335,12 +318,22 @@ describe('cost computation (pinned in voice-transcription-pricing.ts)', () => {
     expect(costCentsForDuration('openai_whisper', 1800)).toBe(18);
   });
 
-  it('Deepgram 1800s → 13 cents (1800 × 0.0043 × 100 / 60 = 12.9 → round up to 13)', () => {
+  it('Deepgram Nova-2 1800s → 13 cents (1800 × 0.0043 × 100 / 60 = 12.9 → 13)', () => {
     expect(costCentsForDuration('deepgram_nova_2', 1800)).toBe(13);
+  });
+
+  it('Deepgram Nova-3 1800s → 16 cents (1800 × 0.0052 × 100 / 60 = 15.6 → 16)', () => {
+    expect(costCentsForDuration('deepgram_nova_3', 1800)).toBe(16);
+  });
+
+  it('Groq 1800s → 2 cents (0.5 h × $0.04 × 100 = 2)', () => {
+    expect(costCentsForDuration('groq_whisper', 1800)).toBe(2);
   });
 
   it('zero-duration → 0 cents', () => {
     expect(costCentsForDuration('openai_whisper', 0)).toBe(0);
     expect(costCentsForDuration('deepgram_nova_2', 0)).toBe(0);
+    expect(costCentsForDuration('deepgram_nova_3', 0)).toBe(0);
+    expect(costCentsForDuration('groq_whisper', 0)).toBe(0);
   });
 });

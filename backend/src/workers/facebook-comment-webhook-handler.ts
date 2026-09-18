@@ -8,7 +8,6 @@ import { logAuditEvent } from '../utils/audit-logger';
 import { markWebhookProcessed } from '../services/webhook-idempotency-service';
 import {
   sendInstagramPrivateReply,
-  COMMENT_PUBLIC_REPLY_TEXT,
   fetchCommentAuthorUsername,
 } from '../services/instagram-service';
 import {
@@ -21,10 +20,14 @@ import { getDoctorSettings } from '../services/doctor-settings-service';
 import { classifyCommentIntent, isPossiblyMedicalComment } from '../services/ai-service';
 import { parseFacebookPageCommentPayload } from '../utils/webhook-event-id';
 import { canSendCommentPrivateReply, createCommentLead } from '../services/comment-lead-service';
+import { shouldSkipCommentPrivateReply } from '../services/automated-messaging-opt-out';
 import { resolveCommentOutreachLanguage } from '../services/comment-outreach-language';
 import { sendCommentLeadToDoctor } from '../services/notification-service';
 import { logWebhookCommentPipeline } from '../services/webhook-metrics';
-import { buildCommentProactiveDmMessage } from '../utils/dm-copy';
+import {
+  buildCommentProactiveDmMessage,
+  buildCommentPublicReplyText,
+} from '../utils/dm-copy';
 import type { CommentIntent } from '../types/ai';
 import type { WebhookProvider } from '../types/webhook';
 
@@ -212,6 +215,12 @@ export async function processFacebookCommentWebhook(
       pageTokenEarly ?? (await getFacebookPageAccessTokenForDoctor(doctorId, correlationId));
     commentDoctorTokenPresent = !!pageToken;
     if (pageToken) {
+      const skipPrivate = await shouldSkipCommentPrivateReply({
+        doctorId,
+        platform: 'facebook',
+        commenterPlatformId: commenterUserId,
+        correlationId,
+      });
       // LANG5-D6: language from linked conversation only — never from comment text.
       const language = await resolveCommentOutreachLanguage(
         doctorId,
@@ -227,8 +236,10 @@ export async function processFacebookCommentWebhook(
         addressSummary: settings?.address_summary ?? undefined,
       });
       try {
-        await sendInstagramPrivateReply(commentId, dmMessage, correlationId, pageToken, doctorId);
-        dmSent = true;
+        if (!skipPrivate) {
+          await sendInstagramPrivateReply(commentId, dmMessage, correlationId, pageToken, doctorId);
+          dmSent = true;
+        }
       } catch (dmErr) {
         logger.warn(
           {
@@ -243,7 +254,10 @@ export async function processFacebookCommentWebhook(
       try {
         const replyResult = await replyToFacebookComment(
           commentId,
-          COMMENT_PUBLIC_REPLY_TEXT,
+          buildCommentPublicReplyText({
+            commentId,
+            username: resolvedUsername,
+          }),
           pageToken,
           correlationId
         );

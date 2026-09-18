@@ -28,43 +28,38 @@ function makeCatalog(keys: string[]): ServiceCatalogV1 {
 
 describe('complaint-clarification (Task 05)', () => {
   describe('resolveComplaintClarificationMessage', () => {
-    it('returns English copy for empty / English text', () => {
-      expect(resolveComplaintClarificationMessage('')).toBe(COMPLAINT_CLARIFICATION_RESPONSE_EN);
-      expect(resolveComplaintClarificationMessage('I have a few things going on')).toBe(
-        COMPLAINT_CLARIFICATION_RESPONSE_EN
-      );
+    it('returns English copy for en / other', () => {
+      expect(resolveComplaintClarificationMessage('en')).toBe(COMPLAINT_CLARIFICATION_RESPONSE_EN);
+      expect(resolveComplaintClarificationMessage('other')).toBe(COMPLAINT_CLARIFICATION_RESPONSE_EN);
     });
 
-    it('returns Devanagari Hindi for Devanagari input', () => {
-      const msg = resolveComplaintClarificationMessage('मुझे कई समस्याएँ हैं');
+    it('returns Devanagari Hindi for hi', () => {
+      const msg = resolveComplaintClarificationMessage('hi');
       expect(msg).toMatch(/आपने/);
       expect(msg).not.toMatch(/Aapne/);
     });
 
-    it('returns Romanized Hindi for Hinglish input (no Devanagari)', () => {
-      const msg = resolveComplaintClarificationMessage('Mujhe kai problems hain aaj');
+    it('returns Romanized Hindi for hi-Latn', () => {
+      const msg = resolveComplaintClarificationMessage('hi-Latn');
       expect(msg).toMatch(/Aapne/);
       expect(msg).not.toMatch(/आपने/);
     });
 
-    it('returns Gurmukhi Punjabi for Gurmukhi input', () => {
-      const msg = resolveComplaintClarificationMessage('ਮੈਨੂੰ ਕਈ ਤਕਲੀਫ਼ਾਂ ਹਨ');
+    it('returns Gurmukhi Punjabi for pa', () => {
+      const msg = resolveComplaintClarificationMessage('pa');
       expect(msg).toMatch(/ਤੁਸੀਂ/);
       expect(msg).not.toMatch(/Tussi/);
     });
 
-    it('returns Romanized Punjabi for Latin Punjabi markers (no Gurmukhi)', () => {
-      const msg = resolveComplaintClarificationMessage('Menu kai problems ne');
+    it('returns Romanized Punjabi for pa-Latn', () => {
+      const msg = resolveComplaintClarificationMessage('pa-Latn');
       expect(msg).toMatch(/Tussi/);
       expect(msg).not.toMatch(/ਤੁਸੀਂ/);
     });
 
-    it('never echoes patient text (no PHI leakage)', () => {
-      const phi = 'BP 180/110 and chest pain and rash on arm';
-      const msg = resolveComplaintClarificationMessage(phi);
-      expect(msg).not.toContain('BP');
-      expect(msg).not.toContain('chest');
-      expect(msg).not.toContain('rash');
+    it('default copy does not embed patient text (no PHI leakage)', () => {
+      const msg = resolveComplaintClarificationMessage('en');
+      expect(msg).toBe(COMPLAINT_CLARIFICATION_RESPONSE_EN);
     });
   });
 

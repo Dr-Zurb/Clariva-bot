@@ -19,6 +19,7 @@ import {
   ServiceCatalogMatchConfidence,
 } from '../types/conversation';
 import { readConversationState } from '../types/conversation-state-io';
+import { shouldSkipAutomatedMetaSend } from './automated-messaging-opt-out';
 import {
   findConversationById,
   getConversationLanguage,
@@ -445,6 +446,19 @@ export async function sendInstagramBookingLinkAfterStaffReviewResolution(params:
     params.kind
   );
 
+  const optOut = await shouldSkipAutomatedMetaSend({
+    conversationId: params.conversationId,
+    correlationId: params.correlationId,
+    ifMissing: 'skip',
+  });
+  if (optOut.skip) {
+    logger.info(
+      { correlationId: params.correlationId, conversationId: params.conversationId },
+      'staff_review_resolution_skip_dm_opted_out'
+    );
+    return;
+  }
+
   try {
     const res = await sendInstagramMessage(recipientId, text, params.correlationId, igToken.trim());
     await createMessage(
@@ -810,6 +824,12 @@ export async function runStaffReviewTimeoutJob(correlationId: string): Promise<S
     if (!token) { notifyFailedNoToken++; continue; }
 
     try {
+      const optOut = await shouldSkipAutomatedMetaSend({
+        conversationId: r.conversation_id,
+        correlationId,
+        ifMissing: 'skip',
+      });
+      if (optOut.skip) continue;
       const language = await getConversationLanguage(r.conversation_id, correlationId);
       const ack = formatStaffServiceReviewSlaTimeoutDm(language);
       await sendInstagramMessage(conv.platform_conversation_id, ack, correlationId, token);

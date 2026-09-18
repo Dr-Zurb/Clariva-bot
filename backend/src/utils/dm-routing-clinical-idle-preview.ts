@@ -1,6 +1,6 @@
 /**
  * e-task-ops-02: Pure preview of clinical-idle DM branches (post-medical ack, reason-first, medical safety).
- * Mirrors ordering and booleans in `instagram-dm-webhook-handler` for those blocks — no DB, no fee composer.
+ * Mirrors ordering and booleans in `idle-fee-triage` for those blocks — no DB, no fee composer.
  * Used for golden corpus regression tests; fee_ambiguous outcomes are not simulated here.
  */
 
@@ -12,19 +12,13 @@ import {
   classifierSignalsFeeThreadContinuation,
   classifierSignalsPaymentExistence,
   intentSignalsFeeOrPricing,
-  userSignalsReasonFirstWrapUp,
 } from '../services/ai-service';
 import { userExplicitlyWantsToBookNow } from './consultation-fees';
 import {
   feeFollowUpAnaphora,
   isVagueConsultationPaymentExistenceQuestion,
   lastAssistantDmContent,
-  lastBotAskedAnythingElseBeforeFee,
-  parseReasonFirstAskMoreAmbiguousYes,
-  parseReasonTriageConfirmYes,
-  parseReasonTriageNegationForClarify,
   recentPatientThreadHasClinicalReason,
-  userMessageSuggestsClinicalReason,
   userWantsExplicitFullFeeList,
 } from './reason-first-triage';
 
@@ -76,36 +70,14 @@ export function previewClinicalIdleDmBranch(params: {
       return feeIdleRoutedByAnaphora ? 'fee_follow_up_anaphora_idle' : 'fee_deterministic_idle';
     }
 
-    if (state.triage?.reasonFirstTriagePhase === 'ask_more') {
-      if (
-        lastBotAskedAnythingElseBeforeFee(lastAssistantRawForFee) &&
-        parseReasonFirstAskMoreAmbiguousYes(text) &&
-        !userMessageSuggestsClinicalReason(text)
-      ) {
-        return 'reason_first_triage_ask_more_ambiguous_yes';
-      }
-      if (
-        signalsFeePricing &&
-        !userExplicitlyWantsToBookNow(text) &&
-        !userSignalsReasonFirstWrapUp(text, intentResult)
-      ) {
+    if (signalsFeePricing && !userExplicitlyWantsToBookNow(text)) {
+      if (state.triage.reasonFirstTriagePhase === 'ask_more') {
         return 'reason_first_triage_ask_more_payment_bridge';
       }
-      return 'reason_first_triage_confirm';
+      return 'reason_first_triage_fee_narrow';
     }
 
-    if (state.triage?.reasonFirstTriagePhase === 'confirm') {
-      if (signalsFeePricing && !userExplicitlyWantsToBookNow(text)) {
-        return 'reason_first_triage_fee_narrow';
-      }
-      if (parseReasonTriageConfirmYes(text)) {
-        return 'reason_first_triage_fee_narrow';
-      }
-      if (parseReasonTriageNegationForClarify(text)) {
-        return 'reason_first_triage_confirm';
-      }
-      return 'reason_first_triage_confirm';
-    }
+    return 'booking_start_link_first';
   }
 
   if (intentResult.intent === 'medical_query') {

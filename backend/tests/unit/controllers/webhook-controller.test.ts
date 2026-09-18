@@ -31,7 +31,9 @@ import { UnauthorizedError } from '../../../src/utils/errors';
 jest.mock('../../../src/config/env', () => ({
   env: {
     INSTAGRAM_WEBHOOK_VERIFY_TOKEN: 'test_verify_token_32_chars_minimum!!',
+    FACEBOOK_WEBHOOK_VERIFY_TOKEN: 'fb_verify_token_32_chars_minimum!!!!!',
     INSTAGRAM_APP_SECRET: 'test_app_secret',
+    FACEBOOK_APP_SECRET: 'test_facebook_app_secret',
     REDIS_URL: '',
   },
 }));
@@ -46,6 +48,7 @@ jest.mock('../../../src/services/webhook-idempotency-service', () => ({
 }));
 jest.mock('../../../src/config/queue', () => ({
   webhookQueue: { add: (jest.fn() as jest.Mock).mockResolvedValue(undefined as never) },
+  tryAcquireInstagramDedupLock: (jest.fn() as jest.Mock).mockResolvedValue(true as never),
 }));
 jest.mock('../../../src/utils/audit-logger', () => ({
   logAuditEvent: (jest.fn() as jest.Mock).mockResolvedValue(undefined as never),
@@ -56,6 +59,9 @@ jest.mock('../../../src/services/dead-letter-service', () => ({
 }));
 jest.mock('../../../src/utils/razorpay-verification', () => ({
   verifyRazorpaySignature: jest.fn(),
+}));
+jest.mock('../../../src/services/doctor-gateway-credentials-service', () => ({
+  verifyDoctorOwnedRazorpayWebhook: (jest.fn() as jest.Mock).mockResolvedValue(false as never),
 }));
 jest.mock('../../../src/adapters/razorpay-adapter', () => ({
   razorpayAdapter: {
@@ -74,12 +80,16 @@ import { razorpayAdapter as razorpayAdapterModule } from '../../../src/adapters/
 import { paypalAdapter as paypalAdapterModule } from '../../../src/adapters/paypal-adapter';
 
 const mockVerify = webhookVerification.verifyInstagramSignature as jest.Mock;
+const mockVerifyFacebook = webhookVerification.verifyFacebookSignature as jest.Mock;
 const mockVerifyRazorpay = razorpayVerification.verifyRazorpaySignature as jest.Mock;
 const mockRazorpayExtractEventId = razorpayAdapterModule.extractEventId as jest.Mock;
 const mockPayPalVerifyWebhook = paypalAdapterModule.verifyWebhook as jest.Mock;
 const mockPayPalExtractEventId = paypalAdapterModule.extractEventId as jest.Mock;
 const mockExtractEventId = webhookEventId.extractInstagramEventId as jest.Mock;
+const mockExtractFacebookEventId = webhookEventId.extractFacebookEventId as jest.Mock;
 const mockIsNonActionable = webhookEventId.isNonActionableInstagramEvent as jest.Mock;
+const mockIsEcho = webhookEventId.isInstagramMessageEcho as jest.Mock;
+const mockExtractDedup = webhookEventId.extractInstagramMessageForDedup as jest.Mock;
 const mockIsProcessed = idempotencyService.isWebhookProcessed as jest.Mock;
 const mockMarkProcessing = idempotencyService.markWebhookProcessing as jest.Mock;
 const mockAdd = (queue.webhookQueue as { add: jest.Mock }).add;
@@ -106,6 +116,14 @@ describe('Webhook Controller', () => {
     (auditLogger.logAuditEvent as jest.Mock).mockResolvedValue(undefined as never);
     // Default: non-actionable check returns false so normal flow runs (overridden in 1.4 test)
     mockIsNonActionable.mockReturnValue(false);
+    mockIsEcho.mockReturnValue(false);
+    mockExtractDedup.mockReturnValue(null);
+    (webhookEventId.isInstagramCommentPayload as jest.Mock).mockReturnValue(false);
+    (webhookEventId.generateFallbackEventId as jest.Mock).mockReturnValue('fallback_event_id');
+    (webhookVerification.isWebhookSecretConfigured as jest.Mock).mockReturnValue(true);
+    (webhookVerification.isFacebookWebhookSecretConfigured as jest.Mock).mockReturnValue(true);
+    (webhookVerification.getWebhookSecretLength as jest.Mock).mockReturnValue(16);
+    (webhookVerification.getFacebookWebhookSecretLength as jest.Mock).mockReturnValue(24);
   });
 
   describe('1.2 GET /webhooks/instagram - Verification', () => {
@@ -293,6 +311,163 @@ describe('Webhook Controller', () => {
     });
   });
 
+  describe('fbm-05 POST object=page (Facebook Messenger)', () => {
+    const pagePayload = {
+      object: 'page',
+      entry: [
+        {
+          id: '111222333444555',
+          time: Math.floor(Date.now() / 1000),
+          messaging: [
+            {
+              sender: { id: '987654321' },
+              recipient: { id: '111222333444555' },
+              timestamp: Math.floor(Date.now() / 1000),
+              message: { mid: 'mid.fb.page.1', text: 'PATIENT_TEST message' },
+            },
+          ],
+        },
+      ],
+    };
+
+    it('queues with provider facebook when Page signature is valid', async () => {
+      mockVerifyFacebook.mockReturnValue(true);
+      mockExtractFacebookEventId.mockReturnValue('mid.fb.page.1');
+      mockIsProcessed.mockResolvedValue(null as never);
+      mockMarkProcessing.mockResolvedValue(undefined as never);
+
+      const rawBody = Buffer.from(JSON.stringify(pagePayload));
+      const req = {
+        body: pagePayload,
+        rawBody,
+        headers: { 'x-hub-signature-256': 'sha256=fbabc' },
+        correlationId: 'test-corr-fb-1',
+        ip: '127.0.0.1',
+      } as unknown as Request;
+      const res = mockRes();
+
+      // asyncHandler does not return the inner promise — wait for response.
+      await new Promise<void>((resolve, reject) => {
+        (res.json as jest.Mock).mockImplementation(() => {
+          resolve();
+          return res;
+        });
+        (handleInstagramWebhook as (req: Request, res: Response, next: (err: unknown) => void) => void)(
+          req,
+          res,
+          (err: unknown) => {
+            if (err) reject(err);
+          }
+        );
+      });
+
+      expect(mockVerifyFacebook).toHaveBeenCalledWith('sha256=fbabc', rawBody, 'test-corr-fb-1');
+      expect(mockVerify).not.toHaveBeenCalled();
+      expect(mockIsProcessed).toHaveBeenCalledWith('mid.fb.page.1', 'facebook');
+      expect(mockAdd).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          eventId: 'mid.fb.page.1',
+          provider: 'facebook',
+        })
+      );
+      expect(res.status).toHaveBeenCalledWith(200);
+    });
+
+    it('rejects invalid Page signature without IG-style bypass', async () => {
+      mockVerifyFacebook.mockReturnValue(false);
+
+      const rawBody = Buffer.from(JSON.stringify(pagePayload));
+      const req = {
+        body: pagePayload,
+        rawBody,
+        headers: { 'x-hub-signature-256': 'sha256=wrong' },
+        correlationId: 'test-corr-fb-2',
+        ip: '127.0.0.1',
+      } as unknown as Request;
+      const res = mockRes();
+      const next = mockNext();
+
+      await new Promise<void>((resolve) => {
+        (handleInstagramWebhook as (req: Request, res: Response, next: (err: unknown) => void) => void)(
+          req,
+          res,
+          (err: unknown) => {
+            next(err);
+            resolve();
+          }
+        );
+      });
+
+      expect(mockLogSecurity).toHaveBeenCalledWith(
+        'test-corr-fb-2',
+        undefined,
+        'webhook_signature_failed',
+        'high',
+        '127.0.0.1'
+      );
+      expect(mockAdd).not.toHaveBeenCalled();
+      expect(next).toHaveBeenCalledWith(expect.any(UnauthorizedError));
+    });
+
+    it('returns 200 without queueing Page message echoes', async () => {
+      mockVerifyFacebook.mockReturnValue(true);
+      mockIsEcho.mockReturnValue(true);
+
+      const rawBody = Buffer.from(JSON.stringify(pagePayload));
+      const req = {
+        body: pagePayload,
+        rawBody,
+        headers: { 'x-hub-signature-256': 'sha256=fbabc' },
+        correlationId: 'test-corr-fb-3',
+        ip: '127.0.0.1',
+      } as unknown as Request;
+      const res = mockRes();
+
+      await new Promise<void>((resolve, reject) => {
+        (res.json as jest.Mock).mockImplementation(() => {
+          resolve();
+          return res;
+        });
+        (handleInstagramWebhook as (req: Request, res: Response, next: (err: unknown) => void) => void)(
+          req,
+          res,
+          (err: unknown) => {
+            if (err) reject(err);
+          }
+        );
+      });
+
+      expect(mockAdd).not.toHaveBeenCalled();
+      expect(res.status).toHaveBeenCalledWith(200);
+    });
+
+    it('accepts FACEBOOK_WEBHOOK_VERIFY_TOKEN on GET verification', async () => {
+      const req = {
+        method: 'GET',
+        path: '/webhooks/instagram',
+        query: {
+          'hub.mode': 'subscribe',
+          'hub.verify_token': 'fb_verify_token_32_chars_minimum!!!!!',
+          'hub.challenge': 'fb_challenge_99',
+        },
+        headers: {},
+        correlationId: 'test-corr-fb-verify',
+      } as unknown as Request;
+      const res = mockRes();
+      const next = mockNext();
+
+      await (verifyInstagramWebhook as (req: Request, res: Response, next: () => void) => Promise<void>)(
+        req,
+        res,
+        next
+      );
+
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(res.send).toHaveBeenCalledWith('fb_challenge_99');
+    });
+  });
+
   describe('1.4 Non-actionable events (read/delivery)', () => {
     const readReceiptPayload = {
       object: 'instagram',
@@ -386,6 +561,54 @@ describe('Webhook Controller', () => {
       expect(mockAdd).not.toHaveBeenCalled();
       expect(res.status).toHaveBeenCalledWith(200);
       expect(next).not.toHaveBeenCalled();
+    });
+
+    it('emits RBH-11 drop metric with numEdit / booleans and no message text', async () => {
+      mockVerify.mockReturnValue(true);
+      mockIsNonActionable.mockReturnValue(false);
+      (webhookEventId.inspectInstagramMessageEditDrop as jest.Mock).mockReturnValue({
+        hasText: true,
+        hasSender: true,
+        hasMid: true,
+        numEdit: 1,
+      });
+      jest.mocked(logger.info).mockClear();
+
+      const rawBody = Buffer.from(JSON.stringify(messageEditPayload));
+      const req = {
+        body: messageEditPayload,
+        rawBody,
+        headers: { 'x-hub-signature-256': 'sha256=ok' },
+        correlationId: 'test-corr-edit-metric',
+        ip: '127.0.0.1',
+      } as unknown as Request;
+      const res = mockRes();
+      const next = mockNext();
+
+      await (handleInstagramWebhook as (req: Request, res: Response, next: (err: unknown) => void) => Promise<void>)(
+        req,
+        res,
+        next
+      );
+
+      expect(webhookEventId.inspectInstagramMessageEditDrop).toHaveBeenCalledWith(messageEditPayload);
+      const metricCall = jest
+        .mocked(logger.info)
+        .mock.calls.find(
+          (c) =>
+            (c[0] as { metric?: string } | undefined)?.metric ===
+            'webhook_message_edit_dropped_total'
+        );
+      expect(metricCall).toBeDefined();
+      const payload = metricCall![0] as Record<string, unknown>;
+      expect(payload.alertMarker).toBe('rbh11_message_edit_dropped');
+      expect(payload.hasText).toBe(true);
+      expect(payload.hasSender).toBe(true);
+      expect(payload.hasMid).toBe(true);
+      expect(payload.numEdit).toBe(1);
+      expect(payload.provider).toBe('instagram');
+      expect(JSON.stringify(payload)).not.toContain('edited');
+      expect(mockAdd).not.toHaveBeenCalled();
     });
   });
 

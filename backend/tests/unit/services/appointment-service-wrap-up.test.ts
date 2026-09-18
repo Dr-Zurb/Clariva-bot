@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Appointment Wrap-up Service Tests (pf-02)
  *
@@ -32,6 +33,9 @@ import * as opdQueueService from '../../../src/services/opd/opd-queue-service';
 
 jest.mock('../../../src/config/database');
 jest.mock('../../../src/utils/audit-logger');
+jest.mock('../../../src/services/prescription-pdf-service', () => ({
+  renderPrescriptionToBuffer: jest.fn(),
+}));
 
 jest.mock('../../../src/services/consultation-session-service', () => {
   const actual = jest.requireActual(
@@ -51,6 +55,22 @@ jest.mock('../../../src/services/care-episode-service', () => ({
 
 jest.mock('../../../src/services/opd/opd-queue-service', () => ({
   syncOpdQueueEntryOnAppointmentStatus: jest.fn(async () => {}),
+}));
+
+const recordBillableConsult = jest.fn(async () => ({
+  recorded: true,
+  duplicate: false,
+  status: 'billable',
+  voidReason: null,
+}));
+
+jest.mock('../../../src/services/prescription-service', () => ({
+  attestLatestPrescriptionForAppointment: jest.fn(async () => undefined),
+}));
+
+jest.mock('../../../src/services/billing/usage-ledger-service', () => ({
+  recordBillableConsult: (...args: unknown[]) => recordBillableConsult.apply(null, args),
+  mapConsultationTypeToModality: (_type: string | null | undefined, fallback: string) => fallback,
 }));
 
 const mockedDb = database as jest.Mocked<typeof database>;
@@ -166,6 +186,12 @@ describe('wrapUpAppointment (pf-02)', () => {
     (mockedOpdQueue.syncOpdQueueEntryOnAppointmentStatus as jest.Mock).mockImplementation(
       () => Promise.resolve()
     );
+    recordBillableConsult.mockImplementation(async () => ({
+      recorded: true,
+      duplicate: false,
+      status: 'billable',
+      voidReason: null,
+    }));
   });
 
   it('happy path: confirmed appointment with live session → flips to completed and ends session', async () => {
@@ -178,10 +204,10 @@ describe('wrapUpAppointment (pf-02)', () => {
       followup_kind: validBody.followup_kind,
     };
 
-    // Three terminal calls flow through admin in order:
+    // Two terminal calls flow through admin in order:
     //   1) lookup existing appointment (.maybeSingle)
     //   2) UPDATE … RETURNING * (.maybeSingle)
-    //   3) post-update enrichment session lookup (mocked at helper level)
+    // Session lookup is mocked at helper level and reused for the response.
     const mockAdmin = createMockAdmin([
       { data: baseAppointment, error: null },
       { data: updatedRow, error: null },
@@ -199,9 +225,7 @@ describe('wrapUpAppointment (pf-02)', () => {
           actual_started_at: '2026-05-07T10:01:00Z',
           actual_ended_at: null,
         })
-      )
-      // Post-update enrichment call — return null (test doesn't care).
-      .mockImplementationOnce(() => Promise.resolve(null));
+      );
 
     const result = await wrapUpAppointment(
       APPT_ID,
@@ -232,6 +256,15 @@ describe('wrapUpAppointment (pf-02)', () => {
         status: 'success',
       })
     );
+    expect(recordBillableConsult).toHaveBeenCalledTimes(1);
+    expect(recordBillableConsult).toHaveBeenCalledWith(
+      expect.objectContaining({
+        appointmentId: APPT_ID,
+        doctorId: DOCTOR_ID,
+        source: 'doctor_wrapup',
+      }),
+      CORRELATION_ID
+    );
   });
 
   it('happy path with no live session: still flips to completed but skips endSession', async () => {
@@ -254,8 +287,7 @@ describe('wrapUpAppointment (pf-02)', () => {
           actual_started_at: '2026-05-07T10:01:00Z',
           actual_ended_at: '2026-05-07T10:30:00Z',
         })
-      )
-      .mockImplementationOnce(() => Promise.resolve(null));
+      );
 
     const result = await wrapUpAppointment(
       APPT_ID,
@@ -300,6 +332,7 @@ describe('wrapUpAppointment (pf-02)', () => {
       mockedCareEpisode.syncCareEpisodeLifecycleOnAppointmentCompleted
     ).not.toHaveBeenCalled();
     expect(mockAdmin.chain.update).not.toHaveBeenCalled();
+    expect(recordBillableConsult).not.toHaveBeenCalled();
   });
 
   it('forbidden: caller doctor_id !== appointment.doctor_id → 403', async () => {

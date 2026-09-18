@@ -34,6 +34,7 @@ function createSequentialSupabase(
       in: jest.fn().mockReturnThis(),
       is: jest.fn().mockReturnThis(),
       order: jest.fn().mockReturnThis(),
+      range: jest.fn().mockReturnThis(),
     };
     (chain as { then?: unknown }).then = (resolve: (v: unknown) => void) =>
       Promise.resolve(getNext()).then(resolve);
@@ -47,6 +48,7 @@ function doctorALinkedResponses() {
   return [
     { data: [{ patient_id: patientA }], error: null },
     { data: [{ patient_id: patientA }], error: null },
+    { data: [], error: null },
     {
       data: [
         {
@@ -70,6 +72,7 @@ function doctorBLinkedResponses() {
   return [
     { data: [{ patient_id: patientB }], error: null },
     { data: [{ patient_id: patientB }], error: null },
+    { data: [], error: null },
     {
       data: [
         {

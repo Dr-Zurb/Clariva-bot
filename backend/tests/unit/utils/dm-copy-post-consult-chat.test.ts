@@ -24,7 +24,7 @@ describe('buildPostConsultChatLinkDm', () => {
   const VALID_URL = 'https://app.clariva.test/c/history/sess-123?t=hmac.abcdef';
 
   it('renders all load-bearing pieces with practice name + date + URL', () => {
-    const dm = buildPostConsultChatLinkDm({
+    const dm = buildPostConsultChatLinkDm({ language: 'en',
       practiceName:     "Dr. Sharma's practice",
       joinUrl:          VALID_URL,
       consultDateLabel: '19 Apr 2026',
@@ -40,7 +40,7 @@ describe('buildPostConsultChatLinkDm', () => {
   });
 
   it("falls back to 'your doctor's practice' when practice name is blank", () => {
-    const dm = buildPostConsultChatLinkDm({
+    const dm = buildPostConsultChatLinkDm({ language: 'en',
       practiceName:     '   ',
       joinUrl:          VALID_URL,
       consultDateLabel: '19 Apr 2026',
@@ -49,7 +49,7 @@ describe('buildPostConsultChatLinkDm', () => {
   });
 
   it("falls back to 'your doctor's practice' when practice name is omitted", () => {
-    const dm = buildPostConsultChatLinkDm({
+    const dm = buildPostConsultChatLinkDm({ language: 'en',
       joinUrl:          VALID_URL,
       consultDateLabel: '19 Apr 2026',
     });
@@ -58,7 +58,7 @@ describe('buildPostConsultChatLinkDm', () => {
 
   it('throws when joinUrl is empty (caller-bug surface)', () => {
     expect(() =>
-      buildPostConsultChatLinkDm({
+      buildPostConsultChatLinkDm({ language: 'en',
         practiceName:     "Dr. Sharma's practice",
         joinUrl:          '   ',
         consultDateLabel: '19 Apr 2026',
@@ -68,7 +68,7 @@ describe('buildPostConsultChatLinkDm', () => {
 
   it('throws when consultDateLabel is empty (caller-bug surface)', () => {
     expect(() =>
-      buildPostConsultChatLinkDm({
+      buildPostConsultChatLinkDm({ language: 'en',
         practiceName:     "Dr. Sharma's practice",
         joinUrl:          VALID_URL,
         consultDateLabel: '   ',
@@ -77,7 +77,7 @@ describe('buildPostConsultChatLinkDm', () => {
   });
 
   it('produces a stable golden string (drift guard)', () => {
-    const dm = buildPostConsultChatLinkDm({
+    const dm = buildPostConsultChatLinkDm({ language: 'en',
       practiceName:     "Dr. Sharma's practice",
       joinUrl:          VALID_URL,
       consultDateLabel: '19 Apr 2026',

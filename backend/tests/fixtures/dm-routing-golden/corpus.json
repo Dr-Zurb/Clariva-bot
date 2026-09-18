@@ -57,7 +57,7 @@
       ],
       "text": "nothing else doctor",
       "intentResult": { "intent": "ask_question", "confidence": 0.55 },
-      "expected_branch": "reason_first_triage_confirm"
+      "expected_branch": "booking_start_link_first"
     },
     {
       "id": "reason_first_ask_more_wrap_up_natural_language",
@@ -76,7 +76,7 @@
         "topics": ["pricing"],
         "fee_thread_continuation": true
       },
-      "expected_branch": "reason_first_triage_confirm"
+      "expected_branch": "reason_first_triage_ask_more_payment_bridge"
     },
     {
       "id": "reason_first_ask_more_ambiguous_yes",
@@ -89,7 +89,7 @@
       ],
       "text": "yes",
       "intentResult": { "intent": "ask_question", "confidence": 0.55 },
-      "expected_branch": "reason_first_triage_ask_more_ambiguous_yes"
+      "expected_branch": "booking_start_link_first"
     },
     {
       "id": "reason_first_ask_more_hinglish_bas_wrap_up",
@@ -102,7 +102,7 @@
       ],
       "text": "bas",
       "intentResult": { "intent": "ask_question", "confidence": 0.7 },
-      "expected_branch": "reason_first_triage_confirm"
+      "expected_branch": "booking_start_link_first"
     },
     {
       "id": "reason_first_ask_more_payment_bridge",
@@ -158,7 +158,7 @@
       ],
       "text": "yes correct",
       "intentResult": { "intent": "ask_question", "confidence": 0.7 },
-      "expected_branch": "reason_first_triage_fee_narrow"
+      "expected_branch": "booking_start_link_first"
     },
     {
       "id": "reason_first_confirm_pricing_narrow",
@@ -184,7 +184,7 @@
       ],
       "text": "no i also have fever now",
       "intentResult": { "intent": "ask_question", "confidence": 0.75 },
-      "expected_branch": "reason_first_triage_confirm"
+      "expected_branch": "booking_start_link_first"
     },
     {
       "id": "reason_first_full_fee_list_escape",

@@ -498,6 +498,11 @@ export interface Conversation {
   metadata?: Record<string, unknown> | null;
   /** Migration 190. NULL until first resolution; locale code, not PHI. */
   language: ConversationLanguage | null;
+  /**
+   * Migration 239. When set, automated Instagram/Facebook sends skip this
+   * thread. NULL = not opted out. Operational timestamp; not PHI.
+   */
+  automated_messaging_opted_out_at?: string | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -832,9 +837,10 @@ export type InsertPatient = Omit<
  */
 export type InsertConversation = Omit<
   Conversation,
-  'id' | 'created_at' | 'updated_at' | 'language'
+  'id' | 'created_at' | 'updated_at' | 'language' | 'automated_messaging_opted_out_at'
 > & {
   language?: ConversationLanguage | null;
+  automated_messaging_opted_out_at?: string | null;
 };
 
 /**

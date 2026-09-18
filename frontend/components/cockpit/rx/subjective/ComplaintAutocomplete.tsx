@@ -20,12 +20,23 @@ export type ComplaintCommitPayload =
   | { source: "master"; complaint: ComplaintMasterRow; rawText: string }
   | { source: "freeText"; name: string };
 
+export interface ComplaintAutocompleteExtraOption {
+  id: string;
+  label: string;
+  badge?: string;
+}
+
 export interface ComplaintAutocompleteProps {
   value: string;
   onChange: (text: string) => void;
   onSelect?: (complaint: ComplaintMasterRow) => void;
   /** Rapid-capture: Enter commits highlighted match or free text; clears via onChange(""). */
   onCommit?: (payload: ComplaintCommitPayload) => void;
+  /** Habit / combo rows rendered above catalog names. */
+  extraOptions?: readonly ComplaintAutocompleteExtraOption[];
+  onSelectExtra?: (id: string) => void;
+  /** Clears a habit row without committing it. Enter still commits #1. */
+  onClearExtra?: (id: string) => void;
   token: string;
   inputId: string;
   placeholder?: string;
@@ -41,6 +52,7 @@ export interface ComplaintAutocompleteProps {
 const MIN_QUERY_LEN = 2;
 const DEFAULT_LIMIT = 10;
 const DEFAULT_DEBOUNCE_MS = 100;
+const EMPTY_EXTRA_OPTIONS: ComplaintAutocompleteExtraOption[] = [];
 const CACHE_MAX = 64;
 /** Above sticky SOAP section headers (sticky-stack caps at ~40). */
 const LISTBOX_Z_INDEX = 50;
@@ -104,6 +116,9 @@ export function ComplaintAutocomplete({
   onChange,
   onSelect,
   onCommit,
+  extraOptions = EMPTY_EXTRA_OPTIONS,
+  onSelectExtra,
+  onClearExtra,
   token,
   inputId,
   placeholder = "e.g. Headache",
@@ -135,7 +150,10 @@ export function ComplaintAutocomplete({
 
   const query = value.trim();
   const shouldFetch = useMemo(() => query.length >= MIN_QUERY_LEN, [query]);
+  const extraItems = extraOptions;
+  const extraCount = extraItems.length;
   const [results, setResults] = useState<ComplaintMasterRow[]>([]);
+  const itemCount = extraCount + results.length;
 
   useEffect(() => {
     if (!shouldFetch) {
@@ -146,14 +164,15 @@ export function ComplaintAutocomplete({
       return;
     }
 
+    const firstHighlight = extraCount > 0 ? 0 : -1;
     const cached = cacheGet(query);
     if (cached) {
       setResults(cached);
-      setActiveIdx(cached.length > 0 ? 0 : -1);
+      setActiveIdx(extraCount > 0 || cached.length > 0 ? 0 : -1);
     } else {
       // Drop stale hits from a shorter/prior query while the new fetch is pending.
       setResults([]);
-      setActiveIdx(-1);
+      setActiveIdx(firstHighlight);
     }
 
     const myId = ++fetchIdRef.current;
@@ -163,7 +182,7 @@ export function ComplaintAutocomplete({
         const rows = await fetchComplaintResults(token, query, limit);
         if (myId !== fetchIdRef.current) return;
         setResults(rows);
-        setActiveIdx(rows.length > 0 ? 0 : -1);
+        setActiveIdx(extraCount > 0 || rows.length > 0 ? 0 : -1);
       } catch {
         if (myId !== fetchIdRef.current) return;
       } finally {
@@ -172,10 +191,16 @@ export function ComplaintAutocomplete({
     }, debounceMs);
 
     return () => clearTimeout(timer);
-  }, [query, shouldFetch, token, limit, debounceMs]);
+  }, [query, shouldFetch, token, limit, debounceMs, extraCount]);
+
+  useEffect(() => {
+    if (shouldFetch && extraCount > 0) setOpen(true);
+  }, [shouldFetch, extraCount]);
 
   const showDropdown =
-    open && shouldFetch && (results.length > 0 || loading || resolving);
+    open &&
+    shouldFetch &&
+    (extraCount > 0 || results.length > 0 || loading || resolving);
 
   const syncDropdownAnchor = useCallback(() => {
     const input = inputRefInternal.current;
@@ -221,6 +246,14 @@ export function ComplaintAutocomplete({
     inputRefInternal.current?.focus();
   }, [onChange]);
 
+  const commitExtra = useCallback(
+    (id: string) => {
+      onSelectExtra?.(id);
+      finishCommit();
+    },
+    [onSelectExtra, finishCommit],
+  );
+
   const commitSelection = useCallback(
     (complaint: ComplaintMasterRow) => {
       if (onCommit) {
@@ -250,8 +283,17 @@ export function ComplaintAutocomplete({
         return true;
       }
 
-      if (activeIdx >= 0 && activeIdx < results.length) {
-        onCommit({ source: "master", complaint: results[activeIdx]!, rawText: trimmed });
+      if (extraCount > 0 && onSelectExtra) {
+        const extraIdx = activeIdx < 0 ? 0 : activeIdx;
+        if (extraIdx < extraCount) {
+          commitExtra(extraItems[extraIdx]!.id);
+          return true;
+        }
+      }
+
+      const catalogIdx = extraCount > 0 ? activeIdx - extraCount : activeIdx;
+      if (catalogIdx >= 0 && catalogIdx < results.length) {
+        onCommit({ source: "master", complaint: results[catalogIdx]!, rawText: trimmed });
         finishCommit();
         return true;
       }
@@ -277,7 +319,19 @@ export function ComplaintAutocomplete({
       finishCommit();
       return true;
     },
-    [onCommit, value, activeIdx, results, token, limit, finishCommit],
+    [
+      onCommit,
+      value,
+      activeIdx,
+      results,
+      token,
+      limit,
+      finishCommit,
+      extraCount,
+      extraItems,
+      onSelectExtra,
+      commitExtra,
+    ],
   );
 
   const handleKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
@@ -287,7 +341,7 @@ export function ComplaintAutocomplete({
       return;
     }
 
-    if (!open && e.key === "ArrowDown" && results.length > 0) {
+    if (!open && e.key === "ArrowDown" && itemCount > 0) {
       setOpen(true);
       setActiveIdx(0);
       e.preventDefault();
@@ -296,7 +350,7 @@ export function ComplaintAutocomplete({
     if (!open) return;
     switch (e.key) {
       case "ArrowDown":
-        setActiveIdx((i) => Math.min(i + 1, results.length - 1));
+        setActiveIdx((i) => Math.min(i + 1, Math.max(itemCount - 1, 0)));
         e.preventDefault();
         break;
       case "ArrowUp":
@@ -304,9 +358,17 @@ export function ComplaintAutocomplete({
         e.preventDefault();
         break;
       case "Enter":
-        if (activeIdx >= 0 && activeIdx < results.length) {
-          commitSelection(results[activeIdx]);
+        if (extraCount > 0 && activeIdx >= 0 && activeIdx < extraCount) {
+          commitExtra(extraItems[activeIdx]!.id);
           e.preventDefault();
+          break;
+        }
+        {
+          const catalogIdx = extraCount > 0 ? activeIdx - extraCount : activeIdx;
+          if (catalogIdx >= 0 && catalogIdx < results.length) {
+            commitSelection(results[catalogIdx]!);
+            e.preventDefault();
+          }
         }
         break;
       case "Escape":
@@ -333,15 +395,71 @@ export function ComplaintAutocomplete({
         zIndex: LISTBOX_Z_INDEX,
       }}
       className="max-h-52 overflow-auto rounded-lg border border-border/80 bg-card py-1 shadow-md"
+      data-testid={extraCount > 0 ? "complaint-combo-list" : undefined}
     >
       {resolving ? (
         <li className="px-2.5 py-1.5 text-xs text-muted-foreground">Matching…</li>
       ) : null}
-      {!resolving && loading && results.length === 0 ? (
+      {!resolving && loading && itemCount === 0 ? (
         <li className="px-2.5 py-1.5 text-xs text-muted-foreground">Searching…</li>
       ) : null}
       {!resolving &&
-        results.map((complaint, idx) => {
+        extraItems.map((extra, idx) => {
+          const active = idx === activeIdx;
+          return (
+            <li
+              key={extra.id}
+              id={`${listboxId}-option-${idx}`}
+              ref={(el) => {
+                optionRefs.current[idx] = el;
+              }}
+              role="option"
+              aria-selected={active}
+              data-testid="complaint-combo-option"
+              onMouseEnter={() => setActiveIdx(idx)}
+              onMouseDown={(e) => {
+                e.preventDefault();
+                commitExtra(extra.id);
+              }}
+              className={`flex cursor-pointer items-center gap-2 border-l-2 px-2 py-1.5 text-sm transition-colors ${
+                active
+                  ? "border-l-primary bg-primary/15 font-medium text-foreground"
+                  : "border-l-transparent text-foreground/90 hover:bg-muted/50"
+              }`}
+            >
+              <span className="min-w-0 flex-1 truncate leading-tight">{extra.label}</span>
+              {extra.badge ? (
+                <span
+                  data-testid="complaint-combo-most-frequent"
+                  className="shrink-0 rounded-full border border-border px-1.5 py-0 text-[10px] text-muted-foreground"
+                >
+                  {extra.badge}
+                </span>
+              ) : null}
+              {onClearExtra ? (
+                <button
+                  type="button"
+                  aria-label="Clear this suggestion"
+                  data-testid="complaint-combo-clear"
+                  className="shrink-0 rounded px-1 text-[12px] leading-none text-muted-foreground hover:bg-muted hover:text-foreground"
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    onClearExtra(extra.id);
+                  }}
+                >
+                  ×
+                </button>
+              ) : null}
+            </li>
+          );
+        })}
+      {!resolving && extraCount > 0 && results.length > 0 ? (
+        <li role="presentation" className="my-0.5 border-t border-border/60" />
+      ) : null}
+      {!resolving &&
+        results.map((complaint, catalogIdx) => {
+          const idx = extraCount + catalogIdx;
           const active = idx === activeIdx;
           const categoryLabel = formatCategoryLabel(complaint.category);
           return (
@@ -377,12 +495,12 @@ export function ComplaintAutocomplete({
             </li>
           );
         })}
-      {!resolving && results.length === 0 && !loading ? (
+      {!resolving && extraCount === 0 && results.length === 0 && !loading ? (
         <li className="px-2.5 py-1.5 text-xs leading-snug text-muted-foreground">
           No matches — press Enter to add as custom text.
         </li>
       ) : null}
-      {results.length > 0 && onCommit && !resolving ? (
+      {(results.length > 0 || extraCount > 0) && onCommit && !resolving ? (
         <li
           className="border-t border-border/60 px-2.5 py-1 text-[11px] text-muted-foreground"
           aria-hidden

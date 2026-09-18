@@ -190,6 +190,7 @@ platform                TEXT NOT NULL CHECK (platform IN ('facebook', 'instagram
 platform_conversation_id TEXT NOT NULL   -- Platform-specific conversation ID
 status                  TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'archived', 'closed'))
 metadata                JSONB           -- Conversation state (step, lastIntent, collectedFields). No PHI. (migration 004)
+automated_messaging_opted_out_at TIMESTAMPTZ  -- mca-06; NULL = not opted out. Not PHI.
 created_at              TIMESTAMPTZ NOT NULL DEFAULT now()
 updated_at              TIMESTAMPTZ NOT NULL DEFAULT now()
 ```
@@ -348,7 +349,7 @@ payout_schedule         TEXT NULL  -- per_appointment | daily | weekly | monthly
 payout_minor            BIGINT NULL  -- (025)
 razorpay_linked_account_id TEXT NULL  -- (025)
 opd_mode                TEXT NOT NULL DEFAULT 'slot'  -- CHECK (slot | queue); migration 028
-opd_policies            JSONB NULL   -- optional keys (OPD-08): `slot_join_grace_minutes` (int; patient join window after scheduled start, slot mode); `reschedule_payment_policy` (`forfeit` | `transfer_entitlement`); `queue_reinsert_default` (`end_of_queue` | `after_current`); `medicine_combo_resets` (map habit-signature → ISO; count reset, no PHI); `medicine_pack_dismissals` (map pack-signature → ISO); `medicine_pack_suggestion_seen` (string[] of pack signatures); plus earlier queue caps
+opd_policies            JSONB NULL   -- optional keys (OPD-08): `slot_join_grace_minutes` (int; patient join window after scheduled start, slot mode); `reschedule_payment_policy` (`forfeit` | `transfer_entitlement`); `queue_reinsert_default` (`end_of_queue` | `after_current`); `medicine_combo_resets` (map habit-signature → ISO; count reset, no PHI); `complaint_combo_resets` (map habit-signature → ISO; count reset, no PHI); `medicine_pack_dismissals` (map pack-signature → ISO); `medicine_pack_suggestion_seen` (string[] of pack signatures); plus earlier queue caps
 instagram_receptionist_paused BOOLEAN NOT NULL DEFAULT false  -- migration 033; pause DM + comment automation
 instagram_receptionist_pause_message TEXT NULL  -- optional custom patient DM when paused (RBH-09)
 logo_path               TEXT NULL  -- clinic-branding-v1 / 211; Storage key in bucket `clinic-branding`, never a URL

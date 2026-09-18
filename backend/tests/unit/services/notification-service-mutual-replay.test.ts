@@ -70,6 +70,10 @@ jest.mock('../../../src/utils/audit-logger', () => ({
 jest.mock('../../../src/services/consultation-session-service', () => ({
   getJoinTokenForAppointment: jest.fn(),
 }));
+jest.mock('../../../src/services/prescription-pdf-service', () => ({
+  generatePrescriptionPdf: jest.fn(async () => Buffer.from([])),
+  buildPrescriptionPdfContext: jest.fn(async () => ({})),
+}));
 jest.mock('../../../src/services/dashboard-events-service', () => ({
   insertDashboardEvent: jest.fn(),
 }));
@@ -87,6 +91,8 @@ const notificationService = require('../../../src/services/notification-service'
     artifactType:           'audio' | 'transcript';
     recordingAccessAuditId: string;
     correlationId:          string;
+    accessedByRole?:        'doctor' | 'support_staff';
+    actionKind?:            'reviewed' | 'downloaded';
   }) => Promise<unknown>;
   notifyDoctorOfPatientReplay: (input: {
     sessionId:              string;
@@ -387,7 +393,17 @@ describe('notifyPatientOfDoctorReplay — defensive skips', () => {
     })) as { skipped: true; reason: string };
 
     expect(result).toEqual({ skipped: true, reason: 'session_not_found' });
-    expect(auditLogger.logAuditEvent).not.toHaveBeenCalled();
+    expect(auditLogger.logAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'patient_recording_replay_notification',
+        status: 'failure',
+        metadata: expect.objectContaining({
+          skip_reason: 'session_not_found',
+          obligation: 'unfulfilled',
+          recording_access_audit_id: 'audit-1',
+        }),
+      }),
+    );
   });
 
   it('skips when no SMS phone and no IG identity is reachable', async () => {
@@ -408,6 +424,16 @@ describe('notifyPatientOfDoctorReplay — defensive skips', () => {
 
     expect(result).toEqual({ skipped: true, reason: 'no_channels' });
     expect(smsService.sendSms).not.toHaveBeenCalled();
+    expect(auditLogger.logAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'patient_recording_replay_notification',
+        status: 'failure',
+        metadata: expect.objectContaining({
+          skip_reason: 'no_channels',
+          obligation: 'unfulfilled',
+        }),
+      }),
+    );
   });
 
   it('skips when the session never ended (defensive — mintReplayUrl normally guards this)', async () => {
@@ -430,6 +456,40 @@ describe('notifyPatientOfDoctorReplay — defensive skips', () => {
     })) as { skipped: true; reason: string };
 
     expect(result).toEqual({ skipped: true, reason: 'session_not_ended' });
+    expect(auditLogger.logAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({ skip_reason: 'session_not_ended' }),
+      }),
+    );
+  });
+
+  it('uses support-staff copy instead of "your doctor reviewed"', async () => {
+    database.getSupabaseAdminClient.mockReturnValue(
+      buildSupabaseMock({
+        session: { found: true, actualEndedAtIso: '2026-04-15T12:00:00Z' },
+        patient: {
+          name: 'Patient One',
+          phone: '+15551234567',
+          platform: null,
+          platformExternalId: null,
+        },
+        conversation: null,
+      }),
+    );
+
+    await notifyPatientOfDoctorReplay({
+      sessionId:              'sess-1',
+      artifactType:           'audio',
+      recordingAccessAuditId: 'audit-1',
+      correlationId:          'cid-1',
+      accessedByRole:         'support_staff',
+    });
+
+    expect(smsService.sendSms).toHaveBeenCalledTimes(1);
+    const body = smsService.sendSms.mock.calls[0][1] as string;
+    expect(body).toContain('support agent');
+    expect(body).not.toContain('Your doctor');
+    expect(body).not.toContain('Customer ticket');
   });
 });
 
@@ -550,6 +610,16 @@ describe('notifyDoctorOfPatientReplay — failure handling', () => {
     })) as { skipped: true; reason: string };
 
     expect(result).toEqual({ skipped: true, reason: 'insert_failed' });
+    expect(auditLogger.logAuditEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'doctor_recording_replay_notification',
+        status: 'failure',
+        metadata: expect.objectContaining({
+          skip_reason: 'insert_failed',
+          obligation: 'unfulfilled',
+        }),
+      }),
+    );
   });
 
   it('skips when the session lookup returns null', async () => {

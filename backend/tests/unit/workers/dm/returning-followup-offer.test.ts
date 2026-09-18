@@ -91,10 +91,13 @@ describe('returning-followup-offer (rcp-23)', () => {
       { step: 'responded', updatedAt: new Date().toISOString() },
       returningProfile(),
       doctorSettings,
-      'book_appointment'
+      'book_appointment',
+      'en'
     );
     expect(offer?.state.step).toBe('awaiting_followup_service_confirmation');
-    expect(offer?.replyText).toBe(formatReturningFollowUpConfirmMessage('Follow-up Consultation'));
+    expect(offer?.replyText).toBe(
+      formatReturningFollowUpConfirmMessage('en', 'Follow-up Consultation')
+    );
     env.RETURNING_PATIENT_MEMORY_ENABLED = false;
   });
 

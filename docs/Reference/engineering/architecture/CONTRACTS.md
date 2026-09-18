@@ -385,6 +385,17 @@ Response: X-Correlation-ID: 550e8400-e29b-41d4-a716-446655440000
 
 When the gate denies payment, response **403** with `error.code` = `StaffServiceReviewPendingPaymentError` or `ServiceSelectionNotFinalizedPaymentError` (canonical error envelope).
 
+**mca-13 — optional owned-page intake** (backward compatible; omitted on returning patients):
+
+| Field | Type | Meaning |
+|--------|------|---------|
+| `patientName` | string | Writes the existing conversation patient when that row has no name yet. |
+| `patientPhone` | string | E.164-like phone; same row. |
+| `reasonForVisit` | string | This visit’s reason when chat never collected one. |
+| `consentGranted` | boolean | Must be `true` to write a placeholder row. |
+
+When the patient row is missing name or phone and these fields are incomplete, response **400** `ValidationError` (message tells the user to finish on the booking page, not in chat). A row that already has name + phone ignores a new identity on the body. No second patient row is created.
+
 **ARM-11:** If the doctor has an active teleconsult **catalog** but the conversation cannot resolve a catalog service for quoting, checkout returns **400** `ValidationError` (no silent fallback to legacy flat fee). See [RECIPES.md](../development/RECIPES.md) ARM-11.
 
 ---

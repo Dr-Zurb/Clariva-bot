@@ -39,7 +39,7 @@ async function main() {
     console.error('');
     console.error('Get them from Meta for Developers:');
     console.error('  1. Your App → Messenger API Settings → Instagram settings');
-    console.error('  2. PAGE_ID: The Page ID for "Clariva Care" (or your Page name)');
+    console.error('  2. PAGE_ID: The Page ID for "Halo Aid" (or your Page name)');
     console.error('  3. ACCESS_TOKEN: Click "Generate token" for that Page');
     console.error('');
     console.error('Run: META_PAGE_ID=<id> META_PAGE_ACCESS_TOKEN=<token> npm run meta:subscribe');

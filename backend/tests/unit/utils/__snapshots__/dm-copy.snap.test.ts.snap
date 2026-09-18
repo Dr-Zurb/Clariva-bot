@@ -46,6 +46,15 @@ exports[`dm-copy snapshots cancel-list / 5 items / mixed + some unknown modality
 Reply a number from **1** to **5**."
 `;
 
+exports[`dm-copy snapshots cancel-list / locale hi / 2 items 1`] = `
+"Kaunsi appointment cancel karni hai?
+
+**1.** Tue, Apr 29 · 4:30 PM — Video consult
+**2.** Fri, May 2 · 10:00 AM — In-person
+
+**1** ya **2** reply karein."
+`;
+
 exports[`dm-copy snapshots clarification / en / 1 concern → falls back to open-ended 1`] = `"You've mentioned a few concerns. Which one would you like to consult about first? We can address the others in a follow-up visit."`;
 
 exports[`dm-copy snapshots clarification / en / 2 concerns 1`] = `
@@ -160,6 +169,19 @@ exports[`dm-copy snapshots confirm-details / gender mixed case normalizes to Tit
 Is everything correct? Reply **Yes** to see available slots, or tell me what to change."
 `;
 
+exports[`dm-copy snapshots confirm-details / locale pa 1`] = `
+"Hun tak eh details ne:
+
+**Name:** Abhishek Sahil
+**Age:** 35
+**Gender:** Male
+**Mobile:** 8264602737
+**Reason:** headache
+**Email:** abhishek@example.com
+
+Sab theek hai? Available slots dekh layi **Yes** reply karo, ya jo change karna hai dasso."
+`;
+
 exports[`dm-copy snapshots confirm-details / long reason stays on one line 1`] = `
 "Here's what I have so far:
 
@@ -210,6 +232,15 @@ exports[`dm-copy snapshots confirm-details / whitespace-only reason becomes Not 
 **Email:** abhishek@example.com
 
 Is everything correct? Reply **Yes** to see available slots, or tell me what to change."
+`;
+
+exports[`dm-copy snapshots consent / locale hi / self happy path 1`] = `
+"Dhanyavaad, **Abhishek**.
+Hum **8264602737** par call ya text se aapki appointment confirm karenge.
+
+Doctor ke liye koi notes? _(allergies, current medicines, kuch aur — optional)_
+
+Jab aap time pick karna chahein tab **Yes** reply karein."
 `;
 
 exports[`dm-copy snapshots consent / self / "there" sentinel treated as missing name 1`] = `
@@ -341,6 +372,50 @@ We already have your **reason for visit** from earlier. Just need a few more:
 - **Email** *(optional, for receipts)*"
 `;
 
+exports[`dm-copy snapshots intake / locale hi / initial / self-booking 1`] = `
+"Zaroor — **Dr Zurb's Clinic** par appointment book karne mein khushi hogi.
+
+Yeh details share karein (ek hi message mein paste kar sakte hain):
+- **Full name**
+- **Age**
+- **Gender**
+- **Mobile number**
+- **Reason for visit** — e.g. **headache**, **fever**
+- **Email** *(optional, for receipts)*"
+`;
+
+exports[`dm-copy snapshots intake / locale hi-Latn / still-need / age+reason 1`] = `
+"Samajh gaya. Ab yeh details chahiye:
+- **Age**
+- **Reason for visit** — e.g. **headache**, **fever**
+
+Aap ek hi message mein paste kar sakte hain."
+`;
+
+exports[`dm-copy snapshots intake / locale other / initial / self-booking (LANG-D7 → en) 1`] = `
+"Sure — happy to help you book at **Dr Zurb's Clinic**.
+
+Please share these details (you can paste them all in one message):
+- **Full name**
+- **Age**
+- **Gender**
+- **Mobile number**
+- **Reason for visit** — e.g. **headache**, **fever**
+- **Email** *(optional, for receipts)*"
+`;
+
+exports[`dm-copy snapshots intake / locale pa / initial / self-booking 1`] = `
+"Zaroor — **Dr Zurb's Clinic** te appointment book karn layi khushi hogi.
+
+Eh details share karo (ik hi message vich paste kar sakde ho):
+- **Full name**
+- **Age**
+- **Gender**
+- **Mobile number**
+- **Reason for visit** — e.g. **headache**, **fever**
+- **Email** *(optional, for receipts)*"
+`;
+
 exports[`dm-copy snapshots intake / retry-not-received / no relation 1`] = `
 "I didn't catch your details — could you resend them?
 - **Full name**
@@ -385,7 +460,101 @@ exports[`dm-copy snapshots intake / still-need / missing: email only (all requir
 You can paste them in one message."
 `;
 
+exports[`dm-copy snapshots lang-20 / appointment cancelled 1`] = `"Your appointment on Tue, Apr 29, 2026, 4:30 PM has been cancelled."`;
+
+exports[`dm-copy snapshots lang-20 / cancel confirm prompt 1`] = `"Cancel appointment on Tue, Apr 29, 2026, 4:30 PM? Reply **Yes** or **No**."`;
+
+exports[`dm-copy snapshots lang-20 / locale hi / cancel confirm (English arm) 1`] = `"Tue, Apr 29, 2026, 4:30 PM par appointment cancel karein? **Yes** ya **No** reply karein."`;
+
+exports[`dm-copy snapshots lang-20 / numeric pick invalid 1`] = `"Please reply 1, 2, or 3."`;
+
+exports[`dm-copy snapshots lang-20 / pick not found cancel 1`] = `"That appointment wasn't found. Please try again or say 'cancel appointment' to start over."`;
+
+exports[`dm-copy snapshots lang-20 / post booking ack 1`] = `"Great - you're all set. Let us know if you need anything else."`;
+
+exports[`dm-copy snapshots lang-20 / reschedule choice list 1`] = `
+"Which appointment would you like to reschedule?
+
+1) Tue, Apr 29
+2) Wed, Apr 30
+
+Reply 1, 2, or 2."
+`;
+
+exports[`dm-copy snapshots lang-20 / status self-only other patient (phi) 1`] = `"You don't have an appointment for yourself yet. The appointment on Tue, Apr 29 · confirmed is for **Ravi Kumar**. Would you like to book one for yourself?"`;
+
+exports[`dm-copy snapshots lang-20 / status upcoming list with cap 1`] = `
+"You have 12 upcoming appointments:
+
+1. Tue · confirmed
+2. Wed · pending
+
+(showing first 10)"
+`;
+
+exports[`dm-copy snapshots lang-21 / consent denied 1`] = `"No problem. I haven't saved any of your information. Say 'book appointment' anytime if you'd like to try again."`;
+
+exports[`dm-copy snapshots lang-21 / consent revoke success 1`] = `"Done. I've removed your personal information from our records. Is there anything else I can help with?"`;
+
+exports[`dm-copy snapshots lang-21 / locale hi / consent denied (Roman hi arm) 1`] = `"Koi baat nahi. Maine aapki koi bhi information save nahi ki. Dobara try karna ho to kabhi bhi 'book appointment' likhein."`;
+
+exports[`dm-copy snapshots lang-21 / receptionist pause default 1`] = `"Thanks for your message. Our team will reply from this inbox personally when they can. Automated scheduling is paused right now - we appreciate your patience."`;
+
+exports[`dm-copy snapshots lang-22 / book-for-other dual intro 1`] = `"I'll help you book for you and your **mother**. Let's take them one at a time — your **mother** first, then you. Please share their details:"`;
+
+exports[`dm-copy snapshots lang-22 / book-for-other next intro 1`] = `"Got it. I'll help you book for your **wife** next. Please share their details:"`;
+
+exports[`dm-copy snapshots lang-22 / booking link queue 1`] = `
+"Join the queue for your visit here: https://book.example/q
+
+Choose a day, then confirm - you'll get a token number. Wait times are approximate."
+`;
+
+exports[`dm-copy snapshots lang-22 / booking link slot 1`] = `
+"Open this link to get an appointment: https://book.example/s
+
+You'll be redirected back to this chat when done."
+`;
+
+exports[`dm-copy snapshots lang-22 / consent persist failure 1`] = `"I had trouble saving your details — please reply **Yes** again to retry, or say 'book appointment' to re-share them."`;
+
+exports[`dm-copy snapshots lang-22 / locale hi / self-book nudge (English arm) 1`] = `"Kya aap apne liye bhi abhi book karna chahenge?"`;
+
+exports[`dm-copy snapshots lang-22 / patient match confirm self (phi) 1`] = `"We found an existing record matching your details (**Riya Sharma**). Is this you? Reply Yes or No."`;
+
+exports[`dm-copy snapshots lang-22 / reschedule choice queue 1`] = `"Pick a new day for your visit: [Choose new day](https://book.example/r)"`;
+
+exports[`dm-copy snapshots lang-22 / returning follow-up confirm 1`] = `"Is this a **follow-up** for **Follow-up Consultation**? Reply **Yes** or **No**."`;
+
+exports[`dm-copy snapshots lang-22 / self-book nudge 1`] = `"Would you like to book one for yourself now?"`;
+
+exports[`dm-copy snapshots lang-22 / teleconsult channel pick 1`] = `"Right now we offer **teleconsult** only (text, voice, or video) — which works best for you?"`;
+
+exports[`dm-copy snapshots lang-23 / comment proactive booking 1`] = `
+"You expressed interest in booking.
+
+Demo Clinic
+
+Reply here if you'd like to schedule."
+`;
+
+exports[`dm-copy snapshots lang-23 / fallback reply 1`] = `"Thanks for your message. We'll get back to you soon."`;
+
+exports[`dm-copy snapshots lang-23 / locale hi / fallback reply (English arm) 1`] = `"Aapke message ke liye dhanyavaad. Hum jald jawab denge."`;
+
+exports[`dm-copy snapshots lang-23 / throttle ack 1`] = `"I see your messages — give me a moment to respond."`;
+
+exports[`dm-copy snapshots lang-23 / welcome-back (phi) 1`] = `"Welcome back, **Priya**! Great to hear from you again."`;
+
+exports[`dm-copy snapshots lang-24 / LLM empty fallback 1`] = `"I didn't quite get that. Could you rephrase? Or say 'book appointment', 'check availability', 'cancel appointment', or 'reschedule appointment' if that's what you need."`;
+
+exports[`dm-copy snapshots mca-07 / automated messaging start ack 1`] = `"Automated messages are on again. How can I help?"`;
+
+exports[`dm-copy snapshots mca-07 / automated messaging stop ack 1`] = `"I'll stop sending automated messages here. Your doctor can still reply. Send START if you want them again."`;
+
 exports[`dm-copy snapshots nonTextAck / default 1`] = `"I can't read images or voice notes yet — could you type your message instead? I'll take it from there."`;
+
+exports[`dm-copy snapshots nonTextAck / locale hi 1`] = `"Main abhi images ya voice notes nahi padh sakta — apna message type karke bhejein? Main aage dekh lunga."`;
 
 exports[`dm-copy snapshots payment / MRN has surrounding whitespace (trims before rendering) 1`] = `
 "✅ **Payment received.**
@@ -395,7 +564,22 @@ Your appointment is confirmed for **Tue, Apr 29 · 4:30 PM**.
 🆔 **Patient ID:** CLR-00123
 _Save this for future bookings._
 
+If your symptoms get worse or feel like an emergency before your visit, don't wait — call **112** or **108**, or go to the nearest hospital right away.
+
 We'll send a reminder before your visit. Reply here anytime if you need to reschedule or have questions."
+`;
+
+exports[`dm-copy snapshots payment / locale pa / with MRN 1`] = `
+"✅ **Payment mil gayi.**
+
+Tuhadi appointment **Tue, Apr 29 · 4:30 PM** layi confirm ho gayi hai.
+
+🆔 **Patient ID:** CLR-00123
+_Future bookings layi save kar lo._
+
+Je visit ton pehlan tuhade symptoms vadh jaan ya emergency varga lage, ta intezaar na karo — **112** ya **108** te call karo, ya nazdeeki hospital jao.
+
+Visit ton pehlan asi reminder bhejange. Reschedule ya koi sawaal hove ta ithe reply karo."
 `;
 
 exports[`dm-copy snapshots payment / with MRN (happy path, year-stripped middot date) 1`] = `
@@ -406,6 +590,8 @@ Your appointment is confirmed for **Tue, Apr 29 · 4:30 PM**.
 🆔 **Patient ID:** CLR-00123
 _Save this for future bookings._
 
+If your symptoms get worse or feel like an emergency before your visit, don't wait — call **112** or **108**, or go to the nearest hospital right away.
+
 We'll send a reminder before your visit. Reply here anytime if you need to reschedule or have questions."
 `;
 
@@ -414,8 +600,12 @@ exports[`dm-copy snapshots payment / without MRN (shorter variant) 1`] = `
 
 Your appointment is confirmed for **Tue, Apr 29 · 4:30 PM**.
 
+If your symptoms get worse or feel like an emergency before your visit, don't wait — call **112** or **108**, or go to the nearest hospital right away.
+
 We'll send a reminder before your visit. Reply here anytime if you need to reschedule or have questions."
 `;
+
+exports[`dm-copy snapshots rec-09 / recording audio disclosure 1`] = `"Every consult is audio-recorded as part of the medical record. You have the same access as the clinic, self-serve for 90 days. When the clinic replays a recording, that access is logged and you are notified."`;
 
 exports[`dm-copy snapshots staff-review-resolved / confirmed / practice + label present 1`] = `
 "**Dr Zurb's Clinic** has confirmed your visit type: **General consultation**.

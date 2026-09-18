@@ -74,8 +74,8 @@ This task adds an **AI fallback** that is **gated, asynchronous, server-side, an
 - [x] ✅ 2.5 "Schema-bounded or omitted" — anything not in the spec is dropped.
 
 ### 3. Gating + caching (keep it off the critical path)
-- [x] ✅ 3.1 Gate heuristic `shouldRequestAiParse(rawText, parsed)` built + unit-tested ([`should-request-ai-parse.ts`](../../../../../../../../frontend/lib/cockpit/should-request-ai-parse.ts)): fires on non-Latin script, negation, or a long line the rules barely touched. **Wired to BOTH the explicit "✨ refine" (Tier 2 escalation) AND auto-gate-on-Enter (Tier 1 default).** **Completed: 2026-06-07.**
-- [x] ✅ 3.2 Deterministic commit is the default for clean lines (instant, no AI). On a gated free-text Enter the commit is **held** (not blocked — synchronous decision), AI fires async, and a "Keep as typed" escape / empty-or-error degrade always commits the literal line so Enter never dead-ends. **Completed: 2026-06-07.**
+- [x] ✅ 3.1 Gate heuristic `shouldRequestAiParse(rawText, parsed)` built + unit-tested ([`should-request-ai-parse.ts`](../../../../../../../../frontend/lib/cockpit/should-request-ai-parse.ts)): fires on non-Latin script, negation, or a long line the rules barely touched. **Enter stays deterministic.** The same triggers drive `complaintParseWarning` on the capture-bar typing hint. Card ✨ Refine is the only AI path. **Updated: 2026-09-06.**
+- [x] ✅ 3.2 Deterministic commit is the default for clean lines (instant, no AI). A gated line still commits on Enter; the hint warns first. **Updated: 2026-09-06.**
 - [~] 🟡 3.3 In-flight request **aborted** on refine re-tap / unmount (`AbortController`). **Deferred:** debounce + (text,category) response cache (not needed while calls are explicit-only).
 - [x] ✅ 3.4 Graceful degrade: error / unconfigured key → keep deterministic result + a tiny non-blocking "Couldn't refine" note. No blocking toast.
 

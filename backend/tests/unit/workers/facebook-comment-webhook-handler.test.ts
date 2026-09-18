@@ -22,6 +22,12 @@ jest.mock('../../../src/services/instagram-service');
 jest.mock('../../../src/services/notification-service', () => ({
   sendCommentLeadToDoctor: jest.fn(async () => undefined),
 }));
+jest.mock('../../../src/services/comment-outreach-language', () => ({
+  resolveCommentOutreachLanguage: jest.fn(async () => 'en'),
+}));
+jest.mock('../../../src/services/automated-messaging-opt-out', () => ({
+  shouldSkipCommentPrivateReply: jest.fn(async () => false),
+}));
 
 import { processFacebookCommentWebhook } from '../../../src/workers/facebook-comment-webhook-handler';
 import * as facebookConnect from '../../../src/services/facebook-connect-service';

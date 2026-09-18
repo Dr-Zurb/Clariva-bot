@@ -1,6 +1,6 @@
 # Capture system
 
-Use this folder so ideas and “we should fix this” items do not get lost. Keep it **raw** here; turn serious work into **Daily-plans**, **GitHub issues**, or **Taskmaster** when you triage.
+Use this folder so ideas and “we should fix this” items do not get lost. Keep it **raw** here; turn serious work into **Daily-plans**, **GitHub issues**, or **Taskmaster** when you triage. Business/ops threads go to [`Business/tracks.md`](../Business/tracks.md), not here.
 
 > **Full lifecycle:** [`../process/WORKFLOW.md`](../process/WORKFLOW.md) — capture → product plan → daily plan → done.
 
@@ -70,6 +70,7 @@ Add a new `features/<program-slug>/` folder when a program gets its own deferred
 - **Capture** = parking lot (low friction).
 - **features/** = per-program deferred/future backlog (survives triage).
 - **Daily-plans** = what you intend to execute in a window.
+- **Business/** = run the company (legal, Meta, week/day). Not for code follow-ups.
 - **Taskmaster** = structured tasks when you want dependencies, expand, and status.
 
 Flow: **inbox → triage → features/ or Daily-plans or Taskmaster**. See [`../process/WORKFLOW.md`](../process/WORKFLOW.md) for the full staged path.

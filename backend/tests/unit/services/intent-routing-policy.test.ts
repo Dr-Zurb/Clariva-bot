@@ -78,7 +78,7 @@ describe('RBH-14 intent routing', () => {
     const emergencyBot =
       'Please call emergency services (in India: **112** or **108**) or go to the nearest hospital immediately.';
 
-    it('downgrades LLM emergency to medical_query when last assistant sent escalation and message lacks acute keywords', () => {
+    it('downgrades LLM emergency when last assistant sent escalation and message shows stability (non-crisis BP)', () => {
       const out = applyEmergencyIntentPostPolicy(
         { intent: 'emergency', confidence: 0.92 },
         'its 140/80 now',
@@ -114,12 +114,12 @@ describe('RBH-14 intent routing', () => {
       expect(out.intent).toBe('emergency');
     });
 
-    it('downgrades when escalation appears earlier in thread (not only last bot line)', () => {
+    it('downgrades when escalation appears earlier and follow-up signals stability', () => {
       const emergency =
         'Please call emergency services (in India: **112** or **108**) or go to the nearest hospital immediately.';
       const out = applyEmergencyIntentPostPolicy(
         { intent: 'emergency', confidence: 0.91 },
-        'its 130 now',
+        'feeling better, no other symptom',
         [
           { sender_type: 'patient', content: 'bp 200/100' },
           { sender_type: 'system', content: emergency },
@@ -139,6 +139,30 @@ describe('RBH-14 intent routing', () => {
         [
           { sender_type: 'patient', content: 'chest ok' },
           { sender_type: 'system', content: emergency },
+        ]
+      );
+      expect(out.intent).toBe('emergency');
+    });
+
+    it('keeps LLM-only emergency after 112 when message has no stability evidence', () => {
+      const out = applyEmergencyIntentPostPolicy(
+        { intent: 'emergency', confidence: 0.93 },
+        'help!!!! saans',
+        [
+          { sender_type: 'patient', content: 'chest pain' },
+          { sender_type: 'system', content: emergencyBot },
+        ]
+      );
+      expect(out.intent).toBe('emergency');
+    });
+
+    it('keeps emergency when acute wording appears alongside stability keywords', () => {
+      const out = applyEmergencyIntentPostPolicy(
+        { intent: 'emergency', confidence: 0.94 },
+        "I'm fine now but chest pain again",
+        [
+          { sender_type: 'patient', content: 'bp was high' },
+          { sender_type: 'system', content: emergencyBot },
         ]
       );
       expect(out.intent).toBe('emergency');
@@ -198,6 +222,17 @@ describe('RBH-14 intent routing', () => {
       });
       const ctx = buildClassifyIntentContext(state, []);
       expect(ctx?.conversationGoal).toBe('reason_first_triage');
+    });
+
+    it('prefers active_emergency over fee_quote and reason_first when crisis is open', () => {
+      const state = readConversationState({
+        step: 'responded',
+        reasonFirstTriagePhase: 'ask_more',
+        activeFlow: 'fee_quote',
+        safety: { escalatedAt: new Date().toISOString() },
+      });
+      const ctx = buildClassifyIntentContext(state, []);
+      expect(ctx?.conversationGoal).toBe('active_emergency');
     });
 
     it('omits post_medical_deflection when deflection timestamp is older than TTL', () => {

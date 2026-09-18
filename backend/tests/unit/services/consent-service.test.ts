@@ -73,7 +73,8 @@ describe('Consent Service', () => {
         conversationId,
         patientId,
         'instagram_dm',
-        correlationId
+        correlationId,
+      'en'
       );
 
       expect(mockedCollection.getCollectedData).toHaveBeenCalledWith(conversationId);
@@ -105,7 +106,8 @@ describe('Consent Service', () => {
         conversationId,
         patientId,
         'instagram_dm',
-        correlationId
+        correlationId,
+      'en'
       );
 
       expect(mockedPatient.updatePatient).not.toHaveBeenCalled();
@@ -121,7 +123,7 @@ describe('Consent Service', () => {
     });
 
     it('clears collected data and audits', async () => {
-      const reply = await handleConsentDenied(conversationId, patientId, correlationId);
+      const reply = await handleConsentDenied(conversationId, patientId, correlationId, 'en');
 
       expect(mockedCollection.clearCollectedData).toHaveBeenCalledWith(conversationId);
       expect(mockedAudit.logConsentEvent).toHaveBeenCalledWith({
@@ -146,7 +148,7 @@ describe('Consent Service', () => {
       } as any);
       mockedPatient.updatePatient.mockResolvedValue({} as any);
 
-      const reply = await handleRevocation(conversationId, patientId, correlationId);
+      const reply = await handleRevocation(conversationId, patientId, correlationId, 'en');
 
       expect(mockedCollection.clearCollectedData).toHaveBeenCalledWith(conversationId);
       expect(mockedPatient.findPatientById).toHaveBeenCalledWith(patientId, correlationId);
@@ -173,7 +175,7 @@ describe('Consent Service', () => {
         consent_status: 'revoked',
       } as any);
 
-      const reply = await handleRevocation(conversationId, patientId, correlationId);
+      const reply = await handleRevocation(conversationId, patientId, correlationId, 'en');
 
       expect(mockedPatient.updatePatient).not.toHaveBeenCalled();
       expect(reply).toContain('already been removed');
@@ -185,7 +187,7 @@ describe('Consent Service', () => {
         consent_status: 'pending',
       } as any);
 
-      const reply = await handleRevocation(conversationId, patientId, correlationId);
+      const reply = await handleRevocation(conversationId, patientId, correlationId, 'en');
 
       expect(mockedPatient.updatePatient).not.toHaveBeenCalled();
       expect(reply).toContain("don't have any stored");
@@ -201,7 +203,7 @@ describe('Consent Service', () => {
         } as any);
         mockedPatient.updatePatient.mockResolvedValue({} as any);
 
-        await handleRevocation(conversationId, patientId, correlationId);
+        await handleRevocation(conversationId, patientId, correlationId, 'en');
 
         const updatePayload = mockedPatient.updatePatient.mock.calls[0]?.[1] as Record<
           string,
@@ -221,7 +223,7 @@ describe('Consent Service', () => {
         } as any);
         mockedPatient.updatePatient.mockResolvedValue({} as any);
 
-        await handleRevocation(conversationId, patientDrA, correlationId);
+        await handleRevocation(conversationId, patientDrA, correlationId, 'en');
 
         expect(mockedPatient.updatePatient).toHaveBeenCalledTimes(1);
         expect(mockedPatient.updatePatient).toHaveBeenCalledWith(
@@ -246,7 +248,7 @@ describe('Consent Service', () => {
           phone: `revoked-${patientId}`,
         } as any);
 
-        const reply = await handleRevocation(conversationId, patientId, correlationId);
+        const reply = await handleRevocation(conversationId, patientId, correlationId, 'en');
 
         expect(mockedPatient.updatePatient).not.toHaveBeenCalled();
         expect(reply).toContain('already been removed');

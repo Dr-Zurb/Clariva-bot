@@ -117,12 +117,11 @@ d('Patient overview + KPIs API smoke tests', () => {
     expect(status).toBe(200);
     const data = (json as { data: Record<string, unknown> }).data;
     expect(Object.keys(data).sort()).toEqual([
-      'active_90d',
       'cache_ttl_seconds',
       'followup_overdue',
+      'incomplete_consults',
       'new_30d',
-      'open_episodes',
-      'possible_duplicates',
+      'revisits_30d',
     ]);
     expect((data.cache_ttl_seconds as number)).toBe(60);
   });

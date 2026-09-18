@@ -54,7 +54,10 @@ import {
   buildParsedCueItems,
   recordParsedFields,
 } from "@/lib/cockpit/parsed-fields-signal";
-import { resolveComplaintAttributeFields } from "@/lib/cockpit/complaint-schema";
+import {
+  isComplaintCategory,
+  resolveComplaintAttributeFields,
+} from "@/lib/cockpit/complaint-schema";
 import {
   parseComplaintWithAI,
   type AiParsedComplaint,
@@ -187,7 +190,69 @@ export function ComplaintList({
 
   /** Build a card from a capture payload (deterministic fill + associated + cue). */
   const commitCapture = useCallback(
-    ({ name, category, rawText }: ComplaintCapturePayload) => {
+    ({ name, category, rawText, combo }: ComplaintCapturePayload) => {
+      if (combo) {
+        const finalName = combo.complaintName.trim() || name.trim();
+        const duplicateIndex = complaints.findIndex((c) =>
+          complaintNamesEquivalent(c.name, finalName)
+        );
+        if (duplicateIndex >= 0) {
+          const existingId =
+            instanceIds[duplicateIndex] ?? complaints[duplicateIndex]!.id;
+          setActiveInstanceId(existingId);
+          return;
+        }
+
+        const complaint = createEmptyComplaint();
+        complaint.name = formatComplaintDisplayName(finalName);
+        const comboCategory =
+          combo.category && isComplaintCategory(combo.category)
+            ? combo.category
+            : category;
+        if (comboCategory) complaint.category = comboCategory;
+        if (
+          combo.severityBand === "mild" ||
+          combo.severityBand === "moderate" ||
+          combo.severityBand === "severe" ||
+          combo.severityBand === "very_severe"
+        ) {
+          complaint.severity = combo.severityBand;
+        }
+        if (combo.laterality) complaint.laterality = combo.laterality;
+        if (combo.character) complaint.character = combo.character;
+        if (
+          !isLateralityValidForComplaint(
+            complaint.name,
+            complaint.category ?? undefined,
+            complaint.laterality
+          )
+        ) {
+          delete complaint.laterality;
+        }
+
+        const children = buildAssociatedChildren(
+          combo.associatedNames,
+          complaint.name
+        );
+        if (children.length > 0) complaint.associatedComplaints = children;
+
+        recordParsedFields(
+          complaint.id,
+          buildParsedCueItems(
+            complaint,
+            {
+              ...(complaint.severity != null ? { severity: complaint.severity } : {}),
+              ...(complaint.laterality ? { laterality: complaint.laterality } : {}),
+              ...(complaint.character ? { character: complaint.character } : {}),
+            },
+            children.map((child) => child.name)
+          )
+        );
+
+        dispatch({ type: "ADD_COMPLAINT", complaint });
+        return;
+      }
+
       // Parse the doctor's original typed text for structured detail. When a
       // catalog row matched, `name` is the canonical catalog name and `rawText`
       // is what they typed — keep the catalog name as the title but still pull

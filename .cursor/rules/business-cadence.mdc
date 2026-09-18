@@ -1,0 +1,34 @@
+---
+description: Use docs/Work/Business for month/week/day planning, reviews, and standing business tracks
+globs: docs/Work/Business/**/*.md
+alwaysApply: true
+---
+
+# Business cadence (Clariva-bot)
+
+The company-running layer lives in `docs/Work/Business/`. See its [README](../../docs/Work/Business/README.md).
+
+Path: `Business/<YYYY>/<Month>/W<NN>-<YYYY-MM-DD>/`. Week folder lives in the **month of that Monday**.
+
+## Routing
+
+- **"plan my month"** → fill `Business/<YYYY>/<Month>/month.md` (copy `TEMPLATE-month.md` if missing). One monthly outcome. Update the year index in `Business/<YYYY>/months.md`.
+- **"plan my week" / "preplan next week"** → open `…/<Month>/W<NN>-<YYYY-MM-DD>/0-week.md` if it exists; otherwise copy `TEMPLATE-week.md` + seven `TEMPLATE-day.md` files (`1-mon.md`…`7-sun.md`) + `TEMPLATE-pending.md` as `pending.md` + `TEMPLATE-postponed.md` as `postponed.md`. Fill from `tracks.md` and this month's `month.md`. Day labels: `rhythm.md`. Compute the ISO week — don't guess.
+- **"plan my day" / "morning plan"** → fill the `Morning` block in today's `1-mon.md`…`7-sun.md` inside the current week folder.
+- **"how did today go" / night shutdown** → fill that day's `Night` block. `Tomorrow's first move` must not be blank.
+- **"weekly review"** → fill `Week review` in `0-week.md`, then update next-actions in `tracks.md`.
+
+## Where a new thread goes
+
+- **Business/ops thread** (legal, GST, bank, trademark, Meta review, pricing, a customer) → `Business/tracks.md`. Not `capture/inbox.md`.
+- **Code follow-up / tech debt** → `capture/inbox.md` per the capture-inbox rule.
+- **Engineering batch to execute** → `Daily-plans/` per the phased-plans guide.
+
+## Rules when editing these files
+
+- Every track in `tracks.md` has **exactly one** next action, doable in one sitting.
+- Keep the month's and the week's **one outcome** singular. If it needs "and", it's two.
+- Preserve the `Not this week` / `Not this month` lists.
+- Use `⟨fill⟩` for anything only the user knows. Never invent a date, deadline, or legal fact.
+- **Never backfill a missed day.** Leave the gap.
+- External asks (CA, attorney, bank, Meta) are **queue pushes** and belong on Monday.

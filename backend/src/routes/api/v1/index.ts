@@ -38,6 +38,7 @@ import doctorDrugFavoritesRoutes from './doctor-drug-favorites';
 import doctorDrugUsageRoutes from './doctor-drug-usage';
 import doctorMedicineComboRoutes from './doctor-medicine-combo';
 import doctorMedicinePackSuggestionRoutes from './doctor-medicine-pack-suggestion';
+import doctorComplaintComboRoutes from './doctor-complaint-combo';
 import complaintMasterRoutes from './complaint-master';
 import medicinesRoutes from './medicines';
 import noteFavoritesRoutes from './note-favorites';
@@ -196,6 +197,7 @@ router.use('/doctors/me/drug-usage', doctorDrugUsageRoutes);
 // Per-doctor attested medicine+sig habits for Plan capture-bar combos
 router.use('/doctors/me/medicine-combos', doctorMedicineComboRoutes);
 router.use('/doctors/me/medicine-pack-suggestions', doctorMedicinePackSuggestionRoutes);
+router.use('/doctors/me/complaint-combos', doctorComplaintComboRoutes);
 
 // subjective-tab · subj-06: complaint lookup + per-doctor note favourites
 router.use('/complaints', complaintMasterRoutes);

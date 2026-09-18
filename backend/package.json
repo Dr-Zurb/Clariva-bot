@@ -4,7 +4,7 @@
   "description": "Halo Aid AI Receptionist Bot - Backend API",
   "main": "dist/index.js",
   "scripts": {
-    "dev": "nodemon --exec ts-node src/index.ts",
+    "dev": "nodemon --watch src --ext ts,json --delay 1500 --exec ts-node src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
     "type-check": "tsc --noEmit",
@@ -24,6 +24,7 @@
     "test:comment": "node -r dotenv/config -r ts-node/register scripts/test-comment-webhook.ts",
     "test:dm-language": "node -r dotenv/config -r ts-node/register scripts/test-dm-language.ts",
     "test:dm-conversation": "node -r dotenv/config -r ts-node/register scripts/test-dm-conversation.ts",
+    "test:dm-observe": "node -r dotenv/config -r ts-node/register scripts/test-dm-observe.ts",
     "locale-arms:generate": "node -r dotenv/config -r ts-node/register scripts/generate-locale-arms.ts",
     "locale-arms:apply": "node -r ts-node/register scripts/apply-locale-arms.ts",
     "backfill:artifact-index": "node -r dotenv/config -r ts-node/register scripts/backfill-recording-artifact-index.ts",

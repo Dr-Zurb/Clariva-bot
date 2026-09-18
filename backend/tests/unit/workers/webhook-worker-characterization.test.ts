@@ -83,6 +83,7 @@ jest.mock('../../../src/services/instagram-service', () => ({
   getInstagramMessageSender: jest.fn(),
   getSenderFromMostRecentConversation: jest.fn(),
   replyToInstagramComment: jest.fn(),
+  fetchCommentAuthorUsername: jest.fn(),
   COMMENT_PUBLIC_REPLY_TEXT: 'Check your DM for more information.',
 }));
 jest.mock('../../../src/services/instagram-connect-service', () => ({
@@ -201,6 +202,7 @@ jest.mock('../../../src/services/comment-media-service', () => ({
 }));
 jest.mock('../../../src/services/comment-lead-service', () => ({
   createCommentLead: jest.fn(),
+  maybeLinkCommentLeadAfterDm: jest.fn(),
 }));
 
 const mockMarkProcessed = idempotencyService.markWebhookProcessed as jest.Mock;
@@ -385,21 +387,16 @@ describe('RBH-02 webhook worker characterization', () => {
       await processWebhookJob(job);
 
       expect(consentService.persistPatientAfterConsent).toHaveBeenCalled();
-      // Plan 02 · Task 27 — after consent grant, the handler redirects to
-      // ask the recording-consent question instead of sending the booking
-      // link directly. The booking URL is built (pre-intercept) but the
-      // outbound message is the recording-consent ask.
       expect(mockSendMessage).toHaveBeenCalledWith(
         '987654321012345',
-        expect.stringContaining('being recorded'),
+        expect.stringMatching(/book\.|slot|queue|audio-recorded/i),
         'corr-consent',
         'doctor-token'
       );
       expect(conversationService.updateConversationState).toHaveBeenCalledWith(
         TEST_CONV_ID,
         expect.objectContaining({
-          step: 'recording_consent',
-          lastPromptKind: 'recording_consent_ask',
+          step: 'awaiting_slot_selection',
         }),
         'corr-consent'
       );
@@ -514,20 +511,17 @@ describe('RBH-02 webhook worker characterization', () => {
       );
 
       expect(collectionService.clearCollectedData).toHaveBeenCalledWith(TEST_CONV_ID);
-      // Plan 02 · Task 27 — match-confirmation "yes" also routes through
-      // the recording-consent detour before the booking link is sent.
       expect(mockSendMessage).toHaveBeenCalledWith(
         '987654321012345',
-        expect.stringContaining('being recorded'),
+        expect.stringMatching(/book\.|slot|queue|audio-recorded/i),
         'corr-match',
         'doctor-token'
       );
       expect(conversationService.updateConversationState).toHaveBeenCalledWith(
         TEST_CONV_ID,
         expect.objectContaining({
-          step: 'recording_consent',
+          step: 'awaiting_slot_selection',
           bookingForOther: expect.objectContaining({ bookingForPatientId: matchA }),
-          lastPromptKind: 'recording_consent_ask',
         }),
         'corr-match'
       );
@@ -561,8 +555,7 @@ describe('RBH-02 webhook worker characterization', () => {
         TEST_CONV_ID,
         expect.objectContaining({
           bookingForOther: expect.objectContaining({ bookingForPatientId: matchB }),
-          step: 'recording_consent',
-          lastPromptKind: 'recording_consent_ask',
+          step: 'awaiting_slot_selection',
         }),
         'corr-match-2'
       );
@@ -903,7 +896,9 @@ describe('RBH-02 webhook worker characterization', () => {
       );
       expect(mockReplyComment).toHaveBeenCalledWith(
         'comment-id-99',
-        'Check your DM for more information.',
+        expect.stringMatching(
+          /^(?:@[A-Za-z0-9._]{1,30} )?(?:Check your DM for more information\.|I sent you a private message with the details\.|Please open your DMs — I replied there\.)$/
+        ),
         'doctor-token',
         'corr-comment'
       );

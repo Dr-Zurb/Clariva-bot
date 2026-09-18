@@ -54,6 +54,7 @@ describe('staff-service-review-dm (ARM-05)', () => {
   it('formatAwaitingStaffServiceConfirmationDm includes practice and soft timing (no fixed SLA)', () => {
     const settingsWithCatalog = { ...settings, service_offerings_json: catalog };
     const s = formatAwaitingStaffServiceConfirmationDm(
+      'en',
       settingsWithCatalog,
       readConversationState({ matcherProposedCatalogServiceKey: 'skin' })
     );
@@ -64,19 +65,19 @@ describe('staff-service-review-dm (ARM-05)', () => {
   });
 
   it('formatStaffServiceReviewStillPendingDm is a short reassurance', () => {
-    const s = formatStaffServiceReviewStillPendingDm(settings);
+    const s = formatStaffServiceReviewStillPendingDm('en', settings);
     expect(s).toContain('Demo Clinic');
     expect(s).not.toMatch(/\b\d+\s*hours?\b/i);
   });
 
   it('formatStaffReviewResolvedContinueBookingDm includes booking URL and visit label', () => {
     const url = 'https://app.example/book?token=abc';
-    const c = formatStaffReviewResolvedContinueBookingDm(settings, 'General Checkup', url, 'confirmed');
+    const c = formatStaffReviewResolvedContinueBookingDm('en', settings, 'General Checkup', url, 'confirmed');
     expect(c).toContain('Demo Clinic');
     expect(c).toContain('General Checkup');
     expect(c).toContain(url);
     expect(c).toMatch(/confirm/i);
-    const r = formatStaffReviewResolvedContinueBookingDm(settings, 'Follow-up', url, 'reassigned');
+    const r = formatStaffReviewResolvedContinueBookingDm('en', settings, 'Follow-up', url, 'reassigned');
     expect(r).toContain('updated');
     expect(r).toContain('Follow-up');
   });

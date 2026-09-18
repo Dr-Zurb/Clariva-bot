@@ -7,7 +7,10 @@
 
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import {
+  ALREADY_ON_DAY_MESSAGE,
   bookAppointment,
+  enforcesClockSlot,
+  findBlockingAppointmentOnSessionDate,
   getAppointmentById,
   getDoctorAppointments,
   hasAppointmentOnDate,
@@ -26,6 +29,7 @@ jest.mock('../../../src/services/patient-service', () => ({
 }));
 jest.mock('../../../src/services/doctor-settings-service', () => ({
   getDoctorSettings: jest.fn(async () => null),
+  getDoctorTimezone: jest.fn(async () => 'Asia/Kolkata'),
 }));
 
 // `prescription-pdf-service` transitively imports `@react-pdf/renderer`,
@@ -95,6 +99,8 @@ function createMockAdmin(
     gte: jest.fn().mockReturnThis(),
     lt: jest.fn().mockReturnThis(),
     is: jest.fn().mockReturnThis(),
+    order: jest.fn().mockReturnThis(),
+    maybeSingle: jest.fn().mockImplementation(async () => ({ data: null, error: null })),
     limit: jest.fn().mockImplementation(() => Promise.resolve(getNext())),
     insert: jest.fn().mockReturnThis(),
     single: jest.fn().mockImplementation(() => Promise.resolve(getNext())),
@@ -128,6 +134,15 @@ function createMockSupabase(
   return { from, chain };
 }
 
+describe('enforcesClockSlot', () => {
+  it('skips clock slots for queue days and desk walk-ins', () => {
+    expect(enforcesClockSlot('queue', 'booked')).toBe(false);
+    expect(enforcesClockSlot('slot', 'walk_in')).toBe(false);
+    expect(enforcesClockSlot('slot', 'overflow')).toBe(false);
+    expect(enforcesClockSlot('slot', 'booked')).toBe(true);
+  });
+});
+
 describe('Appointment Service (e-task-2)', () => {
   beforeEach(() => {
     jest.resetAllMocks();
@@ -160,6 +175,31 @@ describe('Appointment Service (e-task-2)', () => {
       const err = await bookAppointment(validBookInput, correlationId).catch((e) => e);
       expect(err).toBeInstanceOf(ConflictError);
       expect(err.message).toBe('This time slot is no longer available');
+    });
+
+    it('lets a walk-in append when the clock slot is already taken', async () => {
+      const createdAppointment = {
+        id: 'apt-walkin',
+        doctor_id: doctorId,
+        patient_name: validBookInput.patientName,
+        patient_phone: validBookInput.patientPhone,
+        appointment_date: futureDate.toISOString(),
+        status: 'confirmed',
+        reason_for_visit: 'Walk-in',
+        notes: null,
+        booking_origin: 'walk_in',
+        created_at: new Date(),
+        updated_at: new Date(),
+      };
+      const mockAdmin = createMockAdmin([{ data: createdAppointment, error: null }]);
+      mockedDb.getSupabaseAdminClient.mockReturnValue(mockAdmin as any);
+
+      const result = await bookAppointment(
+        { ...validBookInput, bookingOrigin: 'walk_in', freeOfCost: true },
+        correlationId
+      );
+
+      expect(result.id).toBe('apt-walkin');
     });
 
     it('creates appointment when slot available (no userId)', async () => {
@@ -227,6 +267,182 @@ describe('Appointment Service (e-task-2)', () => {
 
       expect(mockEnsureMrn).toHaveBeenCalledTimes(1);
       expect(mockEnsureMrn).toHaveBeenCalledWith(patientIdForFree, correlationId);
+    });
+
+    it('skips MRN assign when skipMrn is set', async () => {
+      const createdAppointment = {
+        id: 'apt-skip-mrn',
+        doctor_id: doctorId,
+        patient_id: patientIdForFree,
+        patient_name: validBookInput.patientName,
+        patient_phone: validBookInput.patientPhone,
+        appointment_date: futureDate.toISOString(),
+        status: 'confirmed',
+        reason_for_visit: validBookInput.reasonForVisit,
+        notes: validBookInput.notes,
+        created_at: new Date(),
+        updated_at: new Date(),
+      };
+      const mockAdmin = createMockAdmin([
+        { data: [], error: null },
+        { data: createdAppointment, error: null },
+      ]);
+      mockedDb.getSupabaseAdminClient.mockReturnValue(mockAdmin as any);
+
+      await bookAppointment(
+        {
+          ...validBookInput,
+          patientId: patientIdForFree,
+          freeOfCost: true,
+          skipMrn: true,
+        },
+        correlationId
+      );
+
+      expect(mockEnsureMrn).not.toHaveBeenCalled();
+    });
+
+    it('stamps patient_checked_in_at on insert when checkIn is true', async () => {
+      const createdAppointment = {
+        id: 'apt-checkin',
+        doctor_id: doctorId,
+        patient_name: validBookInput.patientName,
+        patient_phone: validBookInput.patientPhone,
+        appointment_date: futureDate.toISOString(),
+        status: 'confirmed',
+        reason_for_visit: validBookInput.reasonForVisit,
+        notes: validBookInput.notes,
+        patient_checked_in_at: '2026-08-30T12:00:00.000Z',
+        created_at: new Date(),
+        updated_at: new Date(),
+      };
+      const mockAdmin = createMockAdmin([
+        { data: [], error: null },
+        { data: createdAppointment, error: null },
+      ]);
+      mockedDb.getSupabaseAdminClient.mockReturnValue(mockAdmin as any);
+
+      await bookAppointment(
+        { ...validBookInput, bookingOrigin: 'walk_in', freeOfCost: true, checkIn: true },
+        correlationId
+      );
+
+      const insert = (mockAdmin.from() as { insert: jest.Mock }).insert;
+      expect(insert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          patient_checked_in_at: expect.any(String),
+        })
+      );
+    });
+
+    it('throws already_on_today when desk books a patient already on that day', async () => {
+      const mockAdmin = createMockAdmin([
+        {
+          data: [
+            {
+              id: 'apt-existing',
+              status: 'confirmed',
+              patient_checked_in_at: '2026-08-23T03:00:00Z',
+              opd_queue_entry: { token_number: 4 },
+            },
+          ],
+          error: null,
+        },
+      ]);
+      mockedDb.getSupabaseAdminClient.mockReturnValue(mockAdmin as any);
+
+      const err = await bookAppointment(
+        { ...validBookInput, patientId: patientIdForFree, bookingOrigin: 'walk_in' },
+        correlationId,
+        doctorId
+      ).catch((e) => e);
+
+      expect(err).toBeInstanceOf(ConflictError);
+      expect(err.message).toBe(ALREADY_ON_DAY_MESSAGE);
+      expect(err.details).toEqual({
+        reason: 'already_on_today',
+        appointmentId: 'apt-existing',
+        token: 4,
+        bucket: 'arrived',
+      });
+    });
+
+    it('skips the same-day lock for return_after_completed', async () => {
+      const createdAppointment = {
+        id: 'apt-return',
+        doctor_id: doctorId,
+        patient_id: patientIdForFree,
+        patient_name: validBookInput.patientName,
+        patient_phone: validBookInput.patientPhone,
+        appointment_date: futureDate.toISOString(),
+        status: 'pending',
+        reason_for_visit: validBookInput.reasonForVisit,
+        notes: validBookInput.notes,
+        booking_origin: 'return_after_completed',
+        created_at: new Date(),
+        updated_at: new Date(),
+      };
+      const mockAdmin = createMockAdmin([
+        { data: [], error: null },
+        { data: createdAppointment, error: null },
+      ]);
+      mockedDb.getSupabaseAdminClient.mockReturnValue(mockAdmin as any);
+
+      const result = await bookAppointment(
+        {
+          ...validBookInput,
+          patientId: patientIdForFree,
+          bookingOrigin: 'return_after_completed',
+        },
+        correlationId,
+        doctorId
+      );
+
+      expect(result.id).toBe('apt-return');
+    });
+  });
+
+  describe('findBlockingAppointmentOnSessionDate', () => {
+    it('maps completed to seen', async () => {
+      const mockAdmin = createMockAdmin([
+        {
+          data: [
+            {
+              id: 'apt-seen',
+              status: 'completed',
+              patient_checked_in_at: '2026-08-23T03:00:00Z',
+              opd_queue_entry: [{ token_number: 9 }],
+            },
+          ],
+          error: null,
+        },
+      ]);
+      mockedDb.getSupabaseAdminClient.mockReturnValue(mockAdmin as any);
+
+      const result = await findBlockingAppointmentOnSessionDate(
+        doctorId,
+        patientIdForFree,
+        '2026-08-23',
+        'Asia/Kolkata',
+        correlationId
+      );
+
+      expect(result).toEqual({ id: 'apt-seen', token: 9, bucket: 'seen' });
+    });
+
+    it('returns null when no blocking visit exists', async () => {
+      const mockAdmin = createMockAdmin([{ data: [], error: null }]);
+      mockedDb.getSupabaseAdminClient.mockReturnValue(mockAdmin as any);
+
+      const result = await findBlockingAppointmentOnSessionDate(
+        doctorId,
+        patientIdForFree,
+        '2026-08-23',
+        'Asia/Kolkata',
+        correlationId
+      );
+
+      expect(result).toBeNull();
     });
   });
 
@@ -317,6 +533,38 @@ describe('Appointment Service (e-task-2)', () => {
 
       expect(result.patient_age).toBe(30);
       expect(result.patient_sex).toBe('male');
+    });
+
+    it('falls back to stored age and projects guardian + MRN', async () => {
+      const appointment = {
+        id: 'apt-d6-desk-age',
+        doctor_id: userId,
+        patient_id: '770e8400-e29b-41d4-a716-446655440099',
+        patient_name: 'PATIENT_TEST',
+        patient_phone: '+10000000000',
+        appointment_date: futureDate,
+        status: 'pending',
+        created_at: new Date(),
+        updated_at: new Date(),
+        patient: {
+          date_of_birth: null,
+          gender: 'female',
+          age: 62,
+          guardian_name: 'Ram Prakash',
+          guardian_relation: 'spouse',
+          medical_record_number: 'P-00133',
+        },
+      };
+      const mockAdmin = createMockAdmin([{ data: appointment, error: null }]);
+      mockedDb.getSupabaseAdminClient.mockReturnValue(mockAdmin as any);
+
+      const result = await getAppointmentById('apt-d6-desk-age', correlationId, userId);
+
+      expect(result.patient_age).toBe(62);
+      expect(result.patient_sex).toBe('female');
+      expect(result.patient_guardian_name).toBe('Ram Prakash');
+      expect(result.patient_guardian_relation).toBe('spouse');
+      expect(result.patient_mrn).toBe('P-00133');
     });
 
     it('returns null demographics for a guest appointment (patient_id null)', async () => {

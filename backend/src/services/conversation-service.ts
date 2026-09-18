@@ -80,9 +80,7 @@ export async function getConversationLanguage(
       return 'en';
     }
 
-    const coerced = coerceConversationLanguage(
-      (data as { language?: unknown }).language
-    );
+    const coerced = coerceConversationLanguage((data as { language?: unknown }).language);
     if (
       (data as { language?: unknown }).language != null &&
       coerced === 'en' &&
@@ -103,6 +101,110 @@ export async function getConversationLanguage(
   }
 }
 
+export type AutomatedMessagingOptOutRead = { ok: true; optedOutAt: string | null } | { ok: false };
+
+/**
+ * Read the automated-messaging opt-out stamp (mca-06).
+ * Fail-closed callers treat `{ ok: false }` as skip-send.
+ * No PHI in logs — conversation id + reason only.
+ */
+export async function readAutomatedMessagingOptedOutAt(
+  conversationId: string,
+  correlationId: string
+): Promise<AutomatedMessagingOptOutRead> {
+  try {
+    const supabaseAdmin = getSupabaseAdminClient();
+    if (!supabaseAdmin) {
+      logger.warn(
+        { correlationId, conversationId },
+        'readAutomatedMessagingOptedOutAt: admin client unavailable'
+      );
+      return { ok: false };
+    }
+
+    const { data, error } = await supabaseAdmin
+      .from('conversations')
+      .select('automated_messaging_opted_out_at')
+      .eq('id', conversationId)
+      .maybeSingle();
+
+    if (error) {
+      logger.warn(
+        { correlationId, conversationId },
+        'readAutomatedMessagingOptedOutAt: query failed'
+      );
+      return { ok: false };
+    }
+    if (!data) {
+      return { ok: true, optedOutAt: null };
+    }
+
+    const raw = (data as { automated_messaging_opted_out_at?: unknown })
+      .automated_messaging_opted_out_at;
+    if (raw == null) return { ok: true, optedOutAt: null };
+    if (typeof raw === 'string' && raw.trim()) {
+      return { ok: true, optedOutAt: raw };
+    }
+    return { ok: true, optedOutAt: null };
+  } catch {
+    logger.warn(
+      { correlationId, conversationId },
+      'readAutomatedMessagingOptedOutAt: unexpected failure'
+    );
+    return { ok: false };
+  }
+}
+
+/**
+ * Set or clear the automated-messaging opt-out stamp (mca-06 / mca-07).
+ * Pass an ISO timestamp to opt out; null to re-opt-in.
+ */
+export async function setAutomatedMessagingOptedOutAt(
+  conversationId: string,
+  optedOutAt: string | null,
+  correlationId: string
+): Promise<boolean> {
+  try {
+    const supabaseAdmin = getSupabaseAdminClient();
+    if (!supabaseAdmin) {
+      logger.warn(
+        { correlationId, conversationId },
+        'setAutomatedMessagingOptedOutAt: admin client unavailable'
+      );
+      return false;
+    }
+
+    const { error } = await supabaseAdmin
+      .from('conversations')
+      .update({ automated_messaging_opted_out_at: optedOutAt })
+      .eq('id', conversationId);
+
+    if (error) {
+      logger.warn(
+        { correlationId, conversationId },
+        'setAutomatedMessagingOptedOutAt: update failed'
+      );
+      return false;
+    }
+
+    await logDataModification(
+      correlationId,
+      undefined as never,
+      'update',
+      'conversation',
+      conversationId,
+      ['automated_messaging_opted_out_at']
+    );
+    return true;
+  } catch {
+    logger.warn(
+      { correlationId, conversationId },
+      'setAutomatedMessagingOptedOutAt: unexpected failure'
+    );
+    return false;
+  }
+}
+
 /**
  * RBH-06: Map legacy slot steps to `awaiting_slot_selection` (in-memory + caller may persist).
  * Clears `slotSelectionDate` / `slotToConfirm` the same way the former DM migration branches did.
@@ -114,15 +216,15 @@ export function normalizeLegacySlotConversationSteps(state: ConversationState): 
 
 /**
  * Find conversation by platform conversation ID
- * 
+ *
  * Used to look up existing conversations when processing webhooks.
- * 
+ *
  * @param doctorId - Doctor ID
  * @param platform - Platform name
  * @param platformConversationId - Platform-specific conversation ID
  * @param correlationId - Request correlation ID
  * @returns Conversation or null if not found
- * 
+ *
  * @throws InternalError if database operation fails
  */
 export async function findConversationByPlatformId(
@@ -289,29 +391,23 @@ export async function createConversation(
 
   if (!rows) throw new InternalError('Conversation create returned no data');
 
-  await logDataModification(
-    correlationId,
-    undefined as any,
-    'create',
-    'conversation',
-    rows.id
-  );
+  await logDataModification(correlationId, undefined as any, 'create', 'conversation', rows.id);
 
   return rows as Conversation;
 }
 
 /**
  * Update conversation status
- * 
+ *
  * Updates conversation status (e.g., active, archived, closed).
- * 
+ *
  * @param id - Conversation ID
  * @param status - New conversation status
  * @param correlationId - Request correlation ID
  * @returns Updated conversation
- * 
+ *
  * @throws InternalError if database operation fails
- * 
+ *
  * Note: Uses service role client (webhook processing has no user context)
  */
 export async function updateConversationStatus(
@@ -427,8 +523,7 @@ export async function updateConversationState(
     handleSupabaseError(error, correlationId);
   }
 
-  const changedFields =
-    options?.language !== undefined ? ['metadata', 'language'] : ['metadata'];
+  const changedFields = options?.language !== undefined ? ['metadata', 'language'] : ['metadata'];
 
   await logDataModification(
     correlationId,

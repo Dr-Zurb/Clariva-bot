@@ -38,8 +38,22 @@ jest.mock('../../../src/services/regulatory-retention-service', () => ({
   resolveRetentionPolicy: jest.fn(),
 }));
 
-jest.mock('../../../src/services/storage-service', () => ({
-  deleteObject: jest.fn().mockReturnValue(Promise.resolve(true)),
+jest.mock('../../../src/services/storage-service', () => {
+  const actual = jest.requireActual(
+    '../../../src/services/storage-service',
+  ) as typeof import('../../../src/services/storage-service');
+  return {
+    ...actual,
+    deleteObject: jest.fn().mockReturnValue(Promise.resolve(true)),
+  };
+});
+
+jest.mock('../../../src/services/twilio-compositions', () => ({
+  deleteComposition: jest.fn().mockReturnValue(Promise.resolve()),
+}));
+
+jest.mock('../../../src/services/twilio-recordings', () => ({
+  deleteRecording: jest.fn().mockReturnValue(Promise.resolve()),
 }));
 
 import {
@@ -51,14 +65,22 @@ import {
 import * as database from '../../../src/config/database';
 import * as retention from '../../../src/services/regulatory-retention-service';
 import * as storage from '../../../src/services/storage-service';
+import * as twilioCompositions from '../../../src/services/twilio-compositions';
+import * as twilioRecordings from '../../../src/services/twilio-recordings';
+import { logger } from '../../../src/config/logger';
+import { InternalError, NotFoundError } from '../../../src/utils/errors';
 
 const mockedDb = database as jest.Mocked<typeof database>;
 const mockedRetention = retention as jest.Mocked<typeof retention>;
 const mockedStorage = storage as jest.Mocked<typeof storage>;
+const mockedTwilio = twilioCompositions as jest.Mocked<typeof twilioCompositions>;
+const mockedTwilioRecordings = twilioRecordings as jest.Mocked<typeof twilioRecordings>;
 
 beforeEach(() => {
   jest.clearAllMocks();
   mockedStorage.deleteObject.mockReturnValue(Promise.resolve(true));
+  mockedTwilio.deleteComposition.mockReturnValue(Promise.resolve());
+  mockedTwilioRecordings.deleteRecording.mockReturnValue(Promise.resolve());
 });
 
 // ---------------------------------------------------------------------------
@@ -84,6 +106,8 @@ interface HarnessState {
     indexUpdates: Array<{ id: string; update: Row }>;
     revocationDeletes: string[];
   };
+  stampFailuresRemaining: number;
+  historyFailuresRemaining: number;
 }
 
 function makeState(): HarnessState {
@@ -97,6 +121,8 @@ function makeState(): HarnessState {
       indexUpdates: [],
       revocationDeletes: [],
     },
+    stampFailuresRemaining: 0,
+    historyFailuresRemaining: 0,
   };
 }
 
@@ -190,6 +216,13 @@ function indexTable(state: HarnessState) {
             is: jest.fn((col2: string, val2: unknown) => {
               filters[`${col2}__is`] = val2;
               const id = filters.id as string;
+              if (state.stampFailuresRemaining > 0) {
+                state.stampFailuresRemaining -= 1;
+                return Promise.resolve({
+                  data: null,
+                  error: { message: 'stamp failed' },
+                });
+              }
               const row = state.artifacts.find((a) => a.id === id);
               if (!row || row.hard_deleted_at != null) {
                 return Promise.resolve({ data: null, error: null });
@@ -279,6 +312,13 @@ function patientsTable(state: HarnessState) {
 function archivalHistoryTable(state: HarnessState) {
   return {
     insert: jest.fn((payload: Row) => {
+      if (state.historyFailuresRemaining > 0) {
+        state.historyFailuresRemaining -= 1;
+        return Promise.resolve({
+          data: null,
+          error: { message: 'history failed' },
+        });
+      }
       state.calls.archivalHistoryInserts.push(payload);
       return Promise.resolve({ data: null, error: null });
     }),
@@ -515,6 +555,7 @@ describe('scan helpers', () => {
     expect(candidates[0]!.policy.retentionYears).toBe(3);
     expect(candidates[0]!.policy.source).toBe('test-source');
     expect(candidates[0]!.retentionCutoffAt).toBeDefined();
+    expect(candidates[0]!.storageHost).toBe('supabase_storage');
   });
 });
 
@@ -553,8 +594,11 @@ describe('runHardDeletePhase', () => {
     const history = state.calls.archivalHistoryInserts[0]!;
     expect(history.session_id).toBe('s-1');
     expect(history.artifact_kind).toBe('audio_composition');
-    expect(typeof history.deletion_reason).toBe('string');
+    expect(history.deletion_reason).toContain('_provider=supabase_storage');
     expect(history.policy_id).toBe('policy-1');
+    expect(result.deletedSupabase).toBe(1);
+    expect(result.deletedTwilio).toBe(0);
+    expect(mockedTwilio.deleteComposition).not.toHaveBeenCalled();
 
     // Hard_deleted_at was stamped on the index row.
     expect(state.artifacts[0]!.hard_deleted_at).not.toBeNull();
@@ -609,6 +653,7 @@ describe('runHardDeletePhase', () => {
     expect(result.candidates).toBe(1);
     expect(result.deleted).toBe(0);
     expect(mockedStorage.deleteObject).not.toHaveBeenCalled();
+    expect(mockedTwilio.deleteComposition).not.toHaveBeenCalled();
     expect(state.calls.archivalHistoryInserts).toHaveLength(0);
     expect(state.artifacts[0]!.hard_deleted_at).toBeNull();
   });
@@ -704,5 +749,255 @@ describe('runHardDeletePhase', () => {
     });
     expect(result.candidates).toBe(1);
     expect(result.deleted).toBe(1);
+  });
+});
+
+const TWILIO_SID = 'CJaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+const TWILIO_URI = `twilio-composition:${TWILIO_SID}`;
+const RECORDING_SID = 'RTaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+const RECORDING_URI = `twilio-recording:${RECORDING_SID}`;
+
+describe('runHardDeletePhase — rec-31 provider routing', () => {
+  function setupExpired(state: ReturnType<typeof makeState>, storageUri: string) {
+    const endedAt = new Date(Date.now() - 4 * 365 * MS_PER_DAY);
+    state.artifacts.push(
+      makeArtifact({
+        id: 'a-1',
+        sessionId: 's-1',
+        doctorId: 'd-1',
+        patientId: 'pat-1',
+        endedAt,
+        storageUri,
+        bytes: 4096,
+      }),
+    );
+    state.doctors['d-1'] = { country: 'IN', specialty: '*' };
+    mockedDb.getSupabaseAdminClient.mockReturnValue(buildAdminClient(state));
+    mockPolicy({ retentionYears: 3 });
+    return state;
+  }
+
+  it('Twilio-hosted URI → composition delete, one history row with provider, stamp', async () => {
+    const state = setupExpired(makeState(), TWILIO_URI);
+
+    const result = await runHardDeletePhase({
+      dryRun: false,
+      correlationId: 'c',
+    });
+
+    expect(result.deleted).toBe(1);
+    expect(result.deletedTwilio).toBe(1);
+    expect(result.deletedSupabase).toBe(0);
+    expect(mockedTwilio.deleteComposition).toHaveBeenCalledTimes(1);
+    expect(mockedTwilio.deleteComposition).toHaveBeenCalledWith(TWILIO_SID);
+    expect(mockedStorage.deleteObject).not.toHaveBeenCalled();
+    expect(state.calls.archivalHistoryInserts).toHaveLength(1);
+    expect(state.calls.archivalHistoryInserts[0]!.deletion_reason).toBe(
+      'retention_expired_country=IN_specialty=*_years=3_provider=twilio_composition_source_recordings=intact',
+    );
+    expect(state.artifacts[0]!.hard_deleted_at).not.toBeNull();
+  });
+
+  it('raw-track URI → recording delete, never the composition endpoint', async () => {
+    const state = setupExpired(makeState(), RECORDING_URI);
+
+    const result = await runHardDeletePhase({
+      dryRun: false,
+      correlationId: 'c',
+    });
+
+    expect(result.deleted).toBe(1);
+    expect(result.deletedTwilio).toBe(1);
+    expect(result.deletedSupabase).toBe(0);
+    expect(mockedTwilioRecordings.deleteRecording).toHaveBeenCalledTimes(1);
+    expect(mockedTwilioRecordings.deleteRecording).toHaveBeenCalledWith(RECORDING_SID);
+    expect(mockedTwilio.deleteComposition).not.toHaveBeenCalled();
+    expect(mockedStorage.deleteObject).not.toHaveBeenCalled();
+    expect(state.calls.archivalHistoryInserts[0]!.deletion_reason).toBe(
+      'retention_expired_country=IN_specialty=*_years=3_provider=twilio_recording_derived_compositions=intact',
+    );
+    expect(state.artifacts[0]!.hard_deleted_at).not.toBeNull();
+  });
+
+  it('raw-track delete 404 → already absent, still stamps', async () => {
+    const state = setupExpired(makeState(), RECORDING_URI);
+    mockedTwilioRecordings.deleteRecording.mockReturnValueOnce(
+      Promise.reject(new NotFoundError(`Recording ${RECORDING_SID} not found`)),
+    );
+
+    const result = await runHardDeletePhase({
+      dryRun: false,
+      correlationId: 'c',
+    });
+
+    expect(result.deleted).toBe(1);
+    expect(state.artifacts[0]!.hard_deleted_at).not.toBeNull();
+  });
+
+  it('raw-track URI with a malformed SID is unclassifiable', async () => {
+    const state = setupExpired(makeState(), 'twilio-recording:not-a-sid');
+
+    const result = await runHardDeletePhase({
+      dryRun: false,
+      correlationId: 'c',
+    });
+
+    expect(result.deleted).toBe(0);
+    expect(result.failedUnclassifiable).toBe(1);
+    expect(mockedTwilioRecordings.deleteRecording).not.toHaveBeenCalled();
+    expect(mockedStorage.deleteObject).not.toHaveBeenCalled();
+    expect(state.artifacts[0]!.hard_deleted_at).toBeNull();
+  });
+
+  it('unclassifiable storage_uri → loud failure, no stamp, no success history', async () => {
+    const state = setupExpired(makeState(), 'not-a-storage-uri');
+
+    const result = await runHardDeletePhase({
+      dryRun: false,
+      correlationId: 'c',
+    });
+
+    expect(result.deleted).toBe(0);
+    expect(result.failedUnclassifiable).toBe(1);
+    expect(mockedTwilio.deleteComposition).not.toHaveBeenCalled();
+    expect(mockedStorage.deleteObject).not.toHaveBeenCalled();
+    expect(state.calls.archivalHistoryInserts).toHaveLength(0);
+    expect(state.artifacts[0]!.hard_deleted_at).toBeNull();
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({
+        artifactId: 'a-1',
+        storageHost: 'unclassifiable',
+      }),
+      'archival_delete_phase_unclassifiable_uri',
+    );
+  });
+
+  it('Twilio Media URL is unclassifiable (not a false-Supabase success)', async () => {
+    const state = setupExpired(
+      makeState(),
+      `https://video.twilio.com/v1/Compositions/${TWILIO_SID}/Media`,
+    );
+
+    const result = await runHardDeletePhase({
+      dryRun: false,
+      correlationId: 'c',
+    });
+
+    expect(result.deleted).toBe(0);
+    expect(result.failedUnclassifiable).toBe(1);
+    expect(mockedStorage.deleteObject).not.toHaveBeenCalled();
+    expect(mockedTwilio.deleteComposition).not.toHaveBeenCalled();
+    expect(state.calls.archivalHistoryInserts).toHaveLength(0);
+    expect(state.artifacts[0]!.hard_deleted_at).toBeNull();
+  });
+
+  it('forced provider failure → no stamp, no success history, retried next run', async () => {
+    const state = setupExpired(makeState(), TWILIO_URI);
+    mockedTwilio.deleteComposition.mockReturnValueOnce(
+      Promise.reject(new InternalError('twilio down')),
+    );
+
+    const first = await runHardDeletePhase({
+      dryRun: false,
+      correlationId: 'c1',
+    });
+    expect(first.deleted).toBe(0);
+    expect(state.artifacts[0]!.hard_deleted_at).toBeNull();
+    expect(state.calls.archivalHistoryInserts).toHaveLength(0);
+
+    mockedTwilio.deleteComposition.mockReturnValueOnce(Promise.resolve());
+    const second = await runHardDeletePhase({
+      dryRun: false,
+      correlationId: 'c2',
+    });
+    expect(second.deleted).toBe(1);
+    expect(state.artifacts[0]!.hard_deleted_at).not.toBeNull();
+    expect(state.calls.archivalHistoryInserts).toHaveLength(1);
+    expect(mockedTwilio.deleteComposition).toHaveBeenCalledTimes(2);
+  });
+
+  it('provider succeeded then stamp failed → retry treats Twilio 404 as success', async () => {
+    const state = setupExpired(makeState(), TWILIO_URI);
+    state.stampFailuresRemaining = 1;
+    mockedTwilio.deleteComposition
+      .mockReturnValueOnce(Promise.resolve())
+      .mockReturnValueOnce(
+        Promise.reject(new NotFoundError(`Composition ${TWILIO_SID} not found`)),
+      );
+
+    const first = await runHardDeletePhase({
+      dryRun: false,
+      correlationId: 'c1',
+    });
+    expect(first.deleted).toBe(0);
+    expect(state.artifacts[0]!.hard_deleted_at).toBeNull();
+    expect(state.calls.archivalHistoryInserts).toHaveLength(1);
+
+    const second = await runHardDeletePhase({
+      dryRun: false,
+      correlationId: 'c2',
+    });
+    expect(second.deleted).toBe(1);
+    expect(state.artifacts[0]!.hard_deleted_at).not.toBeNull();
+    expect(state.calls.archivalHistoryInserts).toHaveLength(2);
+    expect(mockedTwilio.deleteComposition).toHaveBeenCalledTimes(2);
+  });
+
+  it('dry-run issues zero provider calls and reports the provider split', async () => {
+    const state = makeState();
+    const endedAt = new Date(Date.now() - 4 * 365 * MS_PER_DAY);
+    state.artifacts.push(
+      makeArtifact({
+        id: 'a-twilio',
+        sessionId: 's-1',
+        doctorId: 'd-1',
+        patientId: 'pat-1',
+        endedAt,
+        storageUri: TWILIO_URI,
+      }),
+      makeArtifact({
+        id: 'a-supabase',
+        sessionId: 's-2',
+        doctorId: 'd-1',
+        patientId: 'pat-1',
+        endedAt,
+        storageUri: 'recordings/patient_pat-1/sess_s-2/audio.mp4',
+      }),
+      makeArtifact({
+        id: 'a-bad',
+        sessionId: 's-3',
+        doctorId: 'd-1',
+        patientId: 'pat-1',
+        endedAt,
+        storageUri: 'garbage',
+      }),
+    );
+    state.doctors['d-1'] = { country: 'IN', specialty: '*' };
+    mockedDb.getSupabaseAdminClient.mockReturnValue(buildAdminClient(state));
+    mockPolicy({ retentionYears: 3 });
+
+    const result = await runHardDeletePhase({
+      dryRun: true,
+      correlationId: 'c',
+    });
+
+    expect(result.candidates).toBe(3);
+    expect(result.deleted).toBe(0);
+    expect(mockedTwilio.deleteComposition).not.toHaveBeenCalled();
+    expect(mockedStorage.deleteObject).not.toHaveBeenCalled();
+    expect(state.calls.archivalHistoryInserts).toHaveLength(0);
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: 'archival_dry_run',
+        phase: 'delete',
+        providerSplit: {
+          twilio_composition: 1,
+          twilio_recording: 0,
+          supabase_storage: 1,
+          unclassifiable: 1,
+        },
+      }),
+      'archival_delete_phase_dry_run',
+    );
   });
 });

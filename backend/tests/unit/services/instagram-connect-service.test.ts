@@ -1,24 +1,51 @@
 /**
- * Instagram Connect Service Unit Tests (e-task-2, e-task-4)
+ * Instagram Connect Service Unit Tests (e-task-2, e-task-4, ilr-18)
  *
  * Tests getDoctorIdByPageId: returns doctor_id when row exists,
  * null when no row; throws when admin client unavailable or query fails.
  * Tests disconnectInstagram: deletes row for doctor_id; idempotent when no row; throws when admin client null.
+ * Tests Instagram Login OAuth URL scopes + short-lived code exchange parsing.
  *
  * No PHI in test data (TESTING.md).
  */
 
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
+import axios from 'axios';
 import {
   getDoctorIdByPageId,
   disconnectInstagram,
   getInstagramDashboardStatus,
+  buildMetaOAuthUrl,
+  exchangeCodeForShortLivedToken,
+  exchangeForLongLivedToken,
+  refreshInstagramLongLivedToken,
 } from '../../../src/services/instagram-connect-service';
 import * as database from '../../../src/config/database';
 
 jest.mock('../../../src/config/database', () => ({
   getSupabaseAdminClient: jest.fn(),
 }));
+
+jest.mock('axios');
+const mockedAxios = axios as jest.Mocked<typeof axios>;
+
+jest.mock('../../../src/config/env', () => {
+  const actual = jest.requireActual('../../../src/config/env') as {
+    env: Record<string, unknown>;
+  };
+  return {
+    env: new Proxy(actual.env, {
+      get(target, prop: string) {
+        if (prop === 'INSTAGRAM_APP_ID') return 'ig-app-id-test';
+        if (prop === 'INSTAGRAM_APP_SECRET') return 'ig-app-secret-test-min-32-chars!!';
+        if (prop === 'INSTAGRAM_REDIRECT_URI') {
+          return 'https://api.example.com/api/v1/settings/instagram/callback';
+        }
+        return target[prop];
+      },
+    }),
+  };
+});
 
 const mockedDb = database as jest.Mocked<typeof database>;
 
@@ -117,6 +144,109 @@ describe('getInstagramDashboardStatus (RBH-10)', () => {
     expect(r.health.reconnectRecommended).toBe(true);
     expect(from).toHaveBeenCalledWith('doctor_instagram');
   });
+
+  it('probes graph.instagram.com/me and reports ok (not Facebook debug_token)', async () => {
+    const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+    const statusChain = {
+      select: jest.fn().mockReturnThis(),
+      eq: jest.fn().mockReturnThis(),
+      maybeSingle: jest
+        .fn()
+        .mockResolvedValueOnce({
+          data: { instagram_username: 'halo.aid' },
+          error: null,
+        } as never)
+        .mockResolvedValueOnce({
+          data: {
+            instagram_access_token: 'ig-user-tok',
+            instagram_health_checked_at: null,
+            instagram_health_level: null,
+            instagram_health_error_code: null,
+            instagram_token_expires_at: expiresAt,
+            instagram_last_dm_success_at: null,
+          },
+          error: null,
+        } as never),
+    };
+    const updateChain = {
+      update: jest.fn().mockReturnThis(),
+      eq: jest.fn().mockResolvedValue({ error: null } as never),
+    };
+    const from = jest
+      .fn()
+      .mockReturnValueOnce(statusChain)
+      .mockReturnValueOnce(statusChain)
+      .mockReturnValueOnce(updateChain);
+    mockedDb.getSupabaseAdminClient.mockReturnValue({ from } as never);
+    mockedAxios.get.mockResolvedValueOnce({
+      data: { user_id: '17841433414940360', username: 'halo.aid' },
+    } as never);
+
+    const r = await getInstagramDashboardStatus(doctorId, 'corr-health-ok');
+
+    expect(r.connected).toBe(true);
+    expect(r.health.level).toBe('ok');
+    expect(r.health.message).toMatch(/healthy/i);
+    expect(mockedAxios.get).toHaveBeenCalledWith(
+      'https://graph.instagram.com/v18.0/me',
+      expect.objectContaining({
+        params: expect.objectContaining({
+          access_token: 'ig-user-tok',
+          fields: 'user_id,username',
+        }),
+      })
+    );
+    expect(mockedAxios.get).not.toHaveBeenCalledWith(
+      expect.stringContaining('debug_token'),
+      expect.anything()
+    );
+  });
+
+  it('marks error when Instagram Graph rejects the token', async () => {
+    const statusChain = {
+      select: jest.fn().mockReturnThis(),
+      eq: jest.fn().mockReturnThis(),
+      maybeSingle: jest
+        .fn()
+        .mockResolvedValueOnce({
+          data: { instagram_username: 'halo.aid' },
+          error: null,
+        } as never)
+        .mockResolvedValueOnce({
+          data: {
+            instagram_access_token: 'bad-tok',
+            instagram_health_checked_at: null,
+            instagram_health_level: 'unknown',
+            instagram_health_error_code: null,
+            instagram_token_expires_at: null,
+            instagram_last_dm_success_at: null,
+          },
+          error: null,
+        } as never),
+    };
+    const updateChain = {
+      update: jest.fn().mockReturnThis(),
+      eq: jest.fn().mockResolvedValue({ error: null } as never),
+    };
+    const from = jest
+      .fn()
+      .mockReturnValueOnce(statusChain)
+      .mockReturnValueOnce(statusChain)
+      .mockReturnValueOnce(updateChain);
+    mockedDb.getSupabaseAdminClient.mockReturnValue({ from } as never);
+
+    const axiosErr = Object.assign(new Error('Request failed with status code 400'), {
+      isAxiosError: true,
+      response: { status: 400, data: { error: { code: 190 } } },
+    });
+    mockedAxios.isAxiosError.mockReturnValue(true as never);
+    mockedAxios.get.mockRejectedValueOnce(axiosErr as never);
+
+    const r = await getInstagramDashboardStatus(doctorId, 'corr-health-err');
+
+    expect(r.health.level).toBe('error');
+    expect(r.health.reconnectRecommended).toBe(true);
+  });
 });
 
 function createMockSupabaseDelete() {
@@ -166,5 +296,73 @@ describe('Instagram Connect Service – disconnectInstagram (e-task-4)', () => {
     await expect(disconnectInstagram(doctorId, 'corr-1')).rejects.toThrow(
       'Service role client not available'
     );
+  });
+});
+
+describe('Instagram Login OAuth (ilr-18)', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('buildMetaOAuthUrl uses Instagram authorize + business scopes', () => {
+    const url = buildMetaOAuthUrl('signed-state');
+    expect(url).toContain('https://www.instagram.com/oauth/authorize?');
+    expect(url).toContain('client_id=ig-app-id-test');
+    expect(url).toContain('instagram_business_basic');
+    expect(url).toContain('instagram_business_manage_messages');
+    expect(url).not.toContain('instagram_business_manage_comments');
+    expect(url).not.toContain('pages_show_list');
+    expect(url).not.toContain('facebook.com');
+    expect(url).toContain('state=signed-state');
+  });
+
+  it('exchangeCodeForShortLivedToken POSTs form body and parses top-level response', async () => {
+    mockedAxios.post.mockResolvedValueOnce({
+      data: { access_token: 'short-tok', user_id: '17841400000000000' },
+    } as never);
+
+    const result = await exchangeCodeForShortLivedToken('auth-code#_', 'corr-x');
+
+    expect(result).toEqual({
+      accessToken: 'short-tok',
+      userId: '17841400000000000',
+    });
+    expect(mockedAxios.post).toHaveBeenCalledWith(
+      'https://api.instagram.com/oauth/access_token',
+      expect.stringContaining('grant_type=authorization_code'),
+      expect.objectContaining({
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      })
+    );
+    const body = String(mockedAxios.post.mock.calls[0]?.[1]);
+    expect(body).toContain('code=auth-code');
+    expect(body).not.toContain('%23_');
+  });
+
+  it('exchangeForLongLivedToken uses ig_exchange_token', async () => {
+    mockedAxios.get.mockResolvedValueOnce({
+      data: { access_token: 'long-tok', expires_in: 5184000 },
+    } as never);
+
+    await expect(exchangeForLongLivedToken('short-tok', 'corr-ll')).resolves.toEqual({
+      accessToken: 'long-tok',
+      expiresIn: 5184000,
+    });
+    expect(mockedAxios.get).toHaveBeenCalledWith(
+      'https://graph.instagram.com/access_token',
+      expect.objectContaining({
+        params: expect.objectContaining({
+          grant_type: 'ig_exchange_token',
+          access_token: 'short-tok',
+        }),
+      })
+    );
+  });
+
+  it('refreshInstagramLongLivedToken returns null on failure (no throw)', async () => {
+    mockedAxios.get.mockRejectedValueOnce(new Error('network'));
+    await expect(
+      refreshInstagramLongLivedToken('long-tok', 'corr-rf')
+    ).resolves.toBeNull();
   });
 });

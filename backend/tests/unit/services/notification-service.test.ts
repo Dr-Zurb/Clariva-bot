@@ -34,6 +34,15 @@ jest.mock('../../../src/services/doctor-settings-service', () => ({
 jest.mock('../../../src/utils/audit-logger', () => ({
   logAuditEvent: jest.fn().mockResolvedValue(undefined as never),
 }));
+jest.mock('../../../src/services/prescription-pdf-service', () => ({
+  generatePrescriptionPdf: jest.fn(),
+}));
+jest.mock('../../../src/services/prescription-pdf-cache', () => ({
+  invalidatePrescriptionPdfCache: jest.fn(),
+}));
+jest.mock('../../../src/services/conversation-service', () => ({
+  getConversationLanguage: jest.fn().mockResolvedValue('en' as never),
+}));
 
 const mockedDb = database as jest.Mocked<typeof database>;
 const mockedEmail = emailConfig as jest.Mocked<typeof emailConfig>;
@@ -115,6 +124,33 @@ describe('Notification Service (e-task-5)', () => {
           metadata: { notification_type: 'payment_confirmation_dm', recipient_type: 'patient' },
         })
       );
+    });
+
+    it('does not put an MRN in the Instagram body (mca-12)', async () => {
+      const mockSupabase = createMockSupabase(
+        { data: { id: appointmentId, patient_id: patientId, doctor_id: doctorId }, error: null },
+        {
+          data: {
+            id: patientId,
+            platform: 'instagram',
+            platform_external_id: 'ig-psid-123',
+          },
+          error: null,
+        }
+      );
+      mockedDb.getSupabaseAdminClient.mockReturnValue(mockSupabase as never);
+
+      await sendPaymentConfirmationToPatient(
+        appointmentId,
+        dateIso,
+        correlationId,
+        'CLR-00123'
+      );
+
+      const body = jest.mocked(mockedInstagram.sendInstagramMessage).mock.calls[0]?.[1];
+      expect(body).toEqual(expect.stringContaining('Payment received'));
+      expect(body).not.toMatch(/CLR-00123/);
+      expect(body).not.toMatch(/Patient ID/i);
     });
 
     it('returns true and skips DM when appointment has no patient_id', async () => {

@@ -73,6 +73,7 @@ function minimalTurnCtx(overrides: Partial<DmTurnContext> = {}): DmTurnContext {
     doctorId: 'doctor-1',
     correlationId: 'corr-1',
     text: 'book appointment',
+    turnLanguage: 'en',
     recentMessages: [],
     intentResult: { intent: 'book_appointment', confidence: 1 },
     doctorSettings: { timezone: 'Asia/Kolkata', instagram_receptionist_paused: false } as never,
@@ -83,6 +84,7 @@ function minimalTurnCtx(overrides: Partial<DmTurnContext> = {}): DmTurnContext {
       intentResult: { intent: 'book_appointment', confidence: 1 },
       doctorSettings: null,
       text: 'book appointment',
+      turnLanguage: 'en',
       inCollection: false,
       conversationId: 'conv-1',
       patientId: 'patient-1',
@@ -93,8 +95,8 @@ function minimalTurnCtx(overrides: Partial<DmTurnContext> = {}): DmTurnContext {
     justStartingCollection: false,
     signalsFeePricing: false,
     feeIdleRoutedByAnaphora: false,
-    feeComposerOpts: {},
-    bookingFeeComposerOpts: {},
+    feeComposerOpts: { language: 'en' },
+    bookingFeeComposerOpts: { language: 'en' },
     teleconsultCatalogRowCount: 1,
     channelReplyPick: null,
     lastBotAskedForDetails: false,
@@ -141,8 +143,9 @@ describe('bookingEntryStage', () => {
 
     const result = await bookingEntryStage.handle(ctx);
     expect(result.branch).toBe('book_for_someone_else');
-    expect(result.nextState.step).toBe('collecting_all');
-    expect(result.nextState.bookingForOther?.bookingForSomeoneElse).toBe(true);
+    expect(result.nextState.step).toBe('awaiting_slot_selection');
+    expect(result.reply).toContain('https://example.com/book');
+    expect(result.reply).not.toMatch(/reason for visit|full name|mobile/i);
   });
 
   it('resolveStage routes book entry; collecting_all in-flight stays booking_funnel', () => {
@@ -224,10 +227,10 @@ describe('bookingEntryStage', () => {
     } as never)).toBe(true);
 
     const result = await bookingEntryStage.handle(ctx);
-    expect(result.branch).toBe('booking_start_returning_reason');
-    expect(result.nextState.step).toBe('collecting_all');
-    expect(result.nextState.collectedFields).toEqual(['name', 'phone', 'age', 'gender']);
-    expect(result.reply).toMatch(/reason for visit/i);
+    expect(result.branch).toBe('booking_start_link_first');
+    expect(result.nextState.step).toBe('awaiting_slot_selection');
+    expect(result.reply).toContain('https://example.com/book');
+    expect(result.reply).not.toMatch(/reason for visit|full name|consent/i);
     expect(ctx.runGenerateResponse).not.toHaveBeenCalled();
     env.RETURNING_PATIENT_MEMORY_ENABLED = false;
   });
@@ -270,7 +273,7 @@ describe('bookingEntryStage', () => {
       })
     );
 
-    expect(result.branch).toBe('booking_start_returning_ready');
+    expect(result.branch).toBe('booking_start_link_first');
     expect(result.nextState.step).toBe('awaiting_slot_selection');
     expect(result.reply).toContain('https://example.com/book');
     env.RETURNING_PATIENT_MEMORY_ENABLED = false;
@@ -300,7 +303,8 @@ describe('bookingEntryStage', () => {
     );
 
     expect(result.branch).toBe('book_for_someone_else');
-    expect(result.nextState.step).toBe('collecting_all');
+    expect(result.nextState.step).toBe('awaiting_slot_selection');
+    expect(result.reply).toContain('https://example.com/book');
     env.RETURNING_PATIENT_MEMORY_ENABLED = false;
   });
 
@@ -309,7 +313,7 @@ describe('bookingEntryStage', () => {
       const fixture = JSON.parse(
         readFileSync(join(__dirname, '../../../../fixtures/dm-transcripts', file), 'utf-8')
       ) as { expectedBranch: string };
-      expect(fixture.expectedBranch).toMatch(/^booking_start_returning_/);
+      expect(fixture.expectedBranch).toBe('booking_start_link_first');
     }
   });
 
@@ -346,9 +350,35 @@ describe('bookingEntryStage', () => {
       })
     );
 
-    expect(result.branch).toBe('booking_start_ai');
-    expect(result.branch).not.toBe('booking_start_returning_reason');
-    expect(result.branch).not.toBe('booking_start_returning_ready');
+    expect(result.branch).toBe('booking_start_link_first');
+    expect(result.nextState.step).toBe('awaiting_slot_selection');
+    expect(result.reply).toContain('https://example.com/book');
+    expect(result.reply).not.toMatch(/full name|reason for visit|consent/i);
     env.RETURNING_PATIENT_MEMORY_ENABLED = false;
+  });
+
+  it('mca-15: new patient booking start hands the owned-page link, not intake', async () => {
+    jest.mocked(patientService.findPatientByIdWithAdmin).mockResolvedValue({
+      id: 'patient-1',
+      name: '',
+      phone: '',
+      consent_status: 'pending',
+      medical_record_number: null,
+      created_at: new Date(),
+      updated_at: new Date(),
+    });
+
+    const ctx = minimalTurnCtx({
+      justStartingCollection: true,
+      inCollection: false,
+      state: { collectedFields: [], updatedAt: new Date().toISOString() },
+    });
+    const result = await bookingEntryStage.handle(ctx);
+
+    expect(result.branch).toBe('booking_start_link_first');
+    expect(result.nextState.step).toBe('awaiting_slot_selection');
+    expect(result.reply).toContain('https://example.com/book');
+    expect(result.reply).not.toMatch(/full name|age|gender|mobile|reason for visit|i agree/i);
+    expect(ctx.runGenerateResponse).not.toHaveBeenCalled();
   });
 });

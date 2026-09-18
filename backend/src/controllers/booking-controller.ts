@@ -11,6 +11,7 @@ import { successResponse } from '../utils/response';
 import { verifyBookingToken, verifyBookingTokenAllowExpired } from '../utils/booking-token';
 import {
   validateDaySlotsQuery,
+  validateSelectSlotAndPayBody,
   validateSelectSlotBody,
   validateSlotPageInfoQuery,
 } from '../utils/validation';
@@ -170,12 +171,12 @@ export const getSlotPageInfoHandler = asyncHandler(async (req: Request, res: Res
 /**
  * POST /api/v1/bookings/select-slot-and-pay
  *
- * Body: { token, slotStart }
+ * Body: { token, slotStart } plus optional owned-page intake (mca-13).
  * Creates appointment + payment link in one call. Returns paymentUrl (or null when fee=0) and redirectUrl.
  */
 export const selectSlotAndPayHandler = asyncHandler(async (req: Request, res: Response) => {
   const correlationId = req.correlationId || 'unknown';
-  const body = validateSelectSlotBody(req.body);
+  const body = validateSelectSlotAndPayBody(req.body);
   const { appointmentId } = verifyBookingToken(body.token);
 
   try {
@@ -201,6 +202,10 @@ export const selectSlotAndPayHandler = asyncHandler(async (req: Request, res: Re
           catalogServiceKey: body.catalogServiceKey,
           catalogServiceId: body.catalogServiceId,
           consultationModality: body.consultationModality,
+          patientName: body.patientName,
+          patientPhone: body.patientPhone,
+          reasonForVisit: body.reasonForVisit,
+          consentGranted: body.consentGranted,
           isReschedule: false,
         }
       );

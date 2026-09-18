@@ -196,6 +196,68 @@ describe("ComplaintAutocomplete", () => {
     expect(searchComplaints).not.toHaveBeenCalled();
   });
 
+  it("commits the most-frequent extra option on Enter", async () => {
+    const onCommit = vi.fn();
+    const onSelectExtra = vi.fn();
+    render(
+      <ComplaintAutocomplete
+        inputId="complaint-capture"
+        value="he"
+        onChange={() => {}}
+        onCommit={onCommit}
+        extraOptions={[
+          {
+            id: "headache-moderate",
+            label: "Headache · moderate · + photophobia, nausea",
+            badge: "Most frequent",
+          },
+        ]}
+        onSelectExtra={onSelectExtra}
+        token="test-token"
+      />,
+    );
+
+    fireEvent.focus(screen.getByRole("combobox"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("complaint-combo-option")).toBeInTheDocument();
+    });
+
+    fireEvent.keyDown(screen.getByRole("combobox"), { key: "Enter" });
+    expect(onSelectExtra).toHaveBeenCalledWith("headache-moderate");
+    expect(onCommit).not.toHaveBeenCalled();
+  });
+
+  it("clears an extra option without committing", async () => {
+    const onSelectExtra = vi.fn();
+    const onClearExtra = vi.fn();
+    render(
+      <ComplaintAutocomplete
+        inputId="complaint-capture"
+        value="he"
+        onChange={() => {}}
+        extraOptions={[
+          {
+            id: "headache-moderate",
+            label: "Headache · moderate · + photophobia, nausea",
+            badge: "Most frequent",
+          },
+        ]}
+        onSelectExtra={onSelectExtra}
+        onClearExtra={onClearExtra}
+        token="test-token"
+      />,
+    );
+
+    fireEvent.focus(screen.getByRole("combobox"));
+    await waitFor(() => {
+      expect(screen.getByTestId("complaint-combo-clear")).toBeInTheDocument();
+    });
+    fireEvent.mouseDown(screen.getByTestId("complaint-combo-clear"));
+    expect(onClearExtra).toHaveBeenCalledWith("headache-moderate");
+    expect(onSelectExtra).not.toHaveBeenCalled();
+  });
+
   it("renders the suggestion listbox in a body portal with fixed positioning", async () => {
     render(
       <ComplaintAutocomplete

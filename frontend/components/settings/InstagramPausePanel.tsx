@@ -109,9 +109,8 @@ export function InstagramPausePanel({ token }: InstagramPausePanelProps) {
             Pause Instagram receptionist (human handoff)
           </span>
           <span className="mt-1 block text-sm text-muted-foreground">
-            When on, automated DMs stop and patients get a short notice that a
-            person will reply when possible. High-intent comment auto-DMs and
-            public replies are also paused; you still get lead emails.
+            When on, automated DMs stop and people get a short notice that a
+            person will reply when possible. You still get lead emails.
           </span>
         </span>
       </label>

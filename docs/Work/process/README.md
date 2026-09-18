@@ -2,7 +2,7 @@
 
 > **Start here:** [`WORKFLOW.md`](./WORKFLOW.md) — the end-to-end path from **capture → product plan → daily plan → done**.
 
-This folder holds methodology docs. It does not contain execution tasks (those live in [`Daily-plans/`](../Daily-plans/)) or roadmaps (those live in [`Product plans/`](../Product%20plans/)).
+This folder holds methodology docs. It does not contain execution tasks (those live in [`Daily-plans/`](../Daily-plans/)) or roadmaps (those live in [`Product plans/`](../Product%20plans/)). Running the company lives in [`Business/`](../Business/).
 
 ## Read-order
 
@@ -24,11 +24,13 @@ For "should I just do this in chat?" → [`IMPLEMENTATION-TRIAGE-PROMPT.md`](./I
 | [AGENT-EXECUTION-EFFICIENCY-GUIDE.md](./AGENT-EXECUTION-EFFICIENCY-GUIDE.md) | Model selection and cost rules |
 | [CODE_CHANGE_RULES.md](./CODE_CHANGE_RULES.md) | Rules when changing existing code |
 | [IMPLEMENTATION-TRIAGE-PROMPT.md](./IMPLEMENTATION-TRIAGE-PROMPT.md) | Direct in chat vs route through System T |
+| [IG-DM-OBSERVE-ANALYZE-FIX.md](./IG-DM-OBSERVE-ANALYZE-FIX.md) | Dummy IG DMs: observe transcript → analyze → fix → re-observe |
 
 ## Sibling folders
 
 | Folder | Role |
 |---|---|
+| [`../Business/`](../Business/) | Run the company — tracks, months, weeks, days |
 | [`../capture/`](../capture/) | Parking lot — inbox + per-program `features/` |
 | [`../Product plans/`](../Product%20plans/) | Multi-phase roadmaps + decision locks |
 | [`../Daily-plans/`](../Daily-plans/) | Dated execution batches + `Tasks/` |

@@ -15,22 +15,26 @@ describe('patient-list-segment-sql', () => {
     expect(PATIENT_SEGMENT_IDS).toEqual([
       'active-90d',
       'new-30d',
+      'revisit-30d',
       'at-risk-followup',
       'no-show-prone',
       'has-allergies',
       'has-open-episodes',
+      'incomplete-consult',
       'untagged',
     ]);
   });
 
   const segmentCases: Array<[Parameters<typeof segmentWherePredicate>[0], string]> = [
     ['active-90d', "INTERVAL '90 days'"],
-    ['new-30d', "INTERVAL '30 days'"],
+    ['new-30d', 'visit-based new-30d'],
+    ['revisit-30d', 'visit-based revisit-30d'],
     ['at-risk-followup', 'follow_up_value'],
     ['no-show-prone', "FILTER (WHERE status = 'no_show')"],
     ['has-allergies', 'patient_allergies'],
     ['has-open-episodes', "source = 'episode'"],
-    ['untagged', 'patient_tag IS NULL'],
+    ['incomplete-consult', 'incomplete-consult'],
+    ['untagged', "patient_tags = '{}'"],
   ];
 
   it.each(segmentCases)('segment %s includes expected predicate fragment', (segment, fragment) => {

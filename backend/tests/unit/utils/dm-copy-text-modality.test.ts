@@ -4,7 +4,7 @@
  *
  * Two builders covered here:
  *
- *   1. `buildConsultationReadyDm({ modality: 'text', … })` — newly lit-up
+ *   1. `buildConsultationReadyDm({ language: 'en', modality: 'text', … })` — newly lit-up
  *      branch. Verifies the rendered body, practice-name fallback, and
  *      shared `joinUrl` empty-throw behavior. The "voice still throws"
  *      assertion lives in `dm-copy-consultation-ready.test.ts` (Task 16
@@ -25,7 +25,7 @@ import {
 
 describe('buildConsultationReadyDm — text modality (Task 21)', () => {
   it('renders the text-modality body with bare URL on its own line', () => {
-    const out = buildConsultationReadyDm({
+    const out = buildConsultationReadyDm({ language: 'en',
       modality:     'text',
       practiceName: 'Acme Clinic',
       joinUrl:      'https://app.clariva.test/c/text/abc?token=xyz',
@@ -42,7 +42,7 @@ describe('buildConsultationReadyDm — text modality (Task 21)', () => {
   });
 
   it('falls back to "your doctor" when practiceName is empty / whitespace', () => {
-    const out = buildConsultationReadyDm({
+    const out = buildConsultationReadyDm({ language: 'en',
       modality:     'text',
       practiceName: '   ',
       joinUrl:      'https://x.test/?token=z',
@@ -51,7 +51,7 @@ describe('buildConsultationReadyDm — text modality (Task 21)', () => {
   });
 
   it('falls back to "your doctor" when practiceName is undefined', () => {
-    const out = buildConsultationReadyDm({
+    const out = buildConsultationReadyDm({ language: 'en',
       modality: 'text',
       joinUrl:  'https://x.test/?token=z',
     });
@@ -60,7 +60,7 @@ describe('buildConsultationReadyDm — text modality (Task 21)', () => {
 
   it('throws on empty joinUrl (regression-guards the shared upstream check)', () => {
     expect(() =>
-      buildConsultationReadyDm({ modality: 'text', joinUrl: '   ' })
+      buildConsultationReadyDm({ language: 'en', modality: 'text', joinUrl: '   ' })
     ).toThrow(/joinUrl is required/);
   });
 
@@ -68,7 +68,7 @@ describe('buildConsultationReadyDm — text modality (Task 21)', () => {
     // Load-bearing distinction: video says "Join here:" because the patient
     // is leaving for the Twilio room. Text says "Open the chat:" because
     // the chat IS the consult — there's nothing to "join".
-    const out = buildConsultationReadyDm({
+    const out = buildConsultationReadyDm({ language: 'en',
       modality:     'text',
       practiceName: 'X',
       joinUrl:      'https://x.test/?t=1',
@@ -81,6 +81,7 @@ describe('buildConsultationReadyDm — text modality (Task 21)', () => {
 describe('buildPrescriptionReadyDm — inline in-chat (Task 21)', () => {
   it('renders the rich body with PDF URL, reference ID, and next-steps bullets', () => {
     const out = buildPrescriptionReadyDm({
+      language: 'en',
       doctorName:     'Dr. Sharma',
       prescriptionId: 'rx_2026_0419_abc123',
       pdfUrl:         'https://storage.clariva.test/rx/abc123.pdf?signed=true',
@@ -102,6 +103,7 @@ describe('buildPrescriptionReadyDm — inline in-chat (Task 21)', () => {
 
   it('falls back to "your doctor" when doctorName is empty / whitespace', () => {
     const out = buildPrescriptionReadyDm({
+      language: 'en',
       doctorName:     '   ',
       prescriptionId: 'rx_1',
       pdfUrl:         'https://x.test/rx.pdf',
@@ -111,6 +113,7 @@ describe('buildPrescriptionReadyDm — inline in-chat (Task 21)', () => {
 
   it('falls back to "your doctor" when doctorName is undefined', () => {
     const out = buildPrescriptionReadyDm({
+      language: 'en',
       prescriptionId: 'rx_1',
       pdfUrl:         'https://x.test/rx.pdf',
     });
@@ -120,6 +123,7 @@ describe('buildPrescriptionReadyDm — inline in-chat (Task 21)', () => {
   it('throws on empty pdfUrl', () => {
     expect(() =>
       buildPrescriptionReadyDm({
+        language: 'en',
         doctorName:     'Dr. X',
         prescriptionId: 'rx_1',
         pdfUrl:         '   ',
@@ -130,6 +134,7 @@ describe('buildPrescriptionReadyDm — inline in-chat (Task 21)', () => {
   it('throws on missing pdfUrl (undefined-cast as well-typed caller bug)', () => {
     expect(() =>
       buildPrescriptionReadyDm({
+        language: 'en',
         doctorName:     'Dr. X',
         prescriptionId: 'rx_1',
         // Force the runtime guard by casting — TS would block this at
@@ -143,6 +148,7 @@ describe('buildPrescriptionReadyDm — inline in-chat (Task 21)', () => {
   it('throws on empty prescriptionId', () => {
     expect(() =>
       buildPrescriptionReadyDm({
+        language: 'en',
         doctorName:     'Dr. X',
         prescriptionId: '   ',
         pdfUrl:         'https://x.test/rx.pdf',
@@ -156,6 +162,7 @@ describe('buildPrescriptionReadyDm — inline in-chat (Task 21)', () => {
     // substring in the rendered body.
     const longId = 'rx_2026_0419_550e8400-e29b-41d4-a716-446655440000';
     const out = buildPrescriptionReadyDm({
+      language: 'en',
       doctorName:     'Dr. X',
       prescriptionId: longId,
       pdfUrl:         'https://x.test/rx.pdf',

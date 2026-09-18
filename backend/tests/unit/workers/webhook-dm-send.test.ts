@@ -100,6 +100,16 @@ describe('sendInstagramDmWithLocksAndFallback (RBH-04)', () => {
     );
   });
 
+  it('mca-07: empty reply skips Graph send', async () => {
+    const r = await sendInstagramDmWithLocksAndFallback({
+      ...baseParams,
+      replyText: '   ',
+      context: 'default',
+    });
+    expect(r).toEqual({ status: 'sent', usedRecipientFallback: false });
+    expect(instagramService.sendInstagramMessage).not.toHaveBeenCalled();
+  });
+
   it('skips locks when pageId undefined but still attempts send', async () => {
     const r = await sendInstagramDmWithLocksAndFallback({
       ...baseParams,

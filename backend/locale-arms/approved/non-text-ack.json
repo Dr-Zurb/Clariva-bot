@@ -1,0 +1,13 @@
+{
+  "familyId": "non-text-ack",
+  "builder": "buildNonTextAckMessage",
+  "status": "approved",
+  "reviewedAt": "2026-08-03",
+  "reviewer": "founder",
+  "phi": false,
+  "notes": "lang-25 proof family. Roman hi/pa for IG typing (LANG6-D6). English arm unchanged.",
+  "en": "I can't read images or voice notes yet — could you type your message instead? I'll take it from there.",
+  "hi": "Main abhi images ya voice notes nahi padh sakta — apna message type karke bhejein? Main aage dekh lunga.",
+  "pa": "Main hun images ya voice notes nahi padh sakda — apna message type karke bhejo? Main aage dekh lavanga.",
+  "placeholders": []
+}

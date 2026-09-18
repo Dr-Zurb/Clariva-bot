@@ -1,6 +1,6 @@
 # DM routing golden corpus (e-task-ops-02)
 
-- **`corpus.json`** — Synthetic scenarios: `messages`, `intentResult` stub, `expected_branch` from `previewClinicalIdleDmBranch`.
+- **`corpus.json`** — Synthetic scenarios: `messages`, `intentResult` stub, `expected_branch` from `previewClinicalIdleDmBranch` (aligned with live idle-fee-triage: reason-first leftovers hand `/book` unless the turn is a fee FAQ).
 - **`MISROUTE_PLAYBOOK.md`** — Support/on-call branch lookup (no PHI).
 - **Tests:** `backend/tests/unit/utils/dm-routing-golden-corpus.test.ts`
 - **Preview implementation:** `backend/src/utils/dm-routing-clinical-idle-preview.ts`

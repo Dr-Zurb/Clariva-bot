@@ -25,8 +25,10 @@ import { PassThrough } from 'stream';
 import {
   composeTranscriptPdfStream,
   mergeByTimestamp,
+  transcriptPauseReasonLabel,
   type ChatMessageRow,
   type ComposeTranscriptContext,
+  type TranscriptGapRow,
   type VoiceTranscriptSegment,
 } from '../../../src/services/transcript-pdf-composer';
 
@@ -148,6 +150,59 @@ describe('mergeByTimestamp (pinned ordering)', () => {
     expect(mergeByTimestamp([], [])).toEqual([]);
     expect(mergeByTimestamp(chat, [])).toHaveLength(3);
     expect(mergeByTimestamp([], voice)).toHaveLength(2);
+    expect(mergeByTimestamp([], [], [])).toEqual([]);
+  });
+
+  const gapA: TranscriptGapRow = {
+    wallStartedAt: '2026-04-19T09:03:00.000Z',
+    durationMs:    120_000,
+    actorRole:     'doctor',
+    reasonCode:    'administrative',
+    closedAs:      'manual_resume',
+  };
+  const gapB: TranscriptGapRow = {
+    wallStartedAt: '2026-04-19T09:12:00.000Z',
+    durationMs:    60_000,
+    actorRole:     'patient',
+    reasonCode:    'patient_request',
+    closedAs:      'auto_resume',
+  };
+
+  it('orders three sources by timestamp (chat < gap < voice at ties)', () => {
+    const sameTs = '2026-04-19T09:05:00.000Z';
+    const out = mergeByTimestamp(
+      [{ kind: 'text', createdAtIso: sameTs, senderRole: 'doctor', body: 'chat-tie' }],
+      [{ timestampIso: sameTs, speakerLabel: 'Patient', text: 'voice-tie' }],
+      [{ ...gapA, wallStartedAt: sameTs }],
+    );
+    expect(out.map((x) => x.source)).toEqual(['chat', 'gap', 'voice']);
+    expect(out[0]).toMatchObject({ source: 'chat', body: 'chat-tie' });
+    expect(out[1]).toMatchObject({ source: 'gap', reasonCode: 'administrative' });
+    expect(out[2]).toMatchObject({ source: 'voice', text: 'voice-tie' });
+  });
+
+  it('interleaves two gaps among chat and voice in wall-clock order', () => {
+    const out = mergeByTimestamp(chat, voice, [gapB, gapA]);
+    expect(out.map((x) => x.source)).toEqual([
+      'chat', // 09:00
+      'gap',  // 09:03
+      'chat', // 09:05
+      'voice', // 09:05
+      'chat', // 09:10
+      'voice', // 09:10:10
+      'gap',  // 09:12
+    ]);
+    expect(out[1]).toMatchObject({ source: 'gap', reasonCode: 'administrative' });
+    expect(out[6]).toMatchObject({ source: 'gap', reasonCode: 'patient_request' });
+  });
+
+  it('keeps chat-before-voice when gaps is omitted (two-arg form)', () => {
+    const out = mergeByTimestamp(
+      [{ kind: 'text', createdAtIso: '2026-04-19T09:05:00.000Z', senderRole: 'doctor', body: 'tie' }],
+      [{ timestampIso: '2026-04-19T09:05:00.000Z', speakerLabel: 'Patient', text: 'tie-v' }],
+    );
+    expect(out[0]).toMatchObject({ source: 'chat' });
+    expect(out[1]).toMatchObject({ source: 'voice' });
   });
 });
 
@@ -187,7 +242,7 @@ describe('composeTranscriptPdfStream', () => {
     expectPdfContains(buf, 'Patient');
     // Footer watermark (renders on every page).
     expectPdfContains(buf, 'Confidential');
-    expectPdfContains(buf, 'Signed: Clariva Transcript Service');
+    expectPdfContains(buf, 'Signed: Halo Aid Transcript Service');
   });
 
   it('renders the "transcription pending" banner for voice consults awaiting transcription', async () => {
@@ -263,5 +318,137 @@ describe('composeTranscriptPdfStream', () => {
     const buf = await bytesPromise;
     expectPdfContains(buf, 'blood-report.pdf');
     expectPdfContains(buf, 'application/pdf');
+  });
+
+  it('renders a gaps-only transcript instead of the empty placeholder', async () => {
+    const stream = new PassThrough();
+    const bytesPromise = collect(stream);
+
+    await composeTranscriptPdfStream({
+      context: baseCtx,
+      messages: [],
+      voiceSegments: [],
+      gaps: [
+        {
+          wallStartedAt: '2026-04-19T09:00:00.000Z',
+          durationMs:    240_000,
+          actorRole:     'doctor',
+          reasonCode:    'administrative',
+          closedAs:      'manual_resume',
+        },
+      ],
+      output: stream,
+    });
+
+    const buf = await bytesPromise;
+    expectPdfContains(buf, 'Recording gap');
+    expectPdfContains(buf, 'This interval was not recorded');
+    expectPdfContains(buf, 'an administrative pause');
+    expectPdfDoesNotContain(buf, 'No messages recorded');
+  });
+
+  it('renders two gaps in wall-clock order, including one at the start and one at the end', async () => {
+    const stream = new PassThrough();
+    const bytesPromise = collect(stream);
+
+    await composeTranscriptPdfStream({
+      context: baseCtx,
+      messages: [
+        { kind: 'text', createdAtIso: '2026-04-19T09:10:00.000Z', senderRole: 'patient', body: 'mid-chat' },
+      ],
+      voiceSegments: [],
+      gaps: [
+        {
+          wallStartedAt: '2026-04-19T09:00:00.000Z',
+          durationMs:    60_000,
+          actorRole:     'patient',
+          reasonCode:    'patient_request',
+          closedAs:      'manual_resume',
+        },
+        {
+          wallStartedAt: '2026-04-19T09:40:00.000Z',
+          durationMs:    180_000,
+          actorRole:     'doctor',
+          reasonCode:    'sensitive_disclosure',
+          closedAs:      'session_ended_while_paused',
+        },
+      ],
+      output: stream,
+    });
+
+    const buf = await bytesPromise;
+    expectPdfContains(buf, 'the patient asked to pause');
+    expectPdfContains(buf, 'this part of the visit was deliberately not recorded');
+    expectPdfContains(buf, 'The consult ended while recording was paused');
+    expectPdfContains(buf, 'mid-chat');
+  });
+
+  it('renders the legacy not-recorded state and never a free-text diagnosis', async () => {
+    const stream = new PassThrough();
+    const bytesPromise = collect(stream);
+    const leaked = 'patient disclosed HIV status';
+
+    await composeTranscriptPdfStream({
+      context: baseCtx,
+      messages: [],
+      voiceSegments: [],
+      gaps: [
+        {
+          wallStartedAt: '2026-04-19T09:00:00.000Z',
+          durationMs:    30_000,
+          actorRole:     'doctor',
+          reasonCode:    'not_recorded_in_preset_form',
+          closedAs:      'manual_resume',
+        },
+      ],
+      output: stream,
+    });
+
+    const buf = await bytesPromise;
+    expectPdfContains(buf, 'the reason was not recorded in preset form');
+    expectPdfDoesNotContain(buf, leaked);
+    expect(transcriptPauseReasonLabel('not_recorded_in_preset_form')).toBe(
+      'the reason was not recorded in preset form',
+    );
+    expect(transcriptPauseReasonLabel('made_up_code')).toBe(
+      'the reason was not recorded in preset form',
+    );
+  });
+
+  it('renders a visible note when gap information could not be loaded', async () => {
+    const stream = new PassThrough();
+    const bytesPromise = collect(stream);
+
+    await composeTranscriptPdfStream({
+      context: { ...baseCtx, gapsLoadFailed: true },
+      messages: [
+        { kind: 'text', createdAtIso: '2026-04-19T09:00:00.000Z', senderRole: 'patient', body: 'hello' },
+      ],
+      voiceSegments: [],
+      output: stream,
+    });
+
+    const buf = await bytesPromise;
+    expectPdfContains(buf, 'Recording-gap information unavailable');
+    expectPdfContains(buf, 'hello');
+  });
+
+  it('does not add gap furniture to a gapless transcript', async () => {
+    const stream = new PassThrough();
+    const bytesPromise = collect(stream);
+
+    await composeTranscriptPdfStream({
+      context: baseCtx,
+      messages: [
+        { kind: 'text', createdAtIso: '2026-04-19T09:00:00.000Z', senderRole: 'patient', body: 'hello' },
+      ],
+      voiceSegments: [],
+      output: stream,
+    });
+
+    const buf = await bytesPromise;
+    expectPdfDoesNotContain(buf, 'Recording gap');
+    expectPdfDoesNotContain(buf, 'Recording-gap information unavailable');
+    expectPdfContains(buf, 'hello');
   });
 });

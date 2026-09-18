@@ -28,9 +28,12 @@ jest.mock('../../../src/utils/audit-logger', () => ({
 }));
 
 import {
+  ATTACHMENT_DOWNLOAD_MAX_BYTES,
   createUploadUrl,
   deleteAttachment,
+  downloadAttachmentBytes,
 } from '../../../src/services/prescription-attachment-service';
+import { NotFoundError, ValidationError } from '../../../src/utils/errors';
 import * as database from '../../../src/config/database';
 
 const mockGetAdmin = database.getSupabaseAdminClient as unknown as jest.Mock;
@@ -46,7 +49,11 @@ function makeAdmin() {
     error: null,
   }));
   const remove = jest.fn(async () => ({ data: [], error: null }));
-  const storageFrom = jest.fn(() => ({ createSignedUploadUrl, remove }));
+  const download = jest.fn(async () => ({
+    data: { arrayBuffer: async () => Buffer.from('%PDF-1.4 test') },
+    error: null,
+  }));
+  const storageFrom = jest.fn(() => ({ createSignedUploadUrl, remove, download }));
 
   const admin = {
     from: jest.fn((table: string) => {
@@ -54,7 +61,27 @@ function makeAdmin() {
         return {
           select: () => ({
             eq: () => ({
-              single: async () => ({ data: { id: PRESCRIPTION_ID, doctor_id: USER_ID }, error: null }),
+              single: async () => ({
+                data: {
+                  id: PRESCRIPTION_ID,
+                  doctor_id: USER_ID,
+                  appointment_id: 'apt-1',
+                  attested_at: null,
+                },
+                error: null,
+              }),
+            }),
+          }),
+        };
+      }
+      if (table === 'appointments') {
+        return {
+          select: () => ({
+            eq: () => ({
+              single: async () => ({
+                data: { id: 'apt-1', status: 'confirmed' },
+                error: null,
+              }),
             }),
           }),
         };
@@ -65,7 +92,12 @@ function makeAdmin() {
           eq: () => ({
             eq: () => ({
               single: async () => ({
-                data: { id: ATTACHMENT_ID, prescription_id: PRESCRIPTION_ID, file_path: OBJECTIVE_PATH },
+                data: {
+                  id: ATTACHMENT_ID,
+                  prescription_id: PRESCRIPTION_ID,
+                  file_path: OBJECTIVE_PATH,
+                  file_type: 'application/pdf',
+                },
                 error: null,
               }),
             }),
@@ -77,7 +109,7 @@ function makeAdmin() {
     storage: { from: storageFrom },
   };
 
-  return { admin, createSignedUploadUrl, remove };
+  return { admin, createSignedUploadUrl, remove, download };
 }
 
 beforeEach(() => {
@@ -89,7 +121,14 @@ describe('createUploadUrl objective tag (obj-22)', () => {
     const { admin, createSignedUploadUrl } = makeAdmin();
     mockGetAdmin.mockReturnValue(admin);
 
-    await createUploadUrl(PRESCRIPTION_ID, USER_ID, 'wound.jpg', 'image/jpeg', 'corr-1', 'objective');
+    await createUploadUrl(
+      PRESCRIPTION_ID,
+      USER_ID,
+      'wound.jpg',
+      'image/jpeg',
+      'corr-1',
+      'objective'
+    );
 
     const usedPath = createSignedUploadUrl.mock.calls[0]![0] as string;
     expect(usedPath).toContain(`${USER_ID}/${PRESCRIPTION_ID}/objective/`);
@@ -113,7 +152,15 @@ describe('createUploadUrl subjective per-complaint segment (sdp-02)', () => {
     const { admin, createSignedUploadUrl } = makeAdmin();
     mockGetAdmin.mockReturnValue(admin);
 
-    await createUploadUrl(PRESCRIPTION_ID, USER_ID, 'rash.jpg', 'image/jpeg', 'corr-1', 'subjective', 'cmp-7');
+    await createUploadUrl(
+      PRESCRIPTION_ID,
+      USER_ID,
+      'rash.jpg',
+      'image/jpeg',
+      'corr-1',
+      'subjective',
+      'cmp-7'
+    );
 
     const usedPath = createSignedUploadUrl.mock.calls[0]![0] as string;
     expect(usedPath).toContain(`${USER_ID}/${PRESCRIPTION_ID}/subjective/cmp-7/`);
@@ -124,7 +171,15 @@ describe('createUploadUrl subjective per-complaint segment (sdp-02)', () => {
     const { admin, createSignedUploadUrl } = makeAdmin();
     mockGetAdmin.mockReturnValue(admin);
 
-    await createUploadUrl(PRESCRIPTION_ID, USER_ID, 'rash.jpg', 'image/jpeg', 'corr-1', 'subjective', '../../evil/id_$$');
+    await createUploadUrl(
+      PRESCRIPTION_ID,
+      USER_ID,
+      'rash.jpg',
+      'image/jpeg',
+      'corr-1',
+      'subjective',
+      '../../evil/id_$$'
+    );
 
     const usedPath = createSignedUploadUrl.mock.calls[0]![0] as string;
     // Slashes / dots / unsafe chars are stripped — no path traversal, exactly one folder level.
@@ -136,7 +191,15 @@ describe('createUploadUrl subjective per-complaint segment (sdp-02)', () => {
     const { admin, createSignedUploadUrl } = makeAdmin();
     mockGetAdmin.mockReturnValue(admin);
 
-    await createUploadUrl(PRESCRIPTION_ID, USER_ID, 'rash.jpg', 'image/jpeg', 'corr-1', 'subjective', '');
+    await createUploadUrl(
+      PRESCRIPTION_ID,
+      USER_ID,
+      'rash.jpg',
+      'image/jpeg',
+      'corr-1',
+      'subjective',
+      ''
+    );
 
     const usedPath = createSignedUploadUrl.mock.calls[0]![0] as string;
     expect(usedPath).toContain(`${USER_ID}/${PRESCRIPTION_ID}/subjective/unpinned/`);
@@ -146,7 +209,15 @@ describe('createUploadUrl subjective per-complaint segment (sdp-02)', () => {
     const { admin, createSignedUploadUrl } = makeAdmin();
     mockGetAdmin.mockReturnValue(admin);
 
-    await createUploadUrl(PRESCRIPTION_ID, USER_ID, 'rash.jpg', 'image/jpeg', 'corr-1', 'subjective', 'cmp-7');
+    await createUploadUrl(
+      PRESCRIPTION_ID,
+      USER_ID,
+      'rash.jpg',
+      'image/jpeg',
+      'corr-1',
+      'subjective',
+      'cmp-7'
+    );
 
     const usedPath = createSignedUploadUrl.mock.calls[0]![0] as string;
     expect(usedPath).not.toContain('/objective/');
@@ -164,5 +235,60 @@ describe('deleteAttachment (obj-22)', () => {
     expect(remove).toHaveBeenCalledWith([OBJECTIVE_PATH]);
     // Ownership check + attachment lookup + delete all go through `from`.
     expect(deleteSpy).toHaveBeenCalledWith('prescription_attachments');
+  });
+});
+
+describe('downloadAttachmentBytes (rpt-05.2)', () => {
+  it('returns service-role bytes without a signed URL', async () => {
+    const { admin, download } = makeAdmin();
+    mockGetAdmin.mockReturnValue(admin);
+
+    const result = await downloadAttachmentBytes(PRESCRIPTION_ID, ATTACHMENT_ID, 'corr-1', USER_ID);
+
+    expect(result.attachmentId).toBe(ATTACHMENT_ID);
+    expect(result.fileType).toBe('application/pdf');
+    expect(result.bytes.subarray(0, 4).toString('utf8')).toBe('%PDF');
+    expect(download).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects an oversized attachment', async () => {
+    const { admin, download } = makeAdmin();
+    download.mockResolvedValue({
+      data: { arrayBuffer: async () => Buffer.alloc(ATTACHMENT_DOWNLOAD_MAX_BYTES + 1) },
+      error: null,
+    });
+    mockGetAdmin.mockReturnValue(admin);
+
+    await expect(
+      downloadAttachmentBytes(PRESCRIPTION_ID, ATTACHMENT_ID, 'corr-1', USER_ID)
+    ).rejects.toBeInstanceOf(ValidationError);
+  });
+
+  it('returns 404-style NotFound when the doctor does not own the prescription', async () => {
+    const { admin } = makeAdmin();
+    admin.from = jest.fn((table: string) => {
+      if (table === 'prescriptions') {
+        return {
+          select: () => ({
+            eq: () => ({
+              single: async () => ({
+                data: { id: PRESCRIPTION_ID, doctor_id: 'other-doc' },
+                error: null,
+              }),
+            }),
+          }),
+        };
+      }
+      return {
+        select: () => ({
+          eq: () => ({ eq: () => ({ single: async () => ({ data: null, error: null }) }) }),
+        }),
+      };
+    }) as typeof admin.from;
+    mockGetAdmin.mockReturnValue(admin);
+
+    await expect(
+      downloadAttachmentBytes(PRESCRIPTION_ID, ATTACHMENT_ID, 'corr-1', USER_ID)
+    ).rejects.toBeInstanceOf(NotFoundError);
   });
 });

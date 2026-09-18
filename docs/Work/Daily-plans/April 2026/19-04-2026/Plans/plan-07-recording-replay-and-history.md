@@ -5,6 +5,8 @@
 > **Master plan reference:** [plan-multi-modality-consultations.md](./plan-multi-modality-consultations.md) — Decision 4 (per-session pause/resume with audit + reason + patient-visible indicator; patient self-serve replay 90-day TTL with mutual access notifications; transcript PDF for both parties) **LOCKED**. Decision 1 sub-decision (post-consult chat history both parties indefinite read access via `<TextConsultRoom mode='readonly'>`) **LOCKED**.
 >
 > **Sequencing index:** [plan-00-multi-modality-implementation-index.md](./plan-00-multi-modality-implementation-index.md). Hard depends on Plans 02 + 04 + 05 (needs both consent doctrine and actual artifacts to replay).
+>
+> **Updated by recording-governance-v2:** pause kind-scoping (REC-D13), gap rendering (REC-D17), doctor consult timeline (REC-D23). Task 30 already built both notification directions; rec-30 hardened routing and skip observability — it did not replace the helpers. See [charter §Reversals](../../../August%202026/17-08-2026/recording-governance-v2/plan-recording-governance-v2-charter.md#reversals--what-this-charter-overturns).
 
 ---
 

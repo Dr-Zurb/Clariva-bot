@@ -15,7 +15,7 @@ describe('buildAccountDeletionExplainerDm', () => {
   const finalizedAt = new Date('2026-04-26T10:15:00.000Z');
 
   it('renders the explainer with the citation and finalized date', () => {
-    const out = buildAccountDeletionExplainerDm({
+    const out = buildAccountDeletionExplainerDm({ language: 'en',
       citation: 'DPDP Act 2023 §9 / GDPR Article 9(3)',
       finalizedAt,
     });
@@ -31,15 +31,66 @@ describe('buildAccountDeletionExplainerDm', () => {
     expect(out).toContain('Your doctor still has access');
   });
 
+  it('LANG6-D4 / enByPolicy: language hi still renders English legal copy', () => {
+    const en = buildAccountDeletionExplainerDm({
+      language: 'en',
+      citation: 'DPDP Act 2023 §9 / GDPR Article 9(3)',
+      finalizedAt,
+    });
+    const hi = buildAccountDeletionExplainerDm({
+      language: 'hi',
+      citation: 'DPDP Act 2023 §9 / GDPR Article 9(3)',
+      finalizedAt,
+    });
+    expect(hi).toBe(en);
+    expect(hi).toContain('Your account is closed.');
+  });
+
   it('throws when citation is empty', () => {
     expect(() =>
-      buildAccountDeletionExplainerDm({ citation: '   ', finalizedAt }),
+      buildAccountDeletionExplainerDm({ language: 'en', citation: '   ', finalizedAt }),
     ).toThrow(/citation is required/i);
+  });
+
+  it('deleted outcome does not claim recordings are retained', () => {
+    const out = buildAccountDeletionExplainerDm({
+      language: 'en',
+      citation: 'DPDP Act 2023 §9 / GDPR Article 9(3)',
+      finalizedAt,
+      recordingOutcome: 'deleted',
+    });
+    expect(out).toContain('The consult recordings we held have been deleted.');
+    expect(out).not.toContain('are not deleted');
+  });
+
+  it('deferred outcome names the citation and the hold date', () => {
+    const out = buildAccountDeletionExplainerDm({
+      language: 'en',
+      citation: 'DPDP Act 2023 §9 / GDPR Article 9(3)',
+      finalizedAt,
+      recordingOutcome: 'deferred',
+      recordingsHeldUntil: new Date('2029-04-26T00:00:00.000Z'),
+    });
+    expect(out).toContain('retained until 2029-04-26');
+    expect(out).toContain('have not been deleted');
+    expect(out).toContain('DPDP Act 2023 §9 / GDPR Article 9(3)');
+  });
+
+  it('mixed outcome does not claim full deletion', () => {
+    const out = buildAccountDeletionExplainerDm({
+      language: 'en',
+      citation: 'DPDP Act 2023 §9',
+      finalizedAt,
+      recordingOutcome: 'mixed',
+      recordingsHeldUntil: new Date('2029-01-01T00:00:00.000Z'),
+    });
+    expect(out).toContain('Some consult recordings were deleted');
+    expect(out).toContain('Others are retained until 2029-01-01');
   });
 
   it('throws when finalizedAt is not a valid Date', () => {
     expect(() =>
-      buildAccountDeletionExplainerDm({
+      buildAccountDeletionExplainerDm({ language: 'en',
         citation: 'DPDP',
         finalizedAt: new Date('not-a-date'),
       }),

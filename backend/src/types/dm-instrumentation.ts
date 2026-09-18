@@ -11,6 +11,8 @@ import type { Intent, IntentTopic } from './ai';
  */
 export type DmHandlerBranch =
   | 'revoke_consent'
+  | 'automated_messaging_opt_out'
+  | 'automated_messaging_opt_in'
   | 'receptionist_paused'
   | 'cancel_flow_numeric'
   | 'cancel_flow_confirm'
@@ -62,6 +64,8 @@ export type DmHandlerBranch =
   | 'post_booking_ack'
   | 'fee_book_misclassified_idle'
   | 'booking_start_ai'
+  /** mca-15: new booking hands /book link; no in-thread intake */
+  | 'booking_start_link_first'
   /** rcp-22: returning patient — demographics on file, collect reason only */
   | 'booking_start_returning_reason'
   /** rcp-22: returning patient — reason known, straight to slot link / staff gate */

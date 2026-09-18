@@ -30,11 +30,37 @@ function catalogTwo(): ServiceCatalogV1 {
   };
 }
 
-describe('public-booking-payment-gate (ARM-10)', () => {
+describe('public-booking-payment-gate (ARM-10 / ver-05)', () => {
   const settingsTwo: DoctorSettingsRow = {
     doctor_id: doc,
     service_offerings_json: catalogTwo(),
   } as DoctorSettingsRow;
+
+  it('blocks when doctor is not verified (ver-05)', () => {
+    const r = evaluatePublicBookingPaymentGate(
+      readConversationState({
+        pendingStaffServiceReview: false,
+        serviceSelectionFinalized: true,
+        catalogServiceKey: 'a',
+      }),
+      settingsTwo,
+      { doctorVerified: false }
+    );
+    expect(r).toEqual({ allowed: false, reason: 'doctor_not_verified' });
+  });
+
+  it('allows when doctorVerified is true (and other gates clear)', () => {
+    const r = evaluatePublicBookingPaymentGate(
+      readConversationState({
+        pendingStaffServiceReview: false,
+        serviceSelectionFinalized: true,
+        catalogServiceKey: 'a',
+      }),
+      settingsTwo,
+      { doctorVerified: true }
+    );
+    expect(r).toEqual({ allowed: true });
+  });
 
   it('blocks when staff review pending without finalization', () => {
     const r = evaluatePublicBookingPaymentGate(

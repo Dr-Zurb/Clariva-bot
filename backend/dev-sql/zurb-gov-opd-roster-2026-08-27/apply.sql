@@ -1,0 +1,8 @@
+-- APPLY: unique patients from the gov OPD Patient Listing Report onto Dr Zurb.
+-- Doctor: cb33af77-0878-4f7a-a728-fe8cdd8701ed
+-- Patients only. Dedup by 15-digit CR No. Do not paste PHI into this file.
+--
+-- Prefer:
+--   npx ts-node -r dotenv/config scripts/apply-zurb-gov-opd-roster-2026-08-27.ts
+-- Dry run:
+--   npx ts-node -r dotenv/config scripts/apply-zurb-gov-opd-roster-2026-08-27.ts --dry-run

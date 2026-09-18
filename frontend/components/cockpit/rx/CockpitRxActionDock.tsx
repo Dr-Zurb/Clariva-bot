@@ -28,6 +28,8 @@ export interface CockpitRxActionDockProps {
   state: CockpitState;
   finishBusy?: boolean;
   onFinish?: () => void | Promise<void>;
+  onArmAdvance?: () => void;
+  onParkAdvanceForEdit?: () => void;
   onSent?: (prescriptionId: string) => void | Promise<void>;
 }
 
@@ -40,6 +42,8 @@ export function CockpitRxActionDock({
   state,
   finishBusy = false,
   onFinish,
+  onArmAdvance,
+  onParkAdvanceForEdit,
   onSent,
 }: CockpitRxActionDockProps): JSX.Element | null {
   const commit = useRxCommitActions({
@@ -50,6 +54,8 @@ export function CockpitRxActionDock({
     token,
     cockpitState: state,
     onFinish,
+    onArmAdvance,
+    onParkAdvanceForEdit,
     onSent,
   });
   const shell = usePrescriptionFormShell();

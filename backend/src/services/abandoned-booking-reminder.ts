@@ -5,6 +5,7 @@
 
 import { getSupabaseAdminClient } from '../config/database';
 import { logger } from '../config/logger';
+import { shouldSkipAutomatedMetaSend } from './automated-messaging-opt-out';
 import { getInstagramAccessTokenForDoctor } from './instagram-connect-service';
 import { sendInstagramMessage } from './instagram-service';
 import { buildBookingPageUrl } from './slot-selection-service';
@@ -63,6 +64,12 @@ export async function runAbandonedBookingReminderJob(
     if (!token) { skipped++; continue; }
 
     try {
+      const optOut = await shouldSkipAutomatedMetaSend({
+        conversationId: row.id,
+        correlationId,
+        ifMissing: 'skip',
+      });
+      if (optOut.skip) { skipped++; continue; }
       const bookingUrl = buildBookingPageUrl(row.id, row.doctor_id);
       const language = coerceConversationLanguage(row.language);
       const msg = buildAbandonedBookingReminderMessage({ bookingUrl, language });

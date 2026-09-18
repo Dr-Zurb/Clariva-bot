@@ -14,7 +14,8 @@ import {
 import * as database from '../../../src/config/database';
 import { razorpayAdapter } from '../../../src/adapters/razorpay-adapter';
 import { paypalAdapter } from '../../../src/adapters/paypal-adapter';
-import { InternalError } from '../../../src/utils/errors';
+import { InternalError, ValidationError } from '../../../src/utils/errors';
+import * as credentialsService from '../../../src/services/doctor-gateway-credentials-service';
 
 jest.mock('../../../src/config/database', () => ({
   getSupabaseAdminClient: jest.fn(),
@@ -24,28 +25,26 @@ jest.mock('../../../src/adapters/paypal-adapter');
 jest.mock('../../../src/config/env', () => ({
   env: { DEFAULT_DOCTOR_COUNTRY: 'IN' },
 }));
+jest.mock('../../../src/services/doctor-gateway-credentials-service', () => ({
+  getDecryptedGatewayCredentials: jest.fn(),
+}));
 jest.mock('../../../src/config/logger', () => ({
   logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
 }));
 jest.mock('../../../src/config/platform-fee', () => ({
-  computePlatformFee: jest.fn((amountMinor: number, currency: string) => {
-    if (currency.toUpperCase() !== 'INR') {
-      return { platformFeeMinor: 0, gstMinor: 0, doctorAmountMinor: amountMinor };
-    }
-    const threshold = 50000;
-    const flat = 2500;
-    const percent = 5;
-    const gstPercent = 18;
-    const platformFeeMinor = amountMinor < threshold ? flat : Math.round((amountMinor * percent) / 100);
-    const gstMinor = Math.round((platformFeeMinor * gstPercent) / 100);
-    const doctorAmountMinor = amountMinor - platformFeeMinor - gstMinor;
-    return { platformFeeMinor, gstMinor, doctorAmountMinor };
-  }),
+  computePlatformFee: jest.fn((amountMinor: number) => ({
+    platformFeeMinor: 0,
+    gstMinor: 0,
+    doctorAmountMinor: amountMinor,
+  })),
 }));
 
 const mockedDb = database as jest.Mocked<typeof database>;
 const mockedRazorpay = razorpayAdapter as jest.Mocked<typeof razorpayAdapter>;
 const mockedPayPal = paypalAdapter as jest.Mocked<typeof paypalAdapter>;
+const mockedCreds = credentialsService as jest.Mocked<typeof credentialsService>;
+
+const doctorCreds = { keyId: 'rzp_test_xxxx', keySecret: 'test_secret' };
 
 const correlationId = 'corr-test-123';
 const appointmentId = 'apt-550e8400-e29b-41d4-a716-446655440000';
@@ -74,6 +73,8 @@ function createMockSupabase(
       Promise.resolve(getNext())
     ),
     update: updateFn,
+    limit: jest.fn().mockReturnThis(),
+    maybeSingle: jest.fn().mockImplementation(() => Promise.resolve(getNext())),
     single: jest.fn().mockImplementation(() =>
       Promise.resolve(getNext())
     ),
@@ -86,6 +87,7 @@ function createMockSupabase(
 describe('Payment Service (e-task-4)', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockedCreds.getDecryptedGatewayCredentials.mockResolvedValue(doctorCreds);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (mockedRazorpay.createPaymentLink as any).mockResolvedValue({
       url: 'https://razorpay.fake/link_xxx',
@@ -123,40 +125,30 @@ describe('Payment Service (e-task-4)', () => {
           amountMinor: 50000,
           currency: 'INR',
           referenceId: appointmentId,
-        })
+        }),
+        doctorCreds
       );
       expect(mockedPayPal.createPaymentLink).not.toHaveBeenCalled();
       expect(result.gateway).toBe('razorpay');
       expect(result.url).toContain('razorpay');
     });
 
-    it('calls PayPal adapter when doctor country is US', async () => {
-      const mockSupabase = createMockSupabase([{ data: null, error: null }]);
-      mockedDb.getSupabaseAdminClient.mockReturnValue({ from: mockSupabase.from } as never);
-
-      const input = {
-        appointmentId,
-        amountMinor: 5000,
-        currency: 'USD',
-        doctorCountry: 'US',
-        doctorId,
-        patientId,
-        patientName: 'PATIENT_TEST',
-        patientPhone: '+10000000000',
-      };
-
-      const result = await createPaymentLink(input, correlationId);
-
-      expect(mockedPayPal.createPaymentLink).toHaveBeenCalledWith(
-        expect.objectContaining({
-          amountMinor: 5000,
-          currency: 'USD',
-          referenceId: appointmentId,
-        })
-      );
+    it('refuses PayPal / non-Razorpay prepaid instead of using platform keys', async () => {
+      await expect(
+        createPaymentLink(
+          {
+            appointmentId,
+            amountMinor: 5000,
+            currency: 'USD',
+            doctorCountry: 'US',
+            doctorId,
+            patientId,
+          },
+          correlationId
+        )
+      ).rejects.toThrow(ValidationError);
+      expect(mockedPayPal.createPaymentLink).not.toHaveBeenCalled();
       expect(mockedRazorpay.createPaymentLink).not.toHaveBeenCalled();
-      expect(result.gateway).toBe('paypal');
-      expect(result.url).toContain('paypal');
     });
 
     it('inserts pending payment record on success', async () => {
@@ -195,6 +187,26 @@ describe('Payment Service (e-task-4)', () => {
         )
       ).rejects.toThrow(InternalError);
     });
+
+    it('refuses to create a link when the doctor has no connected credentials', async () => {
+      mockedCreds.getDecryptedGatewayCredentials.mockResolvedValue(null);
+
+      await expect(
+        createPaymentLink(
+          {
+            appointmentId,
+            amountMinor: 50000,
+            currency: 'INR',
+            doctorCountry: 'IN',
+            doctorId,
+            patientId,
+          },
+          correlationId
+        )
+      ).rejects.toThrow(ValidationError);
+      expect(mockedRazorpay.createPaymentLink).not.toHaveBeenCalled();
+      expect(mockedPayPal.createPaymentLink).not.toHaveBeenCalled();
+    });
   });
 
   describe('processPaymentSuccess', () => {
@@ -219,7 +231,7 @@ describe('Payment Service (e-task-4)', () => {
       expect(mockSupabase.from).toHaveBeenCalledWith('appointments');
     });
 
-    it('includes platform fee, gst, doctor amount in payment update (INR)', async () => {
+    it('writes zero platform fee and the full amount to the doctor (INR)', async () => {
       const mockSupabase = createMockSupabase([
         { data: { id: 'pay-123', appointment_id: appointmentId }, error: null },
         { data: null, error: null },
@@ -238,9 +250,9 @@ describe('Payment Service (e-task-4)', () => {
 
       expect(mockSupabase.updateFn).toHaveBeenCalledWith(
         expect.objectContaining({
-          platform_fee_minor: 5000,
-          gst_minor: 900,
-          doctor_amount_minor: 94100,
+          platform_fee_minor: 0,
+          gst_minor: 0,
+          doctor_amount_minor: 100000,
           status: 'captured',
           amount_minor: 100000,
           currency: 'INR',

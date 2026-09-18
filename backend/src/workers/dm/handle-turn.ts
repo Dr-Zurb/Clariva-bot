@@ -11,12 +11,7 @@ import {
 } from '../../utils/safety-messages';
 import { emergencyGate, evaluateControlGates, HEAD_CONTROL_GATES } from './control-gates';
 import { applyLearningPolicyAutobookAfterStage } from './stages/booking-funnel';
-import {
-  resolveStage,
-  STAGE_ROUTER,
-  type DmTurnContext,
-  type DmTurnResult,
-} from './stage-router';
+import { resolveStage, STAGE_ROUTER, type DmTurnContext, type DmTurnResult } from './stage-router';
 
 export interface ExecuteDmTurnOptions {
   /** Conflict recovery: skip routing; always AI open response with conflict branch label. */

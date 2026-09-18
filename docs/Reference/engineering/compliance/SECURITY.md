@@ -333,8 +333,9 @@ it('returns 404 when user does not own resource', async () => {
 3. **Fix:** Patch the vulnerability immediately
 4. **Test:** Verify the fix with security tests
 5. **Notify:** Inform affected users if PHI/PII was exposed (per [COMPLIANCE.md](./COMPLIANCE.md))
-6. **Document:** Record incident, root cause, and fix in Notes or issue tracker
-7. **Review:** Update this doc and [COMPLIANCE.md](./COMPLIANCE.md) if new patterns emerge
+6. **Notify Meta when Platform Data is in scope:** If Instagram / Facebook tokens, PSIDs, or other IG-derived Platform Data were exposed, abused, or reasonably likely compromised, notify Meta via the developer incident form linked from Platform Terms §6.b (Developer Support → Report an incident) as soon as practicable. Record the date and time submitted. Then continue remediation and cooperate with any follow-up they request.
+7. **Document:** Record incident, root cause, and fix in Notes or issue tracker
+8. **Review:** Update this doc and [COMPLIANCE.md](./COMPLIANCE.md) if new patterns emerge
 
 ---
 

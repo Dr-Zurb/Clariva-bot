@@ -50,7 +50,27 @@ jest.mock('../../../src/config/env', () => ({
   env: {
     NODE_ENV: 'test',
     ACCOUNT_DELETION_GRACE_DAYS: 7,
+    ARCHIVAL_HARD_DELETE_ENABLED: false,
   },
+}));
+
+jest.mock('../../../src/services/recording-erasure-service', () => ({
+  buildPatientErasurePlan: jest.fn().mockReturnValue(
+    Promise.resolve({
+      enumerated: 0,
+      eligibleNow: 0,
+      heldBack: 0,
+      twilioRevocationPrefixes: [],
+      held: [],
+      eligible: [],
+      latestHeldUntil: null,
+    }),
+  ),
+  applyPatientErasurePlan: jest.fn().mockReturnValue(
+    Promise.resolve({ deleted: 0, deletedArtifactIds: [] }),
+  ),
+  deriveErasureDmOutcome: jest.fn().mockReturnValue('none'),
+  serializeErasureAuditNotes: jest.fn().mockReturnValue('{"erasure":{}}'),
 }));
 
 jest.mock('../../../src/utils/audit-logger', () => ({
@@ -97,13 +117,34 @@ import {
 import * as database from '../../../src/config/database';
 import * as scrubModule from '../../../src/services/account-deletion-pii-scrub';
 import * as igService from '../../../src/services/instagram-service';
+import * as erasure from '../../../src/services/recording-erasure-service';
+import { env } from '../../../src/config/env';
 
 const mockedDb = database as jest.Mocked<typeof database>;
 const mockedScrub = scrubModule as jest.Mocked<typeof scrubModule>;
 const mockedIg = igService as jest.Mocked<typeof igService>;
+const mockedErasure = erasure as jest.Mocked<typeof erasure>;
 
 beforeEach(() => {
   jest.clearAllMocks();
+  (env as { ARCHIVAL_HARD_DELETE_ENABLED: boolean }).ARCHIVAL_HARD_DELETE_ENABLED =
+    false;
+  mockedErasure.buildPatientErasurePlan.mockReturnValue(
+    Promise.resolve({
+      enumerated: 0,
+      eligibleNow: 0,
+      heldBack: 0,
+      twilioRevocationPrefixes: [],
+      held: [],
+      eligible: [],
+      latestHeldUntil: null,
+    }),
+  );
+  mockedErasure.applyPatientErasurePlan.mockReturnValue(
+    Promise.resolve({ deleted: 0, deletedArtifactIds: [] }),
+  );
+  mockedErasure.deriveErasureDmOutcome.mockReturnValue('none');
+  mockedErasure.serializeErasureAuditNotes.mockReturnValue('{"erasure":{}}');
 });
 
 // ---------------------------------------------------------------------------
@@ -546,5 +587,181 @@ describe('finalizeAccountDeletion', () => {
     });
     expect(res.executed).toBe(true);
     expect(calls.account_deletion_audit!.updates).toHaveLength(1);
+  });
+
+  it('does not destroy media when the archival flag is off', async () => {
+    mockedErasure.buildPatientErasurePlan.mockReturnValue(
+      Promise.resolve({
+        enumerated: 1,
+        eligibleNow: 1,
+        heldBack: 0,
+        twilioRevocationPrefixes: ['twilio-composition:CJaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'],
+        held: [],
+        eligible: [],
+        latestHeldUntil: null,
+      }),
+    );
+    const { client, calls } = buildAdminClient({
+      account_deletion_audit: {
+        filteredSingleResult: {
+          data: {
+            id: 'audit-1',
+            finalized_at: null,
+            cancelled_at: null,
+            grace_window_until: '2020-01-01T00:00:00.000Z',
+            requested_by: 'p-1',
+          },
+          error: null,
+        },
+        updateResult: { data: null, error: null },
+      },
+      signed_url_revocation: { upsertResult: { data: null, error: null } },
+      conversations: { filteredSingleResult: { data: null, error: null } },
+    });
+    mockedDb.getSupabaseAdminClient.mockReturnValue(client);
+
+    const res = await finalizeAccountDeletion({
+      patientId: 'p-1',
+      correlationId: 'c-1',
+    });
+    expect(res.executed).toBe(true);
+    expect(mockedErasure.applyPatientErasurePlan).not.toHaveBeenCalled();
+    expect(res.revokedPrefixes).toContain('recordings/patient_p-1/');
+    expect(res.revokedPrefixes).toContain(
+      'twilio-composition:CJaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    );
+    expect(calls.signed_url_revocation!.upserts).toHaveLength(2);
+  });
+
+  it('destroys eligible media after revocation when the flag is on', async () => {
+    (env as { ARCHIVAL_HARD_DELETE_ENABLED: boolean }).ARCHIVAL_HARD_DELETE_ENABLED =
+      true;
+    mockedErasure.buildPatientErasurePlan.mockReturnValue(
+      Promise.resolve({
+        enumerated: 1,
+        eligibleNow: 1,
+        heldBack: 0,
+        twilioRevocationPrefixes: [],
+        held: [],
+        eligible: [],
+        latestHeldUntil: null,
+      }),
+    );
+    mockedErasure.applyPatientErasurePlan.mockReturnValue(
+      Promise.resolve({ deleted: 1, deletedArtifactIds: ['a-1'] }),
+    );
+    const { client } = buildAdminClient({
+      account_deletion_audit: {
+        filteredSingleResult: {
+          data: {
+            id: 'audit-1',
+            finalized_at: null,
+            cancelled_at: null,
+            grace_window_until: '2020-01-01T00:00:00.000Z',
+            requested_by: 'p-1',
+          },
+          error: null,
+        },
+        updateResult: { data: null, error: null },
+      },
+      signed_url_revocation: { upsertResult: { data: null, error: null } },
+      conversations: { filteredSingleResult: { data: null, error: null } },
+    });
+    mockedDb.getSupabaseAdminClient.mockReturnValue(client);
+
+    await finalizeAccountDeletion({ patientId: 'p-1', correlationId: 'c-1' });
+    expect(mockedErasure.applyPatientErasurePlan).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not stamp finalized_at when provider destroy fails', async () => {
+    (env as { ARCHIVAL_HARD_DELETE_ENABLED: boolean }).ARCHIVAL_HARD_DELETE_ENABLED =
+      true;
+    mockedErasure.buildPatientErasurePlan.mockReturnValue(
+      Promise.resolve({
+        enumerated: 1,
+        eligibleNow: 1,
+        heldBack: 0,
+        twilioRevocationPrefixes: [],
+        held: [],
+        eligible: [],
+        latestHeldUntil: null,
+      }),
+    );
+    mockedErasure.applyPatientErasurePlan.mockReturnValue(
+      Promise.reject(new InternalError('twilio down')),
+    );
+    const { client, calls } = buildAdminClient({
+      account_deletion_audit: {
+        filteredSingleResult: {
+          data: {
+            id: 'audit-1',
+            finalized_at: null,
+            cancelled_at: null,
+            grace_window_until: '2020-01-01T00:00:00.000Z',
+            requested_by: 'p-1',
+          },
+          error: null,
+        },
+        updateResult: { data: null, error: null },
+      },
+      signed_url_revocation: { upsertResult: { data: null, error: null } },
+    });
+    mockedDb.getSupabaseAdminClient.mockReturnValue(client);
+
+    await expect(
+      finalizeAccountDeletion({ patientId: 'p-1', correlationId: 'c-1' }),
+    ).rejects.toBeInstanceOf(InternalError);
+    expect(mockedScrub.scrubPatientPiiFromLogs).not.toHaveBeenCalled();
+    expect(calls.account_deletion_audit!.updates).toHaveLength(0);
+  });
+
+  it('does not plan or destroy on an already-finalized re-run', async () => {
+    const { client } = buildAdminClient({
+      account_deletion_audit: {
+        filteredSingleResult: {
+          data: {
+            id: 'audit-1',
+            finalized_at: '2026-04-25T00:00:00.000Z',
+            cancelled_at: null,
+            grace_window_until: '2026-04-20T00:00:00.000Z',
+            requested_by: 'p-1',
+          },
+          error: null,
+        },
+      },
+    });
+    mockedDb.getSupabaseAdminClient.mockReturnValue(client);
+
+    const res = await finalizeAccountDeletion({
+      patientId: 'p-1',
+      correlationId: 'c-1',
+    });
+    expect(res.executed).toBe(false);
+    expect(mockedErasure.buildPatientErasurePlan).not.toHaveBeenCalled();
+    expect(mockedErasure.applyPatientErasurePlan).not.toHaveBeenCalled();
+    expect(mockedIg.sendInstagramMessage).not.toHaveBeenCalled();
+  });
+});
+
+describe('cancelAccountDeletion — rec-32 grace window', () => {
+  it('does not call media destroy', async () => {
+    const future = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+    const { client } = buildAdminClient({
+      account_deletion_audit: {
+        filteredSingleResult: {
+          data: { id: 'audit-1', grace_window_until: future },
+          error: null,
+        },
+        updateResult: { data: null, error: null },
+      },
+    });
+    mockedDb.getSupabaseAdminClient.mockReturnValue(client);
+    await cancelAccountDeletion({
+      patientId: 'p-1',
+      cancelledBy: 'p-1',
+      correlationId: 'c',
+    });
+    expect(mockedErasure.buildPatientErasurePlan).not.toHaveBeenCalled();
+    expect(mockedErasure.applyPatientErasurePlan).not.toHaveBeenCalled();
   });
 });

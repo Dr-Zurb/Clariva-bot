@@ -997,6 +997,26 @@ export function validateSelectSlotBody(body: unknown): SelectSlotBody {
   return result.data;
 }
 
+/** mca-13: same slot body plus optional owned-page intake (placeholder patients). */
+export const selectSlotAndPayBodySchema = selectSlotBodySchema.extend({
+  patientName: patientNameSchema.optional(),
+  patientPhone: patientPhoneSchema.optional(),
+  reasonForVisit: patientReasonForVisitSchema.optional(),
+  consentGranted: z.boolean().optional(),
+});
+
+export type SelectSlotAndPayBody = z.infer<typeof selectSlotAndPayBodySchema>;
+
+export function validateSelectSlotAndPayBody(body: unknown): SelectSlotAndPayBody {
+  const result = selectSlotAndPayBodySchema.safeParse(body);
+  if (!result.success) {
+    const first = result.error.issues[0];
+    const message = first?.message ?? 'Invalid request body';
+    throw new ValidationError(message);
+  }
+  return result.data;
+}
+
 export const slotPageInfoQuerySchema = z.object({
   token: z.string().min(1, 'token is required'),
 });

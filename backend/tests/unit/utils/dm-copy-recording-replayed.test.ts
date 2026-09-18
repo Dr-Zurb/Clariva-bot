@@ -18,11 +18,14 @@
  */
 
 import { describe, it, expect } from '@jest/globals';
-import { buildRecordingReplayedNotificationDm } from '../../../src/utils/dm-copy';
+import {
+  buildRecordingReplayedNotificationDm,
+  buildSupportStaffRecordingAccessedNotificationDm,
+} from '../../../src/utils/dm-copy';
 
 describe('buildRecordingReplayedNotificationDm', () => {
   it('renders the audio variant with practice name + date', () => {
-    const dm = buildRecordingReplayedNotificationDm({
+    const dm = buildRecordingReplayedNotificationDm({ language: 'en',
       practiceName:     'Sunrise Clinic',
       consultDateLabel: '15 Apr 2026',
       artifactType:     'audio',
@@ -36,7 +39,7 @@ describe('buildRecordingReplayedNotificationDm', () => {
   });
 
   it('renders the transcript variant', () => {
-    const dm = buildRecordingReplayedNotificationDm({
+    const dm = buildRecordingReplayedNotificationDm({ language: 'en',
       practiceName:     'Sunrise Clinic',
       consultDateLabel: '15 Apr 2026',
       artifactType:     'transcript',
@@ -46,7 +49,7 @@ describe('buildRecordingReplayedNotificationDm', () => {
   });
 
   it("falls back to 'your doctor's clinic' when practice name is blank", () => {
-    const dm = buildRecordingReplayedNotificationDm({
+    const dm = buildRecordingReplayedNotificationDm({ language: 'en',
       practiceName:     '   ',
       consultDateLabel: '15 Apr 2026',
       artifactType:     'audio',
@@ -55,7 +58,7 @@ describe('buildRecordingReplayedNotificationDm', () => {
   });
 
   it("falls back to 'your doctor's clinic' when practice name is omitted", () => {
-    const dm = buildRecordingReplayedNotificationDm({
+    const dm = buildRecordingReplayedNotificationDm({ language: 'en',
       consultDateLabel: '15 Apr 2026',
       artifactType:     'audio',
     });
@@ -64,7 +67,7 @@ describe('buildRecordingReplayedNotificationDm', () => {
 
   it('throws when consultDateLabel is empty (caller-bug surface)', () => {
     expect(() =>
-      buildRecordingReplayedNotificationDm({
+      buildRecordingReplayedNotificationDm({ language: 'en',
         practiceName:     'Sunrise Clinic',
         consultDateLabel: '   ',
         artifactType:     'audio',
@@ -73,7 +76,7 @@ describe('buildRecordingReplayedNotificationDm', () => {
   });
 
   it('produces a stable golden string (drift guard)', () => {
-    const dm = buildRecordingReplayedNotificationDm({
+    const dm = buildRecordingReplayedNotificationDm({ language: 'en',
       practiceName:     'Sunrise Clinic',
       consultDateLabel: '15 Apr 2026',
       artifactType:     'audio',
@@ -84,5 +87,34 @@ describe('buildRecordingReplayedNotificationDm', () => {
       This is a normal part of care (doctors often revisit consults to refine their plan).
       Every access is audited, and you can ask support for the access log anytime."
     `);
+  });
+});
+
+describe('buildSupportStaffRecordingAccessedNotificationDm', () => {
+  it('names a support agent and does not claim the doctor reviewed', () => {
+    const dm = buildSupportStaffRecordingAccessedNotificationDm({
+      language: 'en',
+      practiceName: 'Sunrise Clinic',
+      consultDateLabel: '15 Apr 2026',
+      artifactType: 'audio',
+    });
+    expect(dm).toContain('support agent');
+    expect(dm).toContain('Sunrise Clinic');
+    expect(dm).toContain('audio');
+    expect(dm).not.toContain('Your doctor');
+    expect(dm).not.toContain('normal part of care');
+    expect(dm).toContain('audited');
+  });
+
+  it('uses downloaded copy for a transcript PDF', () => {
+    const dm = buildSupportStaffRecordingAccessedNotificationDm({
+      language: 'en',
+      practiceName: 'Sunrise Clinic',
+      consultDateLabel: '15 Apr 2026',
+      artifactType: 'transcript',
+      actionKind: 'downloaded',
+    });
+    expect(dm).toContain('downloaded the transcript');
+    expect(dm).not.toContain('Your doctor');
   });
 });

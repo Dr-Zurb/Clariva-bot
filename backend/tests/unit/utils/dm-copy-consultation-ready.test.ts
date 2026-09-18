@@ -20,7 +20,7 @@ import {
 
 describe('buildConsultationReadyDm (Task 16)', () => {
   it('renders the video-modality body with bare URL on its own line', () => {
-    const out = buildConsultationReadyDm({
+    const out = buildConsultationReadyDm({ language: 'en',
       modality:     'video',
       practiceName: 'Acme Clinic',
       joinUrl:      'https://app.clariva.test/consult/join?token=abc',
@@ -36,7 +36,7 @@ describe('buildConsultationReadyDm (Task 16)', () => {
   });
 
   it('falls back to "your doctor" when practiceName is empty', () => {
-    const out = buildConsultationReadyDm({
+    const out = buildConsultationReadyDm({ language: 'en',
       modality:     'video',
       practiceName: '   ',
       joinUrl:      'https://x.test/?token=z',
@@ -45,7 +45,7 @@ describe('buildConsultationReadyDm (Task 16)', () => {
   });
 
   it('renders voice modality with Principle 8 audio-only disambiguation (Task 26)', () => {
-    const out = buildConsultationReadyDm({
+    const out = buildConsultationReadyDm({ language: 'en',
       modality:     'voice',
       practiceName: 'Acme Clinic',
       joinUrl:      'https://x.test/?token=z',
@@ -58,14 +58,14 @@ describe('buildConsultationReadyDm (Task 16)', () => {
 
   it('throws on empty joinUrl', () => {
     expect(() =>
-      buildConsultationReadyDm({ modality: 'video', joinUrl: '   ' })
+      buildConsultationReadyDm({ language: 'en', modality: 'video', joinUrl: '   ' })
     ).toThrow(/joinUrl is required/);
   });
 });
 
 describe('buildPrescriptionReadyPingDm (Task 16)', () => {
   it('renders with view URL on its own line when present', () => {
-    const out = buildPrescriptionReadyPingDm({
+    const out = buildPrescriptionReadyPingDm({ language: 'en',
       practiceName: 'Acme Clinic',
       viewUrl:      'https://app.clariva.test/rx/abc-123',
     });
@@ -78,7 +78,7 @@ describe('buildPrescriptionReadyPingDm (Task 16)', () => {
   });
 
   it('renders URL-less single-line ping when viewUrl is omitted', () => {
-    const out = buildPrescriptionReadyPingDm({ practiceName: 'Acme Clinic' });
+    const out = buildPrescriptionReadyPingDm({ language: 'en', practiceName: 'Acme Clinic' });
     expect(out).toBe(
       'Your prescription from **Acme Clinic** is ready — check your messages above.'
     );

@@ -17,7 +17,11 @@ import {
 import { ValidationError } from '../../../src/utils/errors';
 
 const mockRoomCreate = jest.fn<
-  (opts: { uniqueName: string; type: string }) => Promise<{ sid: string; uniqueName: string }>
+  (opts: { uniqueName: string; type: string; mediaRegion?: string }) => Promise<{
+    sid: string;
+    uniqueName: string;
+    mediaRegion?: string;
+  }>
 >();
 const mockRoomComplete = jest.fn<
   (opts: { status: string }) => Promise<{ sid: string; status: string }>
@@ -66,6 +70,7 @@ jest.mock('../../../src/config/env', () => ({
     TWILIO_AUTH_TOKEN: 'test-auth-token',
     TWILIO_API_KEY_SID: 'SKtest456',
     TWILIO_API_KEY_SECRET: 'test-api-key-secret',
+    TWILIO_VIDEO_MEDIA_REGION: 'in1',
   },
 }));
 
@@ -102,6 +107,7 @@ describe('Video Session Twilio Adapter', () => {
       expect(mockRoomCreate).toHaveBeenCalledWith({
         uniqueName: 'appointment-uuid-1',
         type: 'group',
+        mediaRegion: 'in1',
       });
     });
 
@@ -174,6 +180,7 @@ describe('videoSessionTwilioAdapter', () => {
     expect(mockRoomCreate).toHaveBeenCalledWith({
       uniqueName: 'appointment-apt-1',
       type: 'group',
+      mediaRegion: 'in1',
     });
   });
 

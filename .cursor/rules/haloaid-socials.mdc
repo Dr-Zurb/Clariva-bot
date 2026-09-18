@@ -1,0 +1,17 @@
+---
+description: When the user gives a Halo Aid Instagram idea, generate one post into HaloAid Socials/posts/drafts
+globs: HaloAid Socials/**
+alwaysApply: false
+---
+
+# Halo Aid Socials
+
+This folder is the marketing loop, not the product.
+
+- **Park / remember / later** → append `- [ ]` to `HaloAid Socials/ideas/inbox.md`. Do not write a post.
+- **Generate / make a post / write this idea** → follow `HaloAid Socials/GENERATE.md`. One idea → one folder under `HaloAid Socials/posts/drafts/<slug>/` using `posts/_TEMPLATE.md`.
+- **Ready / approve** → move that folder to `posts/ready/`.
+- **Published / went live** → move it to `posts/published/`.
+
+Do not put captions, frames, or Reels under `backend/`, `frontend/`, or `docs/`.
+Do not invent extra posts. Do not use Clariva as the public name. Do not show real patient or inbox data.

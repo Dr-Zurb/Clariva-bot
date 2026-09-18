@@ -2,7 +2,9 @@
 
 # Deferred: Doctor dashboard — add patient (manual registration)
 
-**Status:** ⏸️ **DEFERRED**
+> **Resumed 2026-08-22** as phase **P2** of the receptionist-portal program → [`Product plans/receptionist-portal/`](../../../Product%20plans/receptionist-portal/README.md). The two blockers named below are now answered: MRN is assigned **immediately on manual create** (decision R2) and duplicates are handled by prompting with `findPossiblePatientMatches` candidates rather than auto-merging (RQ5). Kept for the original context; the plan is the live document.
+
+**Status:** ▶️ **RESUMED** (was ⏸️ DEFERRED)
 
 **Context:** Ability for staff/doctors to create a patient record from the dashboard (walk-in, phone intake, comp care) without going through the Instagram bot. Needed so **manual** patients can appear in the Patients list under rules that don’t depend on bot payment (see [patient visibility plan](../../Daily-plans/April%202026/15-04-2026/README.md) — 15 Apr 2026).
 

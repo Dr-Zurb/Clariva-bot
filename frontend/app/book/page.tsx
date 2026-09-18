@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import {
@@ -18,6 +19,10 @@ import {
 } from "@/lib/format-date";
 import { formatLocalIsoDate } from "@/lib/dates";
 import { BOOKING_AUDIO_RECORDING_DISCLOSURE } from "@/lib/recording-audio-disclosure";
+import {
+  resolvePublicBookingIntake,
+  type PublicBookingIntakeField,
+} from "@/lib/public-booking-intake";
 
 const DAYS_AHEAD = 14;
 
@@ -104,6 +109,15 @@ function BookPageContent() {
     useState<ConsultationModalityApi | null>(null);
   /** ARM-09: visit type fixed in chat — disable switching to another catalog row. */
   const [servicePickerLocked, setServicePickerLocked] = useState(false);
+
+  const [patientName, setPatientName] = useState("");
+  const [patientPhone, setPatientPhone] = useState("");
+  const [reasonForVisit, setReasonForVisit] = useState("");
+  const [consentGranted, setConsentGranted] = useState(false);
+  const [intakeFieldError, setIntakeFieldError] = useState<{
+    field: PublicBookingIntakeField;
+    message: string;
+  } | null>(null);
 
   const dateOptions = useMemo(() => {
     const options: string[] = [];
@@ -278,8 +292,33 @@ function BookPageContent() {
     return Boolean(selectedServiceKey && selectedServiceId && selectedModality);
   }, [serviceCatalog, mode, selectedServiceKey, selectedServiceId, selectedModality]);
 
+  const intakeDraft = useMemo(
+    () => ({
+      patientName,
+      patientPhone,
+      reasonForVisit,
+      consentGranted,
+    }),
+    [patientName, patientPhone, reasonForVisit, consentGranted]
+  );
+  const intakeReady =
+    mode !== "book" || resolvePublicBookingIntake(intakeDraft).ok;
+
   const handleSave = useCallback(async () => {
     if (!selectedSlot || !token || saving || !catalogPickComplete) return;
+    let resolvedIntake: ReturnType<typeof resolvePublicBookingIntake> | null =
+      null;
+    if (mode === "book") {
+      resolvedIntake = resolvePublicBookingIntake(intakeDraft);
+      if (!resolvedIntake.ok) {
+        setIntakeFieldError({
+          field: resolvedIntake.field,
+          message: resolvedIntake.message,
+        });
+        return;
+      }
+      setIntakeFieldError(null);
+    }
     setSaving(true);
     setSaveError(null);
     try {
@@ -294,7 +333,8 @@ function BookPageContent() {
       const res = await selectSlotAndPay(
         token,
         selectedSlot.start,
-        catalogPayload
+        catalogPayload,
+        resolvedIntake?.ok ? resolvedIntake.value : undefined
       );
       const { paymentUrl, redirectUrl, tokenNumber, opdMode: resMode } =
         res.data;
@@ -316,7 +356,7 @@ function BookPageContent() {
       const e = err as Error & { status?: number; code?: string };
       const status = e.status;
       const msg = e.message?.trim();
-      if (status === 409 && msg) {
+      if ((status === 409 || status === 400) && msg) {
         setSaveError(msg);
       } else {
         setSaveError(
@@ -339,6 +379,7 @@ function BookPageContent() {
     selectedServiceKey,
     selectedServiceId,
     selectedModality,
+    intakeDraft,
   ]);
 
   const availableCount = slots.filter((s) => s.status === "available").length;
@@ -574,7 +615,102 @@ function BookPageContent() {
         </section>
 
         {mode === "book" ? (
-          <section className="mt-6 space-y-4">
+          <section className="mt-6 space-y-4" aria-labelledby="intake-heading">
+            <h2 id="intake-heading" className="text-sm font-medium text-gray-700">
+              Your details
+            </h2>
+            <div>
+              <label htmlFor="book-name" className="text-xs text-gray-500">
+                Full name
+              </label>
+              <input
+                id="book-name"
+                type="text"
+                name="name"
+                autoComplete="name"
+                maxLength={200}
+                value={patientName}
+                onChange={(e) => {
+                  setPatientName(e.target.value);
+                  if (intakeFieldError?.field === "patientName") {
+                    setIntakeFieldError(null);
+                  }
+                }}
+                aria-invalid={intakeFieldError?.field === "patientName"}
+                aria-describedby={
+                  intakeFieldError?.field === "patientName"
+                    ? "book-name-error"
+                    : undefined
+                }
+                className="mt-1 block w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              {intakeFieldError?.field === "patientName" ? (
+                <p id="book-name-error" className="mt-1 text-xs text-red-600" role="alert">
+                  {intakeFieldError.message}
+                </p>
+              ) : null}
+            </div>
+            <div>
+              <label htmlFor="book-phone" className="text-xs text-gray-500">
+                Phone
+              </label>
+              <input
+                id="book-phone"
+                type="tel"
+                name="tel"
+                autoComplete="tel"
+                inputMode="tel"
+                value={patientPhone}
+                onChange={(e) => {
+                  setPatientPhone(e.target.value);
+                  if (intakeFieldError?.field === "patientPhone") {
+                    setIntakeFieldError(null);
+                  }
+                }}
+                aria-invalid={intakeFieldError?.field === "patientPhone"}
+                aria-describedby={
+                  intakeFieldError?.field === "patientPhone"
+                    ? "book-phone-error"
+                    : undefined
+                }
+                className="mt-1 block w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              {intakeFieldError?.field === "patientPhone" ? (
+                <p id="book-phone-error" className="mt-1 text-xs text-red-600" role="alert">
+                  {intakeFieldError.message}
+                </p>
+              ) : null}
+            </div>
+            <div>
+              <label htmlFor="book-reason" className="text-xs text-gray-500">
+                Reason for visit
+              </label>
+              <textarea
+                id="book-reason"
+                name="reason"
+                rows={3}
+                maxLength={500}
+                value={reasonForVisit}
+                onChange={(e) => {
+                  setReasonForVisit(e.target.value);
+                  if (intakeFieldError?.field === "reasonForVisit") {
+                    setIntakeFieldError(null);
+                  }
+                }}
+                aria-invalid={intakeFieldError?.field === "reasonForVisit"}
+                aria-describedby={
+                  intakeFieldError?.field === "reasonForVisit"
+                    ? "book-reason-error"
+                    : undefined
+                }
+                className="mt-1 block w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              {intakeFieldError?.field === "reasonForVisit" ? (
+                <p id="book-reason-error" className="mt-1 text-xs text-red-600" role="alert">
+                  {intakeFieldError.message}
+                </p>
+              ) : null}
+            </div>
             <p className="text-xs text-gray-500">
               If you pay online, the money goes to this clinic — not Halo Aid.
               You can cancel or reschedule from the confirmation message.
@@ -584,6 +720,44 @@ function BookPageContent() {
             <p className="text-xs text-gray-500">
               {BOOKING_AUDIO_RECORDING_DISCLOSURE}
             </p>
+            <div className="flex items-start gap-2">
+              <input
+                id="book-consent"
+                type="checkbox"
+                checked={consentGranted}
+                onChange={(e) => {
+                  setConsentGranted(e.target.checked);
+                  if (intakeFieldError?.field === "consentGranted") {
+                    setIntakeFieldError(null);
+                  }
+                }}
+                aria-invalid={intakeFieldError?.field === "consentGranted"}
+                aria-describedby={
+                  intakeFieldError?.field === "consentGranted"
+                    ? "book-consent-error"
+                    : "book-consent-help"
+                }
+                className="mt-1 h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-2 focus:ring-blue-500"
+              />
+              <label htmlFor="book-consent" className="text-xs text-gray-700">
+                I agree that this clinic may store my name, phone number, and
+                reason for visit to complete this booking.{" "}
+                <Link
+                  href="/privacy"
+                  className="text-blue-700 underline underline-offset-2 hover:text-blue-800"
+                >
+                  Privacy notice
+                </Link>
+              </label>
+            </div>
+            <p id="book-consent-help" className="sr-only">
+              Consent is required before you can continue.
+            </p>
+            {intakeFieldError?.field === "consentGranted" ? (
+              <p id="book-consent-error" className="text-xs text-red-600" role="alert">
+                {intakeFieldError.message}
+              </p>
+            ) : null}
           </section>
         ) : null}
 
@@ -596,7 +770,8 @@ function BookPageContent() {
               !selectedSlot ||
               saving ||
               availableCount === 0 ||
-              !catalogPickComplete
+              !catalogPickComplete ||
+              !intakeReady
             }
             className="w-full rounded-lg bg-blue-600 px-4 py-3 text-base font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
           >

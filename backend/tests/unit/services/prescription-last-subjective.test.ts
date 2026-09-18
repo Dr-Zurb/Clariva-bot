@@ -59,14 +59,19 @@ function mockAdmin(options: {
         };
       }
       if (table === 'prescriptions') {
+        const neq = jest.fn().mockReturnThis();
+        const is = jest.fn().mockReturnThis();
         return {
           select: jest.fn().mockReturnThis(),
           eq: jest.fn().mockReturnThis(),
-          neq: jest.fn().mockReturnThis(),
+          neq,
+          is,
           order: jest.fn().mockReturnThis(),
           limit: jest
             .fn<() => Promise<{ data: Record<string, unknown>[]; error: null }>>()
             .mockResolvedValue({ data: options.prescriptions ?? [], error: null }),
+          __neq: neq,
+          __is: is,
         };
       }
       throw new Error(`unexpected table ${table}`);
@@ -291,5 +296,123 @@ describe('getLastSubjectiveForPatient', () => {
     );
 
     expect(result?.pastSurgicalHistoryStructured).toEqual({ none: true });
+  });
+
+  it('excludes the working note by id, not the appointment (rxl-08)', async () => {
+    const currentRx = 'dddddddd-dddd-dddd-dddd-dddddddddddd';
+    const prescriptionsChain: { neq: ReturnType<typeof jest.fn>; is: ReturnType<typeof jest.fn> } = {
+      neq: jest.fn(),
+      is: jest.fn(),
+    };
+    mockedDb.getSupabaseAdminClient.mockReturnValue({
+      from: jest.fn((table: string) => {
+        if (table === 'appointments') {
+          return {
+            select: jest.fn().mockReturnThis(),
+            eq: jest.fn().mockReturnThis(),
+            limit: jest.fn().mockReturnThis(),
+            maybeSingle: jest.fn(async () => ({
+              data: { id: appointmentId, doctor_id: doctorId, patient_id: patientId },
+              error: null,
+            })),
+          };
+        }
+        if (table === 'conversations') {
+          return {
+            select: jest.fn().mockReturnThis(),
+            eq: jest.fn().mockReturnThis(),
+            limit: jest.fn().mockReturnThis(),
+            maybeSingle: jest.fn(async () => ({ data: null, error: null })),
+          };
+        }
+        prescriptionsChain.neq.mockReturnThis();
+        prescriptionsChain.is.mockReturnThis();
+        return {
+          select: jest.fn().mockReturnThis(),
+          eq: jest.fn().mockReturnThis(),
+          neq: prescriptionsChain.neq,
+          is: prescriptionsChain.is,
+          order: jest.fn().mockReturnThis(),
+          limit: jest
+            .fn<() => Promise<{ data: Record<string, unknown>[]; error: null }>>()
+            .mockResolvedValue({
+              data: [
+                {
+                  id: 'rx-sibling',
+                  created_at: '2026-09-09T04:00:00.000Z',
+                  complaints: [{ id: 'c-1', name: 'Fever' }],
+                  family_history: null,
+                  social_history: null,
+                  past_surgical_history: null,
+                },
+              ],
+              error: null,
+            }),
+        };
+      }),
+    } as never);
+
+    const result = await getLastSubjectiveForPatient(
+      patientId,
+      appointmentId,
+      correlationId,
+      doctorId,
+      currentRx,
+    );
+
+    expect(result?.sourcePrescriptionId).toBe('rx-sibling');
+    expect(prescriptionsChain.is).toHaveBeenCalledWith('superseded_by_id', null);
+    expect(prescriptionsChain.neq).toHaveBeenCalledWith('id', currentRx);
+    expect(prescriptionsChain.neq).not.toHaveBeenCalledWith('appointment_id', appointmentId);
+  });
+
+  it('does not exclude a prescription when the form has no id yet (rxl-08)', async () => {
+    const prescriptionsChain: { neq: ReturnType<typeof jest.fn> } = {
+      neq: jest.fn(),
+    };
+    mockedDb.getSupabaseAdminClient.mockReturnValue({
+      from: jest.fn((table: string) => {
+        if (table === 'appointments') {
+          return {
+            select: jest.fn().mockReturnThis(),
+            eq: jest.fn().mockReturnThis(),
+            limit: jest.fn().mockReturnThis(),
+            maybeSingle: jest.fn(async () => ({
+              data: { id: appointmentId, doctor_id: doctorId, patient_id: patientId },
+              error: null,
+            })),
+          };
+        }
+        if (table === 'conversations') {
+          return {
+            select: jest.fn().mockReturnThis(),
+            eq: jest.fn().mockReturnThis(),
+            limit: jest.fn().mockReturnThis(),
+            maybeSingle: jest.fn(async () => ({ data: null, error: null })),
+          };
+        }
+        prescriptionsChain.neq.mockReturnThis();
+        return {
+          select: jest.fn().mockReturnThis(),
+          eq: jest.fn().mockReturnThis(),
+          neq: prescriptionsChain.neq,
+          is: jest.fn().mockReturnThis(),
+          order: jest.fn().mockReturnThis(),
+          limit: jest
+            .fn<() => Promise<{ data: Record<string, unknown>[]; error: null }>>()
+            .mockResolvedValue({ data: [], error: null }),
+        };
+      }),
+    } as never);
+
+    await getLastSubjectiveForPatient(
+      patientId,
+      appointmentId,
+      correlationId,
+      doctorId,
+      null,
+    );
+
+    expect(prescriptionsChain.neq).not.toHaveBeenCalled();
   });
 });
