@@ -26,6 +26,7 @@ The single place I look when planning a week. If a thread isn't here, it doesn't
 | M1 | Meta — data deletion callback | `ACTIVE` | Optional Send Request if this Facebook account ever connected Halo Aid |
 | M2 | Meta — business verification | `PARKED` | Later: open WhatsApp “needs more information” |
 | M3 | Meta — app review submission | `ACTIVE` | Record one screencast: Connect → DM hours/book (no comments) |
+| M4 | Meta — post-review account canary | `PARKED` | Unpark only after M3 Advanced Access is approved — then stand up 2–3 owned canaries |
 | P1 | Desk / receptionist | `ACTIVE` | Review history-link spec; promote p1; then Opus `hl-01` |
 | P2 | Cockpit / EHR | `PARKED` | — |
 | P3 | Bot / messaging | `PARKED` | — |
@@ -308,6 +309,32 @@ When someone comments on the clinic’s Feed post asking about appointments, we 
 **Next action:** Deploy current product, then dry-run and tape.
 **Unblocked by:** M2 verified (13 Sep). M1 callback is live enough. Policy URLs are live.
 
+A pass here does **not** unlock a paying clinic. Next gate is **M4**.
+
+### M4 · Post-review account canary — `PARKED`
+Locked **18 Sep 2026**. App Review and “does Instagram slap the **clinic** account” are two machines. A pass lets non-testers Connect. It is not a hall pass.
+
+**What we already saw (do not treat as a kill):** 15 Sep, Halo Aid IG, Chrome, `instagram.com/accounts/scraping_warning/`. Copy: *We suspect automated behavior on your account* — to prevent temporary restrict or permanent disable, ensure no other users or **tools** have access, follow Terms of Use, consider a stronger password. One button: **Dismiss**. Not a ban. Not “remove Halo Aid.” That account was clinic + tester + web logins + API on one profile — contaminated. Proof the classifier exists, not that a quiet clinic FAQ + `/book` account gets restricted.
+
+**If M3 is rejected as healthcare / not-an-allowed-use:** there is no canary. `/book` in bio. Do not start M4.
+
+**If M3 passes:** ~30 days on **2–3 Professional accounts we own** (throwaways we can lose). Separate dummy patient IGs. Clinic-shaped inbound only (hours/book → FAQ + `/book`, optional STOP). Stay inside the 40/day cap and kill switch. Phone Instagram for the patient side — do not live on `instagram.com` web on the canary. Do **not** farm random IGs (that is in the same scraping help doc). Daily check: this warning, restrict banner, login checkpoint, Professional Dashboard. Screenshot and date anything.
+
+**Graded gate (clean canaries only — ignore the 15 Sep Halo Aid hit):**
+
+| What we see | Call |
+|---|---|
+| One Dismiss, once, never again | Note date + volume. Keep watching. Do **not** Connect a large following. First clinic stays tiny. |
+| Same warning **again**, or it **loops** after Dismiss | Stop. No client Connect. Instagram stays `/book` in bio. |
+| **Restrict** (can’t DM / comment / settings) | Same stop. That is the product-negative we cannot sell. |
+| **Disable** | Immediate stop. L10. No clients until counsel says otherwise. |
+
+One isolated Dismiss ≠ don’t proceed. Repeat / restrict / ban = don’t proceed.
+
+**Before any paying Connect:** L10 in the agreement (platform action, no standing/delivery guarantee, liability cap). First clinic is small, founder-known, written acknowledgment. Not “approved, open the waitlist.”
+
+**Next action:** Do not start. Unpark when M3 Advanced Access is approved; then create 2–3 owned Professional canaries (not client accounts).
+
 ---
 
 ## P — Product
@@ -337,7 +364,7 @@ Manual invoicing is fine until there are enough customers for it to hurt. Revisi
 ### G1 · First paying clinic — `PARKED`
 The product is closer to ready than the business is. One real clinic using this daily will teach me more than another month of features.
 
-**Next action:** — parked. Not naming clinics. Unpark when the account is open and the product is something a front desk can use daily.
+**Next action:** — parked. Not naming clinics. Unpark when the account is open, the product is something a front desk can use daily, **and** M4 canary + L10 are done. Do not Connect a paying clinic off an M3 pass alone.
 
 ### G2 · Pricing — `NEXT`
 **Next action:** pick a monthly number per clinic and practice saying it out loud. It can be wrong; it can't be absent.

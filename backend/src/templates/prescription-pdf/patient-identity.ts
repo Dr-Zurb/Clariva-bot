@@ -5,13 +5,42 @@
 
 import { DateTime } from 'luxon';
 
-export function computeAgeLabel(dob: string | null | undefined): string | null {
-  if (!dob) return null;
-  const dt = DateTime.fromISO(dob);
-  if (!dt.isValid) return null;
-  const years = Math.floor(DateTime.now().diff(dt, 'years').years);
+export function formatAgeYearsLabel(years: number | null | undefined): string | null {
+  if (years == null || !Number.isFinite(years)) return null;
+  const whole = Math.floor(years);
+  if (whole < 0 || whole > 130) return null;
+  if (whole < 1) return '< 1 y';
+  return `${whole} y`;
+}
+
+export function computeAgeYearsFromDob(
+  dob: string | Date | null | undefined
+): number | null {
+  if (dob == null || dob === '') return null;
+  let from: DateTime;
+  if (dob instanceof Date) {
+    if (Number.isNaN(dob.getTime())) return null;
+    from = DateTime.fromJSDate(dob);
+  } else {
+    const iso = DateTime.fromISO(dob);
+    from = iso.isValid ? iso : DateTime.fromJSDate(new Date(dob));
+  }
+  if (!from.isValid) return null;
+  const years = Math.floor(DateTime.now().diff(from, 'years').years);
   if (years < 0 || years > 130) return null;
-  return `${years} y`;
+  return years;
+}
+
+export function computeAgeLabel(dob: string | Date | null | undefined): string | null {
+  return formatAgeYearsLabel(computeAgeYearsFromDob(dob));
+}
+
+/** DOB wins; walk-in / chart age (years) fills in when DOB was never stored. */
+export function resolvePatientAgeLabel(
+  dob: string | Date | null | undefined,
+  storedAgeYears?: number | null
+): string | null {
+  return computeAgeLabel(dob) ?? formatAgeYearsLabel(storedAgeYears);
 }
 
 export function formatAgeGender(

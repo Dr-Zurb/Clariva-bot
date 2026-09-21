@@ -2,9 +2,12 @@ import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import {
   LetterheadPagePreview,
+  overflowingPreviewPages,
   packPreviewBlocks,
   PAGE_PACK_SLACK_PX,
+  previewMeasureHeightsReady,
   previewPackBudgets,
+  previewPageBodiesReady,
   RX_COL_WIDTHS,
   shiftOverflowingPreviewPages,
 } from "@/components/settings/LetterheadPagePreview";
@@ -64,6 +67,32 @@ describe("shiftOverflowingPreviewPages", () => {
 
   it("leaves a single oversized block on its sheet", () => {
     expect(shiftOverflowingPreviewPages([[0]], [true])).toEqual([[0]]);
+  });
+});
+
+describe("preview layout ready-checks", () => {
+  it("does not treat unmeasured heights as ready", () => {
+    expect(previewMeasureHeightsReady([], 2)).toBe(false);
+    expect(previewMeasureHeightsReady([40, 0], 2)).toBe(false);
+    expect(previewMeasureHeightsReady([40, 36], 2)).toBe(true);
+    expect(previewMeasureHeightsReady([], 0)).toBe(true);
+  });
+
+  it("does not treat a 0-height page body as laid out or overflowing", () => {
+    const missing = [null, { clientHeight: 80, scrollHeight: 80 }];
+    expect(previewPageBodiesReady(missing, 2)).toBe(false);
+    expect(overflowingPreviewPages(missing, 2)).toEqual([false, false]);
+
+    const unpainted = [{ clientHeight: 0, scrollHeight: 240 }];
+    expect(previewPageBodiesReady(unpainted, 1)).toBe(false);
+    expect(overflowingPreviewPages(unpainted, 1)).toEqual([false]);
+
+    const clipped = [
+      { clientHeight: 200, scrollHeight: 260 },
+      { clientHeight: 200, scrollHeight: 200 },
+    ];
+    expect(previewPageBodiesReady(clipped, 2)).toBe(true);
+    expect(overflowingPreviewPages(clipped, 2)).toEqual([true, false]);
   });
 });
 

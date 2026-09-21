@@ -260,13 +260,29 @@ describe('getPrescriptionPdfBytes', () => {
     expect(adm.download).toHaveBeenCalled();
   });
 
-  it('serves cached bytes on the second call without re-rendering', async () => {
+  it('re-renders an unsent draft on each print so a newly saved medicine is not skipped', async () => {
     const adm = mockAdmin({ sentToPatientAt: null, signedUrl: FRESH_URL });
     mockedDb.getSupabaseAdminClient.mockReturnValue(adm.client as never);
 
     await getPrescriptionPdfBytes(RX_ID, 'corr-1');
     await getPrescriptionPdfBytes(RX_ID, 'corr-2');
 
-    expect(mockedRender).toHaveBeenCalledTimes(1);
+    expect(mockedRender).toHaveBeenCalledTimes(2);
+  });
+
+  it('serves cached bytes for a sent prescription without re-rendering', async () => {
+    const stored = Buffer.from('%PDF-frozen%');
+    const adm = mockAdmin({
+      sentToPatientAt: '2026-08-25T10:00:00.000Z',
+      signedUrl: STORED_URL,
+      downloadBytes: stored,
+    });
+    mockedDb.getSupabaseAdminClient.mockReturnValue(adm.client as never);
+
+    await getPrescriptionPdfBytes(RX_ID, 'corr-1');
+    await getPrescriptionPdfBytes(RX_ID, 'corr-2');
+
+    expect(adm.download).toHaveBeenCalledTimes(1);
+    expect(mockedRender).not.toHaveBeenCalled();
   });
 });

@@ -29,6 +29,7 @@ import {
   isClinicalAdviceUserMessage,
   isHoursFaqUserMessage,
   isLocationFaqUserMessage,
+  isOpsPaymentFaqUserMessage,
   isThanksOnlyUserMessage,
 } from '../../../utils/instagram-faq-copy';
 import type { DmTurnContext } from '../stage-router';
@@ -86,7 +87,9 @@ export function matchesIdleFeeTriageMainBlock(ctx: DmTurnContext): boolean {
   ) {
     return true;
   }
+  const bookNow = userExplicitlyWantsToBookNow(text);
   if (
+    !bookNow &&
     intentResult.intent === 'medical_query' &&
     !inCollection &&
     (isOpenEmergencyCrisis(state) ||
@@ -95,13 +98,14 @@ export function matchesIdleFeeTriageMainBlock(ctx: DmTurnContext): boolean {
   ) {
     return true;
   }
-  if (intentResult.intent === 'medical_query' && !inCollection) return true;
-  if (!inCollection && isClinicalAdviceUserMessage(text)) return true;
+  if (!bookNow && intentResult.intent === 'medical_query' && !inCollection) return true;
+  if (!bookNow && !inCollection && isClinicalAdviceUserMessage(text)) return true;
   if (
     !inCollection &&
     (!stageOf(state) || stageOf(state) === 'responded') &&
     (isHoursFaqUserMessage(text) ||
       isLocationFaqUserMessage(text) ||
+      isOpsPaymentFaqUserMessage(text) ||
       (isThanksOnlyUserMessage(text) && !isPostBookingAcknowledgment(text, recent)))
   ) {
     return true;

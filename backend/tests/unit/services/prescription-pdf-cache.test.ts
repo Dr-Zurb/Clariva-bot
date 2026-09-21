@@ -5,6 +5,7 @@ import {
   cacheSet,
   cacheSetBytes,
   invalidatePrescriptionPdfCache,
+  pdfCacheGeneration,
   withPdfBytesInflight,
   withPdfGenerateInflight,
 } from '../../../src/services/prescription-pdf-cache';
@@ -96,5 +97,19 @@ describe('prescription-pdf-cache', () => {
     const factoryB = jest.fn(async () => SAMPLE);
     await expect(withPdfGenerateInflight(RX_ID, factoryB)).resolves.toEqual(SAMPLE);
     expect(factoryB).toHaveBeenCalledTimes(1);
+  });
+
+  it('drops a stale render so it cannot recache after a save', () => {
+    invalidatePrescriptionPdfCache(RX_ID);
+    const startedAtGen = pdfCacheGeneration(RX_ID);
+    const stale = Buffer.from('%PDF-three-meds%');
+    const fresh = Buffer.from('%PDF-four-meds%');
+
+    invalidatePrescriptionPdfCache(RX_ID);
+    cacheSetBytes(RX_ID, stale, startedAtGen);
+    expect(cacheGetBytes(RX_ID)).toBeNull();
+
+    cacheSetBytes(RX_ID, fresh, pdfCacheGeneration(RX_ID));
+    expect(cacheGetBytes(RX_ID)?.equals(fresh)).toBe(true);
   });
 });

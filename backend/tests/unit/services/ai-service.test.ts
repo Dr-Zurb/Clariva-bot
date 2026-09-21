@@ -183,6 +183,56 @@ describe('AI Service', () => {
   });
 
   describe('classifyIntent', () => {
+    describe('deterministic receptionist shortcuts', () => {
+      beforeEach(() => {
+        mockedOpenai.getOpenAIClient.mockReturnValue({
+          chat: { completions: { create: jest.fn() } },
+        } as any);
+        mockedOpenai.getOpenAIConfig.mockReturnValue({
+          model: 'gpt-5.2',
+          maxTokens: 256,
+        });
+      });
+
+      it('bare book / booking link → book_appointment without OpenAI', async () => {
+        const mockCreate = jest.fn();
+        mockedOpenai.getOpenAIClient.mockReturnValue({
+          chat: { completions: { create: mockCreate } },
+        } as any);
+
+        await expect(classifyIntent('book', correlationId)).resolves.toEqual({
+          intent: 'book_appointment',
+          confidence: 1,
+        });
+        await expect(classifyIntent('booking link', correlationId)).resolves.toEqual({
+          intent: 'book_appointment',
+          confidence: 1,
+        });
+        await expect(classifyIntent('send me the booking link', correlationId)).resolves.toEqual({
+          intent: 'book_appointment',
+          confidence: 1,
+        });
+        await expect(classifyIntent('I want to book I have fever', correlationId)).resolves.toEqual({
+          intent: 'book_appointment',
+          confidence: 1,
+        });
+        expect(mockCreate).not.toHaveBeenCalled();
+      });
+
+      it('symptom report → medical_query without OpenAI', async () => {
+        const mockCreate = jest.fn();
+        mockedOpenai.getOpenAIClient.mockReturnValue({
+          chat: { completions: { create: mockCreate } },
+        } as any);
+
+        await expect(classifyIntent('i have headache', correlationId)).resolves.toEqual({
+          intent: 'medical_query',
+          confidence: 1,
+        });
+        expect(mockCreate).not.toHaveBeenCalled();
+      });
+    });
+
     describe('when OPENAI_API_KEY is not set', () => {
       it('returns unknown and does not call OpenAI', async () => {
         mockedOpenai.getOpenAIClient.mockReturnValue(null);
@@ -224,7 +274,7 @@ describe('AI Service', () => {
         });
 
         const result = await classifyIntent(
-          'I would like to book an appointment',
+          'can I come in next Tuesday morning',
           correlationId
         );
 
@@ -635,7 +685,10 @@ describe('AI Service', () => {
           maxTokens: 256,
         });
 
-        const result = await classifyIntent('Book', correlationId);
+        const result = await classifyIntent(
+          'I have a complicated question about scheduling and paperwork for next month',
+          correlationId
+        );
 
         expect(result).toEqual({ intent: 'unknown', confidence: 0 });
         expect(mockedAudit.logAIClassification).toHaveBeenCalledWith(
@@ -661,7 +714,10 @@ describe('AI Service', () => {
           maxTokens: 256,
         });
 
-        const result = await classifyIntent('Book', correlationId);
+        const result = await classifyIntent(
+          'I have a complicated question about scheduling and paperwork for next month',
+          correlationId
+        );
 
         expect(result).toEqual({ intent: 'unknown', confidence: 0 });
         expect(mockedAudit.logAIClassification).toHaveBeenCalledWith(

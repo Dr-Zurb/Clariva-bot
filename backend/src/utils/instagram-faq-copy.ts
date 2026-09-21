@@ -13,14 +13,22 @@ import {
 const THANKS_ONLY = /^(thanks|thank you|thx|ty|thanku|dhanyavaad|shukriya)[\s!?.]*$/i;
 
 const HOURS_FAQ =
-  /\b(hours|timings?|opening hours|closing hours|what time (do you|are you) open|kab (kholt|open)|kitne baje)\b/i;
+  /\b(hours|timings?|opening hours|closing hours|what time (do you|are you) open|kab (kholt|open)|kitne baje|(?:your\s+)?availability)\b/i;
 
 const LOCATION_FAQ =
   /\b(where (is|are) (the )?(clinic|hospital|practice|office)|clinic (address|location)|your address|clinic (kahan|kidhar))\b/i;
 
+/** Insurance / cash-or-UPI — page link, not a consult-fee quote. */
+const OPS_PAYMENT_FAQ =
+  /\b(insurance|cash\s+or\s+upi|upi\s+or\s+cash|cash\s+or\s+card|do you (?:take|accept) (?:insurance|upi|cash|card)|payment method|pay by (?:upi|cash|card))\b/i;
+
 /** Prescribe / advice / artifacts — must not go to the LLM as ask_question. */
 const CLINICAL_ADVICE =
   /\b(?:are you (?:a |the )?doctor|can you prescribe|prescribe|prescription|refill|what (?:should|can|do) i take|what to take|(?:please )?advise|medical advice|medical certificate|(?:lab |blood )?reports?|is \w+ safe|paracetamol|pregnant|do you treat|(?:my )?(?:bp|blood pressure))\b/i;
+
+/** Symptom report — receptionist deflection, not a greeting. Emergency regex still wins first. */
+const SYMPTOM_REPORT =
+  /\b(?:i(?:'ve|'m)?\s+(?:have(?:\s+got)?|got|am\s+having|having)|got\s+a|my)\b.{0,40}\b(?:headache|migraine|fever|cough|cold|pain|stomachache|stomach\s+ache|sore\s+throat|nausea|vomiting|dizzy(?:ness)?|rash)\b/i;
 
 function pickLocale(
   language: ConversationLanguage,
@@ -44,8 +52,12 @@ export function isLocationFaqUserMessage(text: string): boolean {
   return LOCATION_FAQ.test(text);
 }
 
+export function isOpsPaymentFaqUserMessage(text: string): boolean {
+  return OPS_PAYMENT_FAQ.test(text);
+}
+
 export function isClinicalAdviceUserMessage(text: string): boolean {
-  return CLINICAL_ADVICE.test(text);
+  return CLINICAL_ADVICE.test(text) || SYMPTOM_REPORT.test(text);
 }
 
 export function buildReceptionistThanksMessage(language: ConversationLanguage): string {
@@ -58,9 +70,9 @@ export function buildReceptionistThanksMessage(language: ConversationLanguage): 
 
 export function buildPricesOnBookingPageLead(language: ConversationLanguage): string {
   return pickLocale(language, {
-    en: 'Prices are on the booking page.',
-    hi: 'Prices booking page par hain.',
-    pa: 'Prices booking page te han.',
+    en: 'Visit prices are on this page:',
+    hi: 'Visit prices is page par hain:',
+    pa: 'Visit prices is page te han:',
   });
 }
 
@@ -75,16 +87,33 @@ export function buildHoursQuoteLead(language: ConversationLanguage, hours: strin
 
 export function buildHoursMissingLead(language: ConversationLanguage): string {
   return pickLocale(language, {
-    en: 'Timings are on the booking page.',
-    hi: 'Timings booking page par hain.',
-    pa: 'Timings booking page te han.',
+    en: "I don't have timings saved. They're on this page:",
+    hi: 'Timings save nahi hain. Woh is page par hain:',
+    pa: 'Timings save nahi han. Oh is page te han:',
+  });
+}
+
+export function buildLocationQuoteLead(language: ConversationLanguage, address: string): string {
+  const trimmed = address.trim();
+  return pickLocale(language, {
+    en: `Address: ${trimmed}`,
+    hi: `Address: ${trimmed}`,
+    pa: `Address: ${trimmed}`,
   });
 }
 
 export function buildLocationOnBookingPageLead(language: ConversationLanguage): string {
   return pickLocale(language, {
-    en: 'You can book on the website.',
-    hi: 'Aap website par book kar sakte hain.',
-    pa: 'Tusi website te book kar sakde ho.',
+    en: 'The clinic details are on this page:',
+    hi: 'Clinic details is page par hain:',
+    pa: 'Clinic details is page te han:',
+  });
+}
+
+export function buildPaymentOnBookingPageLead(language: ConversationLanguage): string {
+  return pickLocale(language, {
+    en: "I don't have payment details saved. They're on this page:",
+    hi: 'Payment details save nahi hain. Woh is page par hain:',
+    pa: 'Payment details save nahi han. Oh is page te han:',
   });
 }

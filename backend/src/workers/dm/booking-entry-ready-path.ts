@@ -4,7 +4,9 @@
  */
 
 import { buildBookingPageUrl } from '../../services/slot-selection-service';
-import { formatBookingLinkDm } from '../../utils/booking-link-copy';
+import { formatBookingLinkDm, formatClinicPageLinkDm } from '../../utils/booking-link-copy';
+import { formatSingleConsultFeeDm } from '../../utils/consultation-fees';
+import { buildPricesOnBookingPageLead } from '../../utils/instagram-faq-copy';
 import type { ConversationLanguage } from '../../utils/conversation-language';
 import { formatAwaitingStaffServiceConfirmationDm } from '../../utils/staff-service-review-dm';
 import {
@@ -114,7 +116,7 @@ export function applyReadyPatientBookingPath(input: ApplyReadyPatientBookingPath
   };
 }
 
-/** Receptionist lead + the same `/book` link (Meta FAQ / empty-status / fees). */
+/** Receptionist lead + the appointment CTA (they asked to book). */
 export function applyLeadPlusBookingLink(
   input: ApplyReadyPatientBookingPathInput & { lead: string }
 ): { state: ConversationState; replyText: string } {
@@ -124,4 +126,63 @@ export function applyLeadPlusBookingLink(
     state: ready.state,
     replyText: lead ? `${lead}\n\n${ready.replyText}` : ready.replyText,
   };
+}
+
+/** Same `/book` URL without “get an appointment.” */
+export function applyLeadPlusPageLink(
+  input: ApplyReadyPatientBookingPathInput & { lead: string }
+): { state: ConversationState; replyText: string } {
+  const ready = applyReadyPatientBookingPath(input);
+  const slotLink = buildBookingPageUrl(input.conversationId, input.doctorId);
+  const page = formatClinicPageLinkDm({
+    language: input.language,
+    slotLink,
+    doctorSettings: input.doctorSettings,
+  });
+  const lead = input.lead.trim();
+  return {
+    state: ready.state,
+    replyText: lead ? `${lead}\n\n${page}` : page,
+  };
+}
+
+function applyFeeQuoteOnly(
+  input: ApplyReadyPatientBookingPathInput,
+  replyText: string
+): { state: ConversationState; replyText: string } {
+  return {
+    state: mergeTriage(
+      {
+        ...input.state,
+        lastIntent: input.intent,
+        step: 'responded',
+        updatedAt: new Date().toISOString(),
+      },
+      {
+        reasonFirstTriagePhase: undefined,
+        postMedicalConsultFeeAckSent: undefined,
+        activeFlow: undefined,
+      }
+    ),
+    replyText,
+  };
+}
+
+/** Single-fee quotes ₹. Packaged uses the page link. Booking CTA only if they asked to book. */
+export function applyReceptionistFeeReply(
+  input: ApplyReadyPatientBookingPathInput & { wantsToBook: boolean }
+): { state: ConversationState; replyText: string } {
+  const quote = formatSingleConsultFeeDm(input.doctorSettings, input.language);
+  if (quote && !input.wantsToBook) {
+    return applyFeeQuoteOnly(input, quote);
+  }
+  if (quote && input.wantsToBook) {
+    const ready = applyReadyPatientBookingPath(input);
+    return { state: ready.state, replyText: `${quote}\n\n${ready.replyText}` };
+  }
+  const lead = buildPricesOnBookingPageLead(input.language);
+  if (!input.wantsToBook) {
+    return applyLeadPlusPageLink({ ...input, lead });
+  }
+  return applyLeadPlusBookingLink({ ...input, lead });
 }

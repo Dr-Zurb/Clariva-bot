@@ -58,6 +58,7 @@ import {
   cacheSet,
   cacheSetBytes,
   invalidatePrescriptionPdfCache,
+  pdfCacheGeneration,
   withPdfBytesInflight,
   withPdfGenerateInflight,
 } from './prescription-pdf-cache';
@@ -65,7 +66,7 @@ import { getDoctorSettings } from './doctor-settings-service';
 import { resolveLetterhead } from './letterhead-service';
 import { PrescriptionDocument } from '../templates/prescription-pdf/PrescriptionDocument';
 import type { PrescriptionPdfData } from '../templates/prescription-pdf/types';
-import { computeAgeLabel } from '../templates/prescription-pdf/patient-identity';
+import { resolvePatientAgeLabel } from '../templates/prescription-pdf/patient-identity';
 import {
   mapPrescriptionToPdfBody,
   type PrescriptionPdfSourceRow,
@@ -128,6 +129,7 @@ interface PatientRow {
   id: string;
   name: string | null;
   date_of_birth: string | null;
+  age: number | null;
   gender: string | null;
   phone: string | null;
   guardian_name: string | null;
@@ -304,7 +306,7 @@ async function buildPdfData(
       admin
         .from('patients')
         .select(
-          'id, name, date_of_birth, gender, phone, guardian_name, guardian_relation, address, medical_record_number'
+          'id, name, date_of_birth, age, gender, phone, guardian_name, guardian_relation, address, medical_record_number'
         )
         .eq('id', apt.patient_id)
         .single(),
@@ -410,7 +412,7 @@ async function buildPdfData(
     },
     patient: {
       patientName: patient?.name?.trim() || apt.patient_name?.trim() || 'Patient',
-      patientAge: computeAgeLabel(patient?.date_of_birth ?? null),
+      patientAge: resolvePatientAgeLabel(patient?.date_of_birth ?? null, patient?.age),
       patientGender: patient?.gender?.trim() || null,
       visitDateLabel: formatVisitDate(apt.appointment_date, doctorSettings?.timezone),
       patientPhone: patient?.phone?.trim() || apt.patient_phone?.trim() || null,
@@ -527,30 +529,36 @@ interface PdfBytesReady {
  */
 async function ensurePdfBytes(
   prescriptionId: string,
-  correlationId: string
+  correlationId: string,
+  opts?: { skipCache?: boolean }
 ): Promise<PdfBytesReady> {
-  const cached = cacheGetBytes(prescriptionId);
-  if (cached) {
-    const stamp = await loadSentStamp(prescriptionId);
-    if (stamp?.doctorId) {
-      return {
-        bytes: cached,
-        doctorId: stamp.doctorId,
-        storagePath: `${stamp.doctorId}/${prescriptionId}.pdf`,
-      };
+  if (!opts?.skipCache) {
+    const cached = cacheGetBytes(prescriptionId);
+    if (cached) {
+      const stamp = await loadSentStamp(prescriptionId);
+      if (stamp?.doctorId) {
+        return {
+          bytes: cached,
+          doctorId: stamp.doctorId,
+          storagePath: `${stamp.doctorId}/${prescriptionId}.pdf`,
+        };
+      }
     }
   }
 
   return withPdfBytesInflight(prescriptionId, async () => {
-    const again = cacheGetBytes(prescriptionId);
-    if (again) {
-      const stamp = await loadSentStamp(prescriptionId);
-      if (stamp?.doctorId) {
-        return {
-          bytes: again,
-          doctorId: stamp.doctorId,
-          storagePath: `${stamp.doctorId}/${prescriptionId}.pdf`,
-        };
+    const startedAtGen = pdfCacheGeneration(prescriptionId);
+    if (!opts?.skipCache) {
+      const again = cacheGetBytes(prescriptionId);
+      if (again) {
+        const stamp = await loadSentStamp(prescriptionId);
+        if (stamp?.doctorId) {
+          return {
+            bytes: again,
+            doctorId: stamp.doctorId,
+            storagePath: `${stamp.doctorId}/${prescriptionId}.pdf`,
+          };
+        }
       }
     }
 
@@ -561,7 +569,7 @@ async function ensurePdfBytes(
       if (!downloaded) {
         throw new InternalError('Frozen prescription PDF is missing from storage');
       }
-      cacheSetBytes(prescriptionId, downloaded);
+      cacheSetBytes(prescriptionId, downloaded, startedAtGen);
       logger.info(
         { correlationId, prescriptionId, byteCount: downloaded.length },
         'prescription-pdf-service: downloaded frozen pdf bytes'
@@ -572,7 +580,7 @@ async function ensurePdfBytes(
     const t0 = Date.now();
     const buffer = await renderPdfBuffer(built.data);
     const renderMs = Date.now() - t0;
-    cacheSetBytes(prescriptionId, buffer);
+    cacheSetBytes(prescriptionId, buffer, startedAtGen);
     logger.info(
       {
         correlationId,
@@ -630,6 +638,7 @@ export async function generatePrescriptionPdf(
   }
 
   return withPdfGenerateInflight(prescriptionId, async () => {
+    const startedAtGen = pdfCacheGeneration(prescriptionId);
     const again = cacheGet(prescriptionId);
     if (again) return { ...again, bytes: cacheGetBytes(prescriptionId) ?? undefined };
 
@@ -647,7 +656,7 @@ export async function generatePrescriptionPdf(
           cacheHit: false,
           bytes: cacheGetBytes(prescriptionId) ?? undefined,
         };
-        cacheSet(prescriptionId, frozen);
+        cacheSet(prescriptionId, frozen, startedAtGen);
         logger.info(
           { correlationId, prescriptionId },
           'prescription-pdf-service: reminted frozen sent pdf'
@@ -658,7 +667,7 @@ export async function generatePrescriptionPdf(
 
     const { bytes, doctorId } = await ensurePdfBytes(prescriptionId, correlationId);
     const result = await uploadPdfAndSign(prescriptionId, doctorId, bytes, correlationId);
-    cacheSet(prescriptionId, result);
+    cacheSet(prescriptionId, result, startedAtGen);
     return { ...result, bytes };
   });
 }
@@ -671,16 +680,23 @@ export async function getPrescriptionPdfBytes(
   prescriptionId: string,
   correlationId: string
 ): Promise<{ bytes: Buffer; byteCount: number }> {
-  const cached = cacheGetBytes(prescriptionId);
-  if (cached) {
-    logger.info(
-      { correlationId, prescriptionId, byteCount: cached.length },
-      'prescription-pdf-service: bytes cache hit'
-    );
-    return { bytes: cached, byteCount: cached.length };
+  const stamp = await loadSentStamp(prescriptionId);
+  // Unsent drafts re-render so a medicine saved after the last print
+  // cannot be served from a stale 5-min bytes cache.
+  if (stamp?.sentToPatientAt) {
+    const cached = cacheGetBytes(prescriptionId);
+    if (cached) {
+      logger.info(
+        { correlationId, prescriptionId, byteCount: cached.length },
+        'prescription-pdf-service: bytes cache hit'
+      );
+      return { bytes: cached, byteCount: cached.length };
+    }
   }
 
-  const { bytes } = await ensurePdfBytes(prescriptionId, correlationId);
+  const { bytes } = await ensurePdfBytes(prescriptionId, correlationId, {
+    skipCache: !stamp?.sentToPatientAt,
+  });
   return { bytes, byteCount: bytes.length };
 }
 

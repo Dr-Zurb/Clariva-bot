@@ -2,17 +2,23 @@ import { describe, expect, it } from '@jest/globals';
 import {
   buildHoursMissingLead,
   buildLocationOnBookingPageLead,
+  buildPaymentOnBookingPageLead,
   buildPricesOnBookingPageLead,
   buildReceptionistThanksMessage,
   isClinicalAdviceUserMessage,
   isHoursFaqUserMessage,
   isLocationFaqUserMessage,
+  isOpsPaymentFaqUserMessage,
   isThanksOnlyUserMessage,
 } from '../../../src/utils/instagram-faq-copy';
 
 describe('instagram-faq-copy', () => {
   it('detects hours / location / thanks', () => {
     expect(isHoursFaqUserMessage('what are your hours')).toBe(true);
+    expect(isHoursFaqUserMessage('availability')).toBe(true);
+    expect(isOpsPaymentFaqUserMessage('do you take insurance')).toBe(true);
+    expect(isOpsPaymentFaqUserMessage('cash or UPI')).toBe(true);
+    expect(isOpsPaymentFaqUserMessage('how much is a consultation?')).toBe(false);
     expect(isLocationFaqUserMessage('where is the clinic')).toBe(true);
     expect(isLocationFaqUserMessage('when is my appointment')).toBe(false);
     expect(isThanksOnlyUserMessage('thanks')).toBe(true);
@@ -32,15 +38,20 @@ describe('instagram-faq-copy', () => {
     expect(isClinicalAdviceUserMessage('I am pregnant is paracetamol safe')).toBe(true);
     expect(isClinicalAdviceUserMessage('do you treat diabetes')).toBe(true);
     expect(isClinicalAdviceUserMessage('my BP is 150/90 this morning')).toBe(true);
+    expect(isClinicalAdviceUserMessage('i have headache')).toBe(true);
     expect(isClinicalAdviceUserMessage('hello doctor')).toBe(false);
     expect(isClinicalAdviceUserMessage('when can I see the doctor')).toBe(false);
     expect(isClinicalAdviceUserMessage('do you take insurance')).toBe(false);
+    expect(isClinicalAdviceUserMessage('book')).toBe(false);
   });
 
   it('leads stay receptionist — no catalog, doctor name, or 112', () => {
-    expect(buildPricesOnBookingPageLead('en')).toBe('Prices are on the booking page.');
-    expect(buildHoursMissingLead('en')).toBe('Timings are on the booking page.');
-    expect(buildLocationOnBookingPageLead('en')).toBe('You can book on the website.');
+    expect(buildPricesOnBookingPageLead('en')).toBe('Visit prices are on this page:');
+    expect(buildHoursMissingLead('en')).toBe("I don't have timings saved. They're on this page:");
+    expect(buildLocationOnBookingPageLead('en')).toBe('The clinic details are on this page:');
+    expect(buildPaymentOnBookingPageLead('en')).toBe(
+      "I don't have payment details saved. They're on this page:"
+    );
     expect(buildReceptionistThanksMessage('en')).toBe("You're welcome.");
     expect(buildPricesOnBookingPageLead('en').toLowerCase()).not.toContain('112');
     expect(buildPricesOnBookingPageLead('en').toLowerCase()).not.toContain('teleconsult');

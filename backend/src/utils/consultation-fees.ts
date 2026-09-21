@@ -10,6 +10,7 @@ import {
   languageUsesGurmukhi,
   toStaticLocale,
   type ConversationLanguage,
+  type StaticMessageLocale,
 } from './conversation-language';
 import type {
   FollowUpPolicyV1,
@@ -55,13 +56,15 @@ const PRICING_KEYWORDS =
  * Keeps a **single** place for this (avoid divergent copies in triage vs fees).
  */
 export function normalizePricingKeywordTypos(text: string): string {
-  return text
-    .replace(/\bpayemnt\b/gi, 'payment')
-    .replace(/\bpaymnt\b/gi, 'payment')
-    .replace(/\bpament\b/gi, 'payment')
-    // Common truncations so `isPricingInquiryMessage` / amount-seeking still match (reason-first snippet omission).
-    .replace(/\bhow\s+muc\b/gi, 'how much')
-    .replace(/\bhow\s+mch\b/gi, 'how much');
+  return (
+    text
+      .replace(/\bpayemnt\b/gi, 'payment')
+      .replace(/\bpaymnt\b/gi, 'payment')
+      .replace(/\bpament\b/gi, 'payment')
+      // Common truncations so `isPricingInquiryMessage` / amount-seeking still match (reason-first snippet omission).
+      .replace(/\bhow\s+muc\b/gi, 'how much')
+      .replace(/\bhow\s+mch\b/gi, 'how much')
+  );
 }
 
 /**
@@ -100,6 +103,41 @@ export function formatAppointmentFeeForAiContext(
   return `Standard appointment / consultation fee on file: ${num} ${cur}.`;
 }
 
+export function isSingleFeeCatalogMode(
+  settings: { catalog_mode?: string | null } | null | undefined
+): boolean {
+  return settings?.catalog_mode === 'single_fee';
+}
+
+/** Patient-facing one-liner. Null when packaged, unset, or no amount on file. */
+export function formatSingleConsultFeeDm(
+  settings:
+    | {
+        catalog_mode?: string | null;
+        appointment_fee_minor?: number | null;
+        appointment_fee_currency?: string | null;
+      }
+    | null
+    | undefined,
+  language: ConversationLanguage
+): string | null {
+  if (!isSingleFeeCatalogMode(settings)) return null;
+  const minor = settings?.appointment_fee_minor;
+  if (minor == null || minor <= 0) return null;
+  const cur = (settings?.appointment_fee_currency || 'INR').toUpperCase();
+  const amount =
+    cur === 'INR' ? `₹${Math.round(minor / 100)}` : `${(minor / 100).toFixed(2)} ${cur}`;
+  const locale = toStaticLocale(language);
+  const byLocale: Record<StaticMessageLocale, string> = {
+    en: `Consult fee is ${amount}.`,
+    hi: `Consult fee ${amount} hai.`,
+    pa: `Consult fee ${amount} hai.`,
+  };
+  if (locale === 'hi' && !languageUsesDevanagari(language)) return byLocale.hi;
+  if (locale === 'pa' && !languageUsesGurmukhi(language)) return byLocale.pa;
+  return byLocale[locale];
+}
+
 /** User message looks like a pricing question (EN + common Roman Hindi). */
 export function isPricingInquiryMessage(text: string): boolean {
   const t = normalizePatientPricingText(text);
@@ -131,10 +169,18 @@ export function isConsultationTypePricingFollowUp(text: string): boolean {
   return CONSULTATION_OR_CHANNEL_CLARIFY_RE.test(t);
 }
 
+/** Bare receptionist book phrases — Meta FAQ + link, not a fee/visit-type clarify. */
+export function isStandaloneBookingRequest(text: string): boolean {
+  const t = text.trim();
+  if (t.length < 4 || t.length > 40) return false;
+  return /^(book(?:ing(?:\s+link)?)?|appointment)[\s!?.]*$/i.test(t);
+}
+
 export function userExplicitlyWantsToBookNow(text: string): boolean {
   const t = text.trim();
   if (t.length < 4) return false;
   if (isAmountSeekingPricingQuestion(t)) return false;
+  if (isStandaloneBookingRequest(t)) return true;
   return (
     /\b(book|schedule)\s+(?:an\s+)?(?:appointment|visit|consultation)\b/i.test(t) ||
     /\bbook\s+(?:a\s+)?(video|voice|text)\b/i.test(t) ||
@@ -143,7 +189,12 @@ export function userExplicitlyWantsToBookNow(text: string): boolean {
     /\bbook\s+(?:me|us|an\s+appointment|a\s+slot)\b/i.test(t) ||
     /\b(start|begin)\ba?\s+booking\b/i.test(t) ||
     /\bplease\s+book\b/i.test(t) ||
-    /\b(do\s+it|go\s+with|go\s+for|let'?s?\s+do|i'?ll?\s+take|i\s+choose|i\s+pick|i\s+want)\s+(video|voice|text)\b/i.test(t) ||
+    /\bbooking\s+link\b/i.test(t) ||
+    /\b(send|share)\s+(me\s+)?(the\s+)?(booking\s+)?link\b/i.test(t) ||
+    /\bwhatsapp\b.{0,40}\b(slot|appointment|book|link)\b/i.test(t) ||
+    /\b(do\s+it|go\s+with|go\s+for|let'?s?\s+do|i'?ll?\s+take|i\s+choose|i\s+pick|i\s+want)\s+(video|voice|text)\b/i.test(
+      t
+    ) ||
     /^(video|voice|text)\s*(please|pls)?\s*$/i.test(t) ||
     /\b(ok(ay)?|sure|yes)\s*,?\s*book\b/i.test(t) ||
     /\blet'?s?\s+go\b/i.test(t) ||
@@ -299,11 +350,15 @@ export function formatFollowUpPolicyHint(
     if (dt === 'free') parts.push('follow-ups free');
     else if (dt === 'none') parts.push('no follow-up discount');
     else if (dt === 'percent' && dv != null) parts.push(`${dv}% off eligible follow-ups`);
-    else if (dt === 'flat_off' && dv != null) parts.push(`${formatMinorCurrencyDm(dv, cur)} off follow-ups`);
-    else if (dt === 'fixed_price' && dv != null) parts.push(`follow-ups at ${formatMinorCurrencyDm(dv, cur)}`);
+    else if (dt === 'flat_off' && dv != null)
+      parts.push(`${formatMinorCurrencyDm(dv, cur)} off follow-ups`);
+    else if (dt === 'fixed_price' && dv != null)
+      parts.push(`follow-ups at ${formatMinorCurrencyDm(dv, cur)}`);
     else parts.push('follow-up pricing per practice settings');
   }
-  parts.push(`max ${policy.max_followups} follow-up(s) within ${policy.eligibility_window_days} days`);
+  parts.push(
+    `max ${policy.max_followups} follow-up(s) within ${policy.eligibility_window_days} days`
+  );
   return parts.join('; ');
 }
 
@@ -415,12 +470,19 @@ export function mergeFeeCatalogMatchText(userText: string, catalogMatchText?: st
   const u = userText.trim();
   const c = catalogMatchText?.trim() ?? '';
   if (!c) return u;
-  if (!u) return c.length > FEE_CATALOG_MATCH_TEXT_MAX_CHARS ? c.slice(-FEE_CATALOG_MATCH_TEXT_MAX_CHARS) : c;
+  if (!u)
+    return c.length > FEE_CATALOG_MATCH_TEXT_MAX_CHARS
+      ? c.slice(-FEE_CATALOG_MATCH_TEXT_MAX_CHARS)
+      : c;
   if (c === u || c.endsWith(`\n${u}`) || c.includes(`\n${u}\n`)) {
-    return c.length > FEE_CATALOG_MATCH_TEXT_MAX_CHARS ? c.slice(-FEE_CATALOG_MATCH_TEXT_MAX_CHARS) : c;
+    return c.length > FEE_CATALOG_MATCH_TEXT_MAX_CHARS
+      ? c.slice(-FEE_CATALOG_MATCH_TEXT_MAX_CHARS)
+      : c;
   }
   if (u.includes(c) && u.length >= c.length) {
-    return u.length > FEE_CATALOG_MATCH_TEXT_MAX_CHARS ? u.slice(-FEE_CATALOG_MATCH_TEXT_MAX_CHARS) : u;
+    return u.length > FEE_CATALOG_MATCH_TEXT_MAX_CHARS
+      ? u.slice(-FEE_CATALOG_MATCH_TEXT_MAX_CHARS)
+      : u;
   }
   const combined = `${c}\n${u}`;
   return combined.length > FEE_CATALOG_MATCH_TEXT_MAX_CHARS
@@ -449,7 +511,11 @@ const FEE_MATCHER_LINE_HAS_CLINICAL_CUE_RE =
 function threadTextSuggestsNcdConsultBucket(text: string): boolean {
   const s = text.trim();
   if (s.length < 4) return false;
-  if (/\b(rash|skin\s+problem|acne|eczema|mole|dermat|wart|itching|melasma|psoriasis|hair\s*fall)\b/i.test(s)) {
+  if (
+    /\b(rash|skin\s+problem|acne|eczema|mole|dermat|wart|itching|melasma|psoriasis|hair\s*fall)\b/i.test(
+      s
+    )
+  ) {
     return false;
   }
   return FEE_MATCHER_NCD_BUCKET_RE.test(s);
@@ -771,9 +837,7 @@ function buildServiceCatalogFeeDmResultFromPick(
   const rows = pick.services;
   const feeQuoteMatcherFinalize = pick.feeQuoteMatcherFinalize;
   const clinicalNarrowSingle =
-    opts?.clinicalLedFeeThread === true &&
-    rows.length === 1 &&
-    rows[0] != null;
+    opts?.clinicalLedFeeThread === true && rows.length === 1 && rows[0] != null;
   const lines: string[] = [];
 
   const MODALITY_LABEL: Record<string, string> = { text: 'Text', voice: 'Voice', video: 'Video' };
@@ -808,9 +872,10 @@ function buildServiceCatalogFeeDmResultFromPick(
       const prices = enabledSlots.map((sl) => sl.price);
       const minPrice = Math.min(...prices);
       const maxPrice = Math.max(...prices);
-      const priceStr = minPrice === maxPrice
-        ? formatMinorCurrencyDm(minPrice, cur)
-        : `${formatMinorCurrencyDm(minPrice, cur)} – ${formatMinorCurrencyDm(maxPrice, cur)}`;
+      const priceStr =
+        minPrice === maxPrice
+          ? formatMinorCurrencyDm(minPrice, cur)
+          : `${formatMinorCurrencyDm(minPrice, cur)} – ${formatMinorCurrencyDm(maxPrice, cur)}`;
 
       let line = `**${s.label}**: ${priceStr}`;
       if (anyFollowUp) {
@@ -826,11 +891,7 @@ function buildServiceCatalogFeeDmResultFromPick(
 
   const intro =
     rows.length === 1
-      ? localizeNarrowFeeCatalogIntro(
-          practiceName,
-          locale,
-          opts?.clinicalLedFeeThread !== true
-        )
+      ? localizeNarrowFeeCatalogIntro(practiceName, locale, opts?.clinicalLedFeeThread !== true)
       : localizeCatalogIntro(practiceName, locale);
   let body = `${intro}${lines.join('\n\n')}`;
 
@@ -954,9 +1015,7 @@ export function formatServiceCatalogForAiContext(settings: {
             ? `₹${slot.price_minor / 100}`
             : `${(slot.price_minor / 100).toFixed(2)} ${cur}`;
         const fu = formatFollowUpPolicyHint(slot.followup_policy ?? null, cur);
-        mods.push(
-          fu ? `${mod} ${amt} [follow-ups: ${fu}]` : `${mod} ${amt}`
-        );
+        mods.push(fu ? `${mod} ${amt} [follow-ups: ${fu}]` : `${mod} ${amt}`);
       }
     }
     if (mods.length > 0) {
@@ -1282,9 +1341,7 @@ export function formatConsultationFeesForDmWithMeta(
     if (isExplicitlyEmptyServiceCatalogJson(settings.service_offerings_json)) {
       serviceCatalogExplicitlyEmpty = true;
     } else {
-      const catalog = safeParseServiceCatalogV1FromDb(
-        settings.service_offerings_json as unknown
-      );
+      const catalog = safeParseServiceCatalogV1FromDb(settings.service_offerings_json as unknown);
       if (catalog && catalog.services.length > 0) {
         const catMeta = formatServiceCatalogForDmWithMeta(
           catalog,
@@ -1401,9 +1458,7 @@ export async function formatConsultationFeesForDmWithMetaAsync(
 ): Promise<ConsultationFeeDmWithMeta> {
   if (settings.service_offerings_json != null) {
     if (!isExplicitlyEmptyServiceCatalogJson(settings.service_offerings_json)) {
-      const catalog = safeParseServiceCatalogV1FromDb(
-        settings.service_offerings_json as unknown
-      );
+      const catalog = safeParseServiceCatalogV1FromDb(settings.service_offerings_json as unknown);
       if (catalog && catalog.services.length > 0) {
         const catMeta = await formatServiceCatalogForDmWithMetaAsync(
           catalog,

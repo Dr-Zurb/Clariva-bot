@@ -68,4 +68,4 @@ STOP silence after opt-out can look like a repeated STOP ack if a failed Meta se
 | “fix” (after analyze) | Step 3 |
 | “test analyze fix” | All three, in order |
 
-Last used: 2026-09-18 (varied pack after unpause; prescribe → medical_safety). Outbound-spike auto-pause can flip the clinic mid-pack — unpause again before a re-run.
+Last used: 2026-09-18 (receptionist pack + recheck after send-link / book+fever / payment FAQ). Outbound-spike auto-pause can flip the clinic mid-pack — unpause again before a re-run.

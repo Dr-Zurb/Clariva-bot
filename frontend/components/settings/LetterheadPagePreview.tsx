@@ -147,6 +147,44 @@ export function previewPackBudgets(
   };
 }
 
+/** True when every preview block has a real painted height. */
+export function previewMeasureHeightsReady(
+  heights: number[],
+  blockCount: number,
+): boolean {
+  if (blockCount === 0) return true;
+  return heights.length === blockCount && heights.every((height) => height > 0);
+}
+
+type PreviewPageBodySize = {
+  clientHeight: number;
+  scrollHeight: number;
+};
+
+/** Painted page bodies are laid out — 0-height means the sheet is not ready. */
+export function previewPageBodiesReady(
+  bodies: Array<PreviewPageBodySize | null | undefined>,
+  pageCount: number,
+): boolean {
+  if (pageCount <= 0) return true;
+  for (let i = 0; i < pageCount; i++) {
+    const el = bodies[i];
+    if (!el || el.clientHeight <= 0) return false;
+  }
+  return true;
+}
+
+export function overflowingPreviewPages(
+  bodies: Array<PreviewPageBodySize | null | undefined>,
+  pageCount: number,
+): boolean[] {
+  return Array.from({ length: pageCount }, (_, i) => {
+    const el = bodies[i];
+    if (!el || el.clientHeight <= 0) return false;
+    return el.scrollHeight > el.clientHeight + 1;
+  });
+}
+
 /** Greedy pack: fill the current sheet, then start another. */
 export function packPreviewBlocks(
   heights: number[],
@@ -987,8 +1025,10 @@ export function LetterheadPagePreview({
   const blocks = useMemo(() => buildPreviewBlocks(model, accent), [model, accent]);
   const [pages, setPages] = useState<number[][]>([blocks.map((_, i) => i)]);
   const [hideMeasure, setHideMeasure] = useState(false);
+  const [overflowTick, setOverflowTick] = useState(0);
   const measureRef = useRef<HTMLDivElement>(null);
   const bodyRefs = useRef<Array<HTMLDivElement | null>>([]);
+  const overflowWaitRef = useRef(0);
 
   useLayoutEffect(() => {
     setHideMeasure(false);
@@ -1055,15 +1095,47 @@ export function LetterheadPagePreview({
   const pageCount = paginate ? pages.length : 1;
 
   useLayoutEffect(() => {
+    overflowWaitRef.current = 0;
+  }, [blocks]);
+
+  useLayoutEffect(() => {
     if (!paginate || !hideMeasure) return;
-    const overflowing = pages.map((_, i) => {
+    const attached = Array.from({ length: pages.length }, (_, i) =>
+      bodyRefs.current[i],
+    ).every((el) => el != null);
+    if (!attached) {
+      if (overflowWaitRef.current >= 8) return;
+      overflowWaitRef.current += 1;
+      const id = requestAnimationFrame(() => setOverflowTick((n) => n + 1));
+      return () => cancelAnimationFrame(id);
+    }
+    overflowWaitRef.current = 0;
+
+    const applyShift = () => {
+      if (!previewPageBodiesReady(bodyRefs.current, pages.length)) return;
+      const overflowing = overflowingPreviewPages(
+        bodyRefs.current,
+        pages.length,
+      );
+      const next = shiftOverflowingPreviewPages(pages, overflowing);
+      if (!previewPagesEqual(pages, next)) setPages(next);
+    };
+
+    applyShift();
+    const observers: ResizeObserver[] = [];
+    pages.forEach((_, i) => {
       const el = bodyRefs.current[i];
-      if (!el || el.clientHeight <= 0) return false;
-      return el.scrollHeight > el.clientHeight + 1;
+      if (!el) return;
+      const ro = new ResizeObserver(applyShift);
+      ro.observe(el);
+      observers.push(ro);
     });
-    const next = shiftOverflowingPreviewPages(pages, overflowing);
-    if (!previewPagesEqual(pages, next)) setPages(next);
-  }, [paginate, hideMeasure, pages]);
+    const id = requestAnimationFrame(applyShift);
+    return () => {
+      observers.forEach((ro) => ro.disconnect());
+      cancelAnimationFrame(id);
+    };
+  }, [paginate, hideMeasure, pages, overflowTick]);
 
   useEffect(() => {
     onPageCountChange?.(pageCount);

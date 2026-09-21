@@ -5,6 +5,7 @@
 import { findPatientByIdWithAdmin } from '../../../services/patient-service';
 import {
   applyReadyPatientBookingPath,
+  applyReceptionistFeeReply,
   isPatientReadyForSlotLink,
 } from '../booking-entry-ready-path';
 import {
@@ -21,7 +22,6 @@ import {
 import type { DmHandlerBranch } from '../../../types/dm-instrumentation';
 import type { DmStageHandler, DmTurnContext, DmTurnResult } from '../stage-router';
 import { isBookingEntryTurn } from './booking-entry-predicate';
-import { buildPricesOnBookingPageLead } from '../../../utils/instagram-faq-copy';
 
 /** mca-15: FAQ + booking link only — no name / phone / reason / consent in the thread. */
 function applyLinkFirstBooking(
@@ -131,9 +131,24 @@ export const bookingEntryStage = {
       replyText = readyAvail.replyText;
     } else if (isBookIntent && (justStartingCollection || inCollection)) {
       dmRoutingBranch = 'booking_start_link_first';
-      const readyStart = applyLinkFirstBooking(state, ctx, intentResult.intent);
-      state = readyStart.state;
-      replyText = readyStart.replyText;
+      if (signalsFeePricing) {
+        const feeStart = applyReceptionistFeeReply({
+          state,
+          intent: intentResult.intent,
+          conversationId: conversation.id,
+          doctorId,
+          doctorSettings,
+          patient: null,
+          language: ctx.turnLanguage,
+          wantsToBook: userExplicitlyWantsToBookNow(text),
+        });
+        state = feeStart.state;
+        replyText = feeStart.replyText;
+      } else {
+        const readyStart = applyLinkFirstBooking(state, ctx, intentResult.intent);
+        state = readyStart.state;
+        replyText = readyStart.replyText;
+      }
     } else if (isBookIntent && state.step === 'responded') {
       dmRoutingBranch = 'book_responded';
       const patient = await findPatientByIdWithAdmin(conversation.patient_id, correlationId);
@@ -143,27 +158,66 @@ export const bookingEntryStage = {
 
       if (!hasPatientReady && pricingOnly) {
         dmRoutingBranch = 'fee_deterministic_idle';
-        const prices = applyLinkFirstBooking(state, ctx, intentResult.intent);
-        state = prices.state;
-        replyText = `${buildPricesOnBookingPageLead(ctx.turnLanguage)}\n\n${prices.replyText}`;
-      } else if (hasPatientReady) {
-        dmRoutingBranch = 'book_responded';
-        const ready = applyReadyPatientBookingPath({
+        const prices = applyReceptionistFeeReply({
           state,
           intent: intentResult.intent,
           conversationId: conversation.id,
           doctorId,
           doctorSettings,
-          patient,
+          patient: null,
           language: ctx.turnLanguage,
+          wantsToBook: false,
         });
-        state = ready.state;
-        replyText = ready.replyText;
+        state = prices.state;
+        replyText = prices.replyText;
+      } else if (hasPatientReady) {
+        dmRoutingBranch = 'book_responded';
+        if (signalsFeePricing) {
+          const feeReady = applyReceptionistFeeReply({
+            state,
+            intent: intentResult.intent,
+            conversationId: conversation.id,
+            doctorId,
+            doctorSettings,
+            patient,
+            language: ctx.turnLanguage,
+            wantsToBook: true,
+          });
+          state = feeReady.state;
+          replyText = feeReady.replyText;
+        } else {
+          const ready = applyReadyPatientBookingPath({
+            state,
+            intent: intentResult.intent,
+            conversationId: conversation.id,
+            doctorId,
+            doctorSettings,
+            patient,
+            language: ctx.turnLanguage,
+          });
+          state = ready.state;
+          replyText = ready.replyText;
+        }
       } else {
         dmRoutingBranch = 'book_responded';
-        const readyNew = applyLinkFirstBooking(state, ctx, intentResult.intent);
-        state = readyNew.state;
-        replyText = readyNew.replyText;
+        if (signalsFeePricing) {
+          const feeNew = applyReceptionistFeeReply({
+            state,
+            intent: intentResult.intent,
+            conversationId: conversation.id,
+            doctorId,
+            doctorSettings,
+            patient: null,
+            language: ctx.turnLanguage,
+            wantsToBook: explicitBook,
+          });
+          state = feeNew.state;
+          replyText = feeNew.replyText;
+        } else {
+          const readyNew = applyLinkFirstBooking(state, ctx, intentResult.intent);
+          state = readyNew.state;
+          replyText = readyNew.replyText;
+        }
       }
     }
 

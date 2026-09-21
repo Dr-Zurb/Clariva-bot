@@ -39,7 +39,7 @@ describe('sendInstagramDmWithLocksAndFallback (RBH-04)', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     jest.mocked(queue.tryAcquireInstagramSendLock).mockResolvedValue(true);
-    jest.mocked(queue.tryAcquireReplyThrottle).mockResolvedValue(true);
+    // reply throttle is no longer applied on the send path
     jest.mocked(instagramService.sendInstagramMessage).mockResolvedValue({} as never);
     jest.mocked(idempotency.markWebhookProcessed).mockResolvedValue({} as never);
     jest.mocked(auditLogger.logAuditEvent).mockResolvedValue(undefined as never);
@@ -53,11 +53,11 @@ describe('sendInstagramDmWithLocksAndFallback (RBH-04)', () => {
     expect(idempotency.markWebhookProcessed).toHaveBeenCalledWith('evt-1', 'instagram');
   });
 
-  it('returns throttle_skipped when reply throttle not acquired', async () => {
-    jest.mocked(queue.tryAcquireReplyThrottle).mockResolvedValue(false);
+  it('sends a follow-up even if a reply was just sent to this user', async () => {
     const r = await sendInstagramDmWithLocksAndFallback({ ...baseParams, context: 'default' });
-    expect(r).toEqual({ status: 'throttle_skipped', reason: 'reply_throttle' });
-    expect(instagramService.sendInstagramMessage).not.toHaveBeenCalled();
+    expect(r).toEqual({ status: 'sent', usedRecipientFallback: false });
+    expect(instagramService.sendInstagramMessage).toHaveBeenCalled();
+    expect(queue.tryAcquireReplyThrottle).not.toHaveBeenCalled();
   });
 
   it('sends and returns sent without fallback when primary succeeds', async () => {
@@ -118,6 +118,5 @@ describe('sendInstagramDmWithLocksAndFallback (RBH-04)', () => {
     });
     expect(r.status).toBe('sent');
     expect(queue.tryAcquireInstagramSendLock).not.toHaveBeenCalled();
-    expect(queue.tryAcquireReplyThrottle).not.toHaveBeenCalled();
   });
 });

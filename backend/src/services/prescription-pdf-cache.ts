@@ -33,6 +33,19 @@ const cache = new Map<string, CacheEntry>();
 const inflight = new Map<string, Promise<CachedPdfResult>>();
 const bytesCache = new Map<string, BytesCacheEntry>();
 const bytesInflight = new Map<string, Promise<unknown>>();
+/** Bumped on invalidate so a stale in-flight render cannot recache. */
+const generation = new Map<string, number>();
+
+export function pdfCacheGeneration(prescriptionId: string): number {
+  return generation.get(prescriptionId) ?? 0;
+}
+
+function generationMatches(
+  prescriptionId: string,
+  startedAtGen: number | undefined,
+): boolean {
+  return startedAtGen === undefined || generation.get(prescriptionId) === startedAtGen;
+}
 
 /**
  * Coalesce concurrent generate/print callers onto one render+upload.
@@ -88,7 +101,12 @@ export function cacheGet(prescriptionId: string): CachedPdfResult | null {
   return { ...entry.result, cacheHit: true };
 }
 
-export function cacheSet(prescriptionId: string, result: CachedPdfResult): void {
+export function cacheSet(
+  prescriptionId: string,
+  result: CachedPdfResult,
+  startedAtGen?: number,
+): void {
+  if (!generationMatches(prescriptionId, startedAtGen)) return;
   cache.set(prescriptionId, {
     result: { ...result, cacheHit: false },
     expires: Date.now() + CACHE_TTL_MS,
@@ -105,7 +123,12 @@ export function cacheGetBytes(prescriptionId: string): Buffer | null {
   return entry.bytes;
 }
 
-export function cacheSetBytes(prescriptionId: string, bytes: Buffer): void {
+export function cacheSetBytes(
+  prescriptionId: string,
+  bytes: Buffer,
+  startedAtGen?: number,
+): void {
+  if (!generationMatches(prescriptionId, startedAtGen)) return;
   bytesCache.set(prescriptionId, {
     bytes,
     expires: Date.now() + CACHE_TTL_MS,
@@ -114,6 +137,7 @@ export function cacheSetBytes(prescriptionId: string, bytes: Buffer): void {
 
 /** Drop the in-memory entry so the next print re-renders (unsent) or remints (sent). */
 export function invalidatePrescriptionPdfCache(prescriptionId: string): void {
+  generation.set(prescriptionId, pdfCacheGeneration(prescriptionId) + 1);
   cache.delete(prescriptionId);
   inflight.delete(prescriptionId);
   bytesCache.delete(prescriptionId);

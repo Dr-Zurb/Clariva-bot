@@ -36,8 +36,9 @@ import type { DmHandlerBranch } from '../../../types/dm-instrumentation';
 import type { DmStageHandler, DmTurnContext, DmTurnResult } from '../stage-router';
 import { extractPatientFirstName, shouldUseReturningPatientMemory } from '../returning-patient';
 import {
-  applyLeadPlusBookingLink,
+  applyLeadPlusPageLink,
   applyReadyPatientBookingPath,
+  applyReceptionistFeeReply,
 } from '../booking-entry-ready-path';
 import { isIdleFeeTriageTurn } from './idle-fee-triage-predicate';
 import { buildReceptionistGreetingMessage } from '../../../utils/instagram-greeting-copy';
@@ -45,11 +46,13 @@ import {
   buildHoursMissingLead,
   buildHoursQuoteLead,
   buildLocationOnBookingPageLead,
-  buildPricesOnBookingPageLead,
+  buildLocationQuoteLead,
+  buildPaymentOnBookingPageLead,
   buildReceptionistThanksMessage,
   isClinicalAdviceUserMessage,
   isHoursFaqUserMessage,
   isLocationFaqUserMessage,
+  isOpsPaymentFaqUserMessage,
   isThanksOnlyUserMessage,
 } from '../../../utils/instagram-faq-copy';
 
@@ -62,9 +65,10 @@ interface ReasonFirstFeePartial {
 function pricesOnBookingPageReply(
   ctx: DmTurnContext,
   state: ConversationState,
-  intent: ConversationState['lastIntent']
+  intent: ConversationState['lastIntent'],
+  wantsToBook = false
 ): { state: ConversationState; replyText: string } {
-  return applyLeadPlusBookingLink({
+  return applyReceptionistFeeReply({
     state: mergeTriage(
       {
         ...state,
@@ -83,7 +87,7 @@ function pricesOnBookingPageReply(
     doctorSettings: ctx.doctorSettings,
     patient: null,
     language: ctx.turnLanguage,
-    lead: buildPricesOnBookingPageLead(ctx.turnLanguage),
+    wantsToBook,
   });
 }
 
@@ -262,7 +266,8 @@ export const idleFeeTriageStage: DmStageHandler = {
       replyText = ready.replyText;
     } else if (
       (intentResult.intent === 'medical_query' || isClinicalAdviceUserMessage(text)) &&
-      !inCollection
+      !inCollection &&
+      !userExplicitlyWantsToBookNow(text)
     ) {
       dmRoutingBranch = 'medical_safety';
       replyText = resolveSafetyMessage('medical_query', ctx.turnLanguage);
@@ -301,37 +306,83 @@ export const idleFeeTriageStage: DmStageHandler = {
       (!state.step || state.step === 'responded') &&
       isHoursFaqUserMessage(text)
     ) {
-      dmRoutingBranch = 'booking_start_link_first';
       const hours = doctorSettings?.business_hours_summary?.trim();
-      const lead = hours
-        ? buildHoursQuoteLead(ctx.turnLanguage, hours)
-        : buildHoursMissingLead(ctx.turnLanguage);
-      const readyHours = applyLeadPlusBookingLink({
-        state: mergeTriage(
-          {
-            ...state,
-            lastIntent: intentResult.intent,
-            updatedAt: new Date().toISOString(),
-          },
-          { activeFlow: undefined }
-        ),
-        intent: intentResult.intent,
-        conversationId: conversation.id,
-        doctorId: ctx.doctorId,
-        doctorSettings,
-        patient: null,
-        language: ctx.turnLanguage,
-        lead,
-      });
-      state = readyHours.state;
-      replyText = readyHours.replyText;
+      if (hours) {
+        dmRoutingBranch = 'booking_start_link_first';
+        state = {
+          ...state,
+          lastIntent: intentResult.intent,
+          step: 'responded',
+          updatedAt: new Date().toISOString(),
+        };
+        replyText = buildHoursQuoteLead(ctx.turnLanguage, hours);
+      } else {
+        dmRoutingBranch = 'booking_start_link_first';
+        const readyHours = applyLeadPlusPageLink({
+          state: mergeTriage(
+            {
+              ...state,
+              lastIntent: intentResult.intent,
+              updatedAt: new Date().toISOString(),
+            },
+            { activeFlow: undefined }
+          ),
+          intent: intentResult.intent,
+          conversationId: conversation.id,
+          doctorId: ctx.doctorId,
+          doctorSettings,
+          patient: null,
+          language: ctx.turnLanguage,
+          lead: buildHoursMissingLead(ctx.turnLanguage),
+        });
+        state = readyHours.state;
+        replyText = readyHours.replyText;
+      }
     } else if (
       !inCollection &&
       (!state.step || state.step === 'responded') &&
       isLocationFaqUserMessage(text)
     ) {
+      const address = doctorSettings?.address_summary?.trim();
+      if (address) {
+        dmRoutingBranch = 'booking_start_link_first';
+        state = {
+          ...state,
+          lastIntent: intentResult.intent,
+          step: 'responded',
+          updatedAt: new Date().toISOString(),
+        };
+        replyText = buildLocationQuoteLead(ctx.turnLanguage, address);
+      } else {
+        dmRoutingBranch = 'booking_start_link_first';
+        const readyLoc = applyLeadPlusPageLink({
+          state: mergeTriage(
+            {
+              ...state,
+              lastIntent: intentResult.intent,
+              updatedAt: new Date().toISOString(),
+            },
+            { activeFlow: undefined }
+          ),
+          intent: intentResult.intent,
+          conversationId: conversation.id,
+          doctorId: ctx.doctorId,
+          doctorSettings,
+          patient: null,
+          language: ctx.turnLanguage,
+          lead: buildLocationOnBookingPageLead(ctx.turnLanguage),
+        });
+        state = readyLoc.state;
+        replyText = readyLoc.replyText;
+      }
+    } else if (
+      !inCollection &&
+      (!state.step || state.step === 'responded') &&
+      isOpsPaymentFaqUserMessage(text) &&
+      !userExplicitlyWantsToBookNow(text)
+    ) {
       dmRoutingBranch = 'booking_start_link_first';
-      const readyLoc = applyLeadPlusBookingLink({
+      const readyPay = applyLeadPlusPageLink({
         state: mergeTriage(
           {
             ...state,
@@ -346,10 +397,10 @@ export const idleFeeTriageStage: DmStageHandler = {
         doctorSettings,
         patient: null,
         language: ctx.turnLanguage,
-        lead: buildLocationOnBookingPageLead(ctx.turnLanguage),
+        lead: buildPaymentOnBookingPageLead(ctx.turnLanguage),
       });
-      state = readyLoc.state;
-      replyText = readyLoc.replyText;
+      state = readyPay.state;
+      replyText = readyPay.replyText;
     } else if (signalsFeePricing && !userExplicitlyWantsToBookNow(text) && inCollection) {
       dmRoutingBranch = 'fee_deterministic_mid_collection';
       const midPrices = pricesOnBookingPageReply(ctx, state, intentResult.intent);
@@ -404,7 +455,10 @@ export const idleFeeTriageStage: DmStageHandler = {
 
       const greetingReply = isThanksOnlyUserMessage(text)
         ? buildReceptionistThanksMessage(ctx.turnLanguage)
-        : buildReceptionistGreetingMessage(ctx.turnLanguage);
+        : buildReceptionistGreetingMessage(ctx.turnLanguage, {
+            catalogMode: doctorSettings?.catalog_mode,
+            hasAddress: Boolean(doctorSettings?.address_summary?.trim()),
+          });
       replyText =
         welcomeBackSegment != null && !isThanksOnlyUserMessage(text)
           ? composeDmReplySegments([

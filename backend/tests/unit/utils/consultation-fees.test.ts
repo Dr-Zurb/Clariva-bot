@@ -15,6 +15,7 @@ import {
   isTeleconsultCatalogAuthoritative,
   pickCatalogServicesForFeeDm,
   pickCatalogServicesMatchingUserText,
+  formatSingleConsultFeeDm,
   userExplicitlyWantsToBookNow,
 } from '../../../src/utils/consultation-fees';
 import {
@@ -56,11 +57,38 @@ describe('consultation-fees (RBH-13)', () => {
     expect(line).not.toContain('In-clinic');
   });
 
+  it('formatSingleConsultFeeDm quotes only in single_fee with an amount', () => {
+    expect(
+      formatSingleConsultFeeDm(
+        { catalog_mode: 'multi_service', appointment_fee_minor: 50000 },
+        'en'
+      )
+    ).toBeNull();
+    expect(
+      formatSingleConsultFeeDm({ catalog_mode: 'single_fee', appointment_fee_minor: null }, 'en')
+    ).toBeNull();
+    expect(
+      formatSingleConsultFeeDm(
+        {
+          catalog_mode: 'single_fee',
+          appointment_fee_minor: 50000,
+          appointment_fee_currency: 'INR',
+        },
+        'en'
+      )
+    ).toBe('Consult fee is ₹500.');
+  });
+
   it('userExplicitlyWantsToBookNow detects real booking intent', () => {
     expect(userExplicitlyWantsToBookNow('I want to book an appointment')).toBe(true);
+    expect(userExplicitlyWantsToBookNow('book')).toBe(true);
+    expect(userExplicitlyWantsToBookNow('booking link')).toBe(true);
     expect(userExplicitlyWantsToBookNow('book video')).toBe(true);
     expect(userExplicitlyWantsToBookNow('book voice consult')).toBe(true);
     expect(userExplicitlyWantsToBookNow('video appointment tomorrow')).toBe(true);
+    expect(userExplicitlyWantsToBookNow('send me the booking link')).toBe(true);
+    expect(userExplicitlyWantsToBookNow('whatsapp me the slot')).toBe(true);
+    expect(userExplicitlyWantsToBookNow('I want to book I have fever')).toBe(true);
     expect(userExplicitlyWantsToBookNow('how much for video consult')).toBe(false);
     expect(userExplicitlyWantsToBookNow('how much do you charge')).toBe(false);
   });

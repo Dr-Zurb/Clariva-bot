@@ -126,6 +126,16 @@ export async function downloadSignedPdf(
   }
 }
 
+/** Fingerprint of named medicines — a warmed PDF must match this list. */
+export function rxPdfWarmMedicineKey(
+  medicines: Array<{ medicineName: string }>,
+): string {
+  return medicines
+    .map((m) => m.medicineName.trim())
+    .filter(Boolean)
+    .join("\u0001");
+}
+
 const PRINT_IFRAME_KEEPALIVE_MS = 120_000;
 /** Safari often never fires onload for a PDF iframe — print blind after this. */
 const PRINT_BLIND_FALLBACK_MS = 1_200;
@@ -456,6 +466,7 @@ export function useRxCommitActions({
   const pdfWarmRef = useRef<{
     rxId: string;
     objectUrl: Promise<string>;
+    medicineKey: string;
   } | null>(null);
   const doctorMetaRef = useRef<{
     doctorName: string;
@@ -875,17 +886,20 @@ export function useRxCommitActions({
 
   const prewarmPdf = useCallback(
     (rxId: string): Promise<string> => {
+      const medicineKey = rxPdfWarmMedicineKey(fields.medicines);
       const existing = pdfWarmRef.current;
-      if (existing?.rxId === rxId) return existing.objectUrl;
+      if (existing?.rxId === rxId && existing.medicineKey === medicineKey) {
+        return existing.objectUrl;
+      }
       dropPdfWarm(true);
       const objectUrl = loadPdfObjectUrl(rxId).catch((err) => {
         if (pdfWarmRef.current?.rxId === rxId) pdfWarmRef.current = null;
         throw err;
       });
-      pdfWarmRef.current = { rxId, objectUrl };
+      pdfWarmRef.current = { rxId, objectUrl, medicineKey };
       return objectUrl;
     },
-    [dropPdfWarm, loadPdfObjectUrl]
+    [dropPdfWarm, fields.medicines, loadPdfObjectUrl]
   );
 
   /**
@@ -895,16 +909,20 @@ export function useRxCommitActions({
    * dialog then never opens.
    */
   const takeWarmedPdf = useCallback(
-    (rxId: string): Promise<string> => {
+    async (rxId: string): Promise<string> => {
+      const medicineKey = rxPdfWarmMedicineKey(fields.medicines);
       const existing = pdfWarmRef.current;
-      if (existing?.rxId === rxId) {
+      if (existing?.rxId === rxId && existing.medicineKey === medicineKey) {
         pdfWarmRef.current = null;
         return existing.objectUrl;
       }
+      const staleWarm =
+        existing != null && existing.medicineKey !== medicineKey;
       dropPdfWarm(true);
+      if (staleWarm) await persistDraftForCommit({ force: true });
       return loadPdfObjectUrl(rxId);
     },
-    [dropPdfWarm, loadPdfObjectUrl]
+    [dropPdfWarm, fields.medicines, loadPdfObjectUrl, persistDraftForCommit]
   );
 
   const openPreview = useCallback(() => {

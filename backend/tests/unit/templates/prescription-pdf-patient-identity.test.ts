@@ -2,13 +2,27 @@ import { describe, expect, it } from '@jest/globals';
 import {
   computeAgeLabel,
   formatAgeGender,
+  formatAgeYearsLabel,
   formatGuardianLine,
+  resolvePatientAgeLabel,
 } from '../../../src/templates/prescription-pdf/patient-identity';
 
 describe('computeAgeLabel', () => {
   it('returns null for missing or impossible DOB', () => {
     expect(computeAgeLabel(null)).toBeNull();
     expect(computeAgeLabel('not-a-date')).toBeNull();
+  });
+});
+
+describe('resolvePatientAgeLabel', () => {
+  it('uses stored years when DOB was never captured', () => {
+    expect(resolvePatientAgeLabel(null, 2)).toBe('2 y');
+    expect(formatAgeYearsLabel(0)).toBe('< 1 y');
+  });
+
+  it('prefers DOB over the stored years', () => {
+    expect(resolvePatientAgeLabel('2016-01-15', 99)).toMatch(/^\d+ y$/);
+    expect(resolvePatientAgeLabel('2016-01-15', 99)).not.toBe('99 y');
   });
 });
 

@@ -56,6 +56,18 @@ export function formatBookingLinkDm(input: BookingLinkDmInput): string {
   return link;
 }
 
+/** Same `/book` URL, no “get an appointment” — fee / hours-missing / address-missing. */
+export function formatClinicPageLinkDm(input: BookingLinkDmInput): string {
+  const locale = toStaticLocale(input.language);
+  const url = input.slotLink;
+  const byLocale: Record<StaticMessageLocale, string> = {
+    en: `${url}\n\nYou'll be redirected back to this chat when done.`,
+    hi: `${url}\n\nDone hone par aap wapas is chat par aa jayenge.`,
+    pa: `${url}\n\nDone hon to tusi wapas is chat te aa jaoge.`,
+  };
+  return byLocale[locale];
+}
+
 export interface RescheduleLinkDmInput {
   readonly language: ConversationLanguage;
   readonly url: string;
@@ -153,9 +165,7 @@ const BOOKING_AWAITING_FOLLOW_UP_COPY: Readonly<
 /**
  * When user is in awaiting_slot_selection and did not ask for a new link.
  */
-export function formatBookingAwaitingFollowUpDm(
-  input: BookingAwaitingFollowUpDmInput
-): string {
+export function formatBookingAwaitingFollowUpDm(input: BookingAwaitingFollowUpDmInput): string {
   const locale = toStaticLocale(input.language);
   const copy = BOOKING_AWAITING_FOLLOW_UP_COPY[locale];
   const mode = resolveOpdModeFromSettings(input.doctorSettings);

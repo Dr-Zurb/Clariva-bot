@@ -82,7 +82,12 @@ export const MedicineTable: React.FC<MedicineTableProps> = ({
   ): React.ReactElement => {
     const d = projectMedicineForDisplay(med);
     return (
-      <View key={med.id} style={styles.medRow} wrap={false}>
+      <View
+        key={med.id}
+        style={styles.medRow}
+        wrap={false}
+        minPresenceAhead={48}
+      >
         <Text style={[styles.medCellIdx, { fontSize: labelSize }]}>{i + 1}.</Text>
         <View style={styles.medCellName}>
           <Text style={[styles.medCellText, { fontSize: bodySize }]}>

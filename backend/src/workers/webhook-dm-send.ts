@@ -4,7 +4,7 @@
  */
 
 import { logger } from '../config/logger';
-import { tryAcquireInstagramSendLock, tryAcquireReplyThrottle } from '../config/queue';
+import { tryAcquireInstagramSendLock } from '../config/queue';
 import {
   sendInstagramMessage,
   getSenderFromMostRecentConversation,
@@ -110,43 +110,8 @@ export async function sendInstagramDmWithLocksAndFallback(
       return { status: 'throttle_skipped', reason: 'send_lock' };
     }
 
-    const replyThrottleAcquired = await tryAcquireReplyThrottle(pageId, senderId);
-    if (!replyThrottleAcquired) {
-      if (isRecovery) {
-        logger.info(
-          { correlationId, eventId, provider },
-          'Conflict recovery: skipping send (reply throttle)'
-        );
-        logWebhookDmThrottleSkip({ correlationId, eventId, reason: 'reply_throttle' });
-        logWebhookConflictRecovery({
-          correlationId,
-          eventId,
-          outcome: 'send_skipped_throttle',
-        });
-      } else {
-        logger.info(
-          { correlationId, eventId, provider },
-          'Skipping send: reply throttle (already sent to this user recently)'
-        );
-        logWebhookDmThrottleSkip({ correlationId, eventId, reason: 'reply_throttle' });
-      }
-      await markWebhookProcessed(eventId, provider);
-      await logAuditEvent({
-        correlationId,
-        userId: undefined,
-        action: 'webhook_processed',
-        resourceType: 'webhook',
-        status: 'success',
-        metadata: {
-          event_id: eventId,
-          provider,
-          recipient_id: senderId,
-          ...(isRecovery ? { recovered: true } : {}),
-          skipped_reply_throttle: true,
-        },
-      });
-      return { status: 'throttle_skipped', reason: 'reply_throttle' };
-    }
+    // Per-user 5s mute used to drop the next real turn (hello → headache).
+    // Meta duplicates share an eventId and are already caught by the send lock.
   }
 
   if (webhookEntryId && doctorPageId && webhookEntryId !== doctorPageId) {

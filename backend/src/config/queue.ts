@@ -229,7 +229,7 @@ export async function releaseConversationLock(
 /** Send throttle: one reply per (user, message content) per window. New messages get replies; duplicates for same content are skipped. */
 const SEND_THROTTLE_SEC = 90;
 
-/** Per-user reply throttle: max 1 send per (pageId, senderId) per window. Meta duplicates arrive within 1-2s; 5s catches them while allowing fast back-and-forth. */
+/** Kept for tests / unused mute. Send path no longer applies this — it ate real follow-ups. */
 const REPLY_THROTTLE_SEC = 5;
 
 /**

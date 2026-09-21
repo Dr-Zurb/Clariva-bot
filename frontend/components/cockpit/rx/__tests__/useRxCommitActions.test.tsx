@@ -1004,6 +1004,65 @@ describe("useRxCommitActions", () => {
     printStub.restore();
   });
 
+  it("fetches a new PDF when a medicine is added after preview", async () => {
+    const { fetchPrescriptionPdf, sendPrescriptionToPatient, updatePrescription } =
+      await import("@/lib/api");
+    vi.mocked(sendPrescriptionToPatient).mockResolvedValue({
+      success: true,
+      data: { sent: true, channels: { email: true } },
+      meta: { timestamp: "", requestId: "" },
+    });
+    vi.mocked(updatePrescription).mockResolvedValue({
+      success: true,
+      data: { prescription: { id: "rx-1" } } as never,
+      meta: { timestamp: "", requestId: "" },
+    });
+    const print = vi.fn();
+    const printStub = installPrintIframe(print);
+    const fields = createEmptyRxFormFields();
+    fields.medicines[0] = { ...fields.medicines[0]!, medicineName: "paracetamol syrup" };
+
+    const { result } = renderHook(
+      () => {
+        const form = useRxForm();
+        const commit = useRxCommitActions({
+          appointmentId: "appt-1",
+          patientId: "pat-1",
+          token: "token",
+          cockpitState: "live",
+          onFinish: vi.fn(),
+          registerActions: false,
+        });
+        return { form, commit };
+      },
+      { wrapper: wrapper(makeShell(fields)) }
+    );
+
+    await act(async () => {
+      result.current.commit.openPreview();
+    });
+    await waitFor(() => {
+      expect(fetchPrescriptionPdf).toHaveBeenCalledTimes(1);
+    });
+
+    await act(async () => {
+      const blank = createEmptyRxFormFields().medicines[0]!;
+      result.current.form.setField("medicines", [
+        { ...blank, medicineName: "cough syrup" },
+        ...result.current.form.state.fields.medicines,
+      ]);
+    });
+
+    await act(async () => {
+      result.current.commit.sendFinishAndPrint();
+    });
+    await waitFor(() => {
+      expect(print).toHaveBeenCalledTimes(1);
+    });
+    expect(fetchPrescriptionPdf).toHaveBeenCalledTimes(2);
+    printStub.restore();
+  });
+
   it("prewarms the PDF on intent without opening the preview", async () => {
     const { fetchPrescriptionPdf } = await import("@/lib/api");
     const printStub = installPrintIframe(vi.fn());

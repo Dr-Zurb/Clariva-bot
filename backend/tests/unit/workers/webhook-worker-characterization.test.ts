@@ -679,7 +679,7 @@ describe('RBH-02 webhook worker characterization', () => {
       );
     });
 
-    it('skips send when tryAcquireReplyThrottle returns false', async () => {
+    it('sends a follow-up even when tryAcquireReplyThrottle would deny', async () => {
       jest.mocked(queueConfig.tryAcquireReplyThrottle).mockResolvedValueOnce(false as never);
 
       await processWebhookJob(
@@ -691,8 +691,7 @@ describe('RBH-02 webhook worker characterization', () => {
         })
       );
 
-      expect(mockSendMessage).not.toHaveBeenCalled();
-      expect(mockMarkProcessed).toHaveBeenCalledWith('evt-throttle-reply', 'instagram');
+      expect(mockSendMessage).toHaveBeenCalled();
     });
   });
 

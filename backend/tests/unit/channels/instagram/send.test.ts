@@ -81,11 +81,11 @@ describe('sendInstagramOutbound (rcp-11)', () => {
     expect(idempotency.markWebhookProcessed).toHaveBeenCalledWith('evt-1', 'instagram');
   });
 
-  it('returns throttle_skipped when reply throttle not acquired', async () => {
+  it('sends a follow-up even when reply throttle would deny', async () => {
     jest.mocked(queue.tryAcquireReplyThrottle).mockResolvedValue(false);
     const result = await sendInstagramOutbound({ text: 'Hello' }, inbound(), { context: 'default' });
-    expect(result).toEqual({ status: 'throttle_skipped', reason: 'reply_throttle' });
-    expect(instagramService.sendInstagramMessage).not.toHaveBeenCalled();
+    expect(result).toEqual({ status: 'sent', usedRecipientFallback: false });
+    expect(instagramService.sendInstagramMessage).toHaveBeenCalled();
   });
 
   it('uses conversation fallback when primary NotFound and pages mismatch', async () => {

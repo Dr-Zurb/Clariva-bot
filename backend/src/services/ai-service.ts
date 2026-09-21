@@ -31,14 +31,12 @@ import {
 import type { Message } from '../types';
 import type { AIResponseWithActions, ToolCallFromAI } from '../types/system-actions';
 import { logAIClassification, logAIResponseGeneration, logAuditEvent } from '../utils/audit-logger';
-import {
-  parseConsentReply,
-  type ConsentParseResult,
-} from './consent-service';
+import { parseConsentReply, type ConsentParseResult } from './consent-service';
 import type { CollectedPatientData } from '../utils/validation';
 import {
   isConsultationTypePricingFollowUp,
   isPricingInquiryMessage,
+  isStandaloneBookingRequest,
   userExplicitlyWantsToBookNow,
 } from '../utils/consultation-fees';
 import {
@@ -64,11 +62,9 @@ import {
   type ConversationLanguage,
 } from '../utils/conversation-language';
 import { buildLlmEmptyFallbackMessage } from '../utils/dm-copy';
-import {
-  isOptionalExtrasConsentPrompt,
-  isSkipExtrasReply,
-} from '../utils/booking-consent-context';
+import { isOptionalExtrasConsentPrompt, isSkipExtrasReply } from '../utils/booking-consent-context';
 import { BOOKING_RELATION_KIN_PATTERN } from '../utils/booking-relation-terms';
+import { isClinicalAdviceUserMessage } from '../utils/instagram-faq-copy';
 
 // ============================================================================
 // Constants
@@ -124,7 +120,10 @@ function setCachedIntent(redactedText: string, result: IntentDetectionResult): v
 }
 
 /** Comment intent cache (separate from DM intent cache). */
-const commentIntentCache = new Map<string, { result: CommentIntentDetectionResult; expiresAt: number }>();
+const commentIntentCache = new Map<
+  string,
+  { result: CommentIntentDetectionResult; expiresAt: number }
+>();
 
 function getCachedCommentIntent(redactedText: string): CommentIntentDetectionResult | null {
   const entry = commentIntentCache.get(redactedText);
@@ -160,7 +159,8 @@ function setCachedCommentIntent(redactedText: string, result: CommentIntentDetec
 // ============================================================================
 
 /** Simple greetings only (no mixed content). Match → greeting, skip AI. */
-const SIMPLE_GREETING_REGEX = /^(hi|hello|hey|hiya|howdy|namaste|नमस्ते|good\s*morning|good\s*afternoon|good\s*evening|good\s*day)[\s!?.]*$/i;
+const SIMPLE_GREETING_REGEX =
+  /^(hi|hello|hey|hiya|howdy|namaste|नमस्ते|good\s*morning|good\s*afternoon|good\s*evening|good\s*day)[\s!?.]*$/i;
 
 /** e-task-4: Multi-person "me and my X". Must run before BOOK_FOR_SOMEONE_ELSE. */
 const MULTI_PERSON_BOOKING_REGEX = new RegExp(
@@ -433,7 +433,7 @@ NON-INTERPRETATION (hard rule): NEVER characterize a patient's reading, symptom,
 
 HOW YOU WORK (architecture): You are the conversational layer — understand any human language or mix (English, Hindi, Hinglish, transliteration, casual spelling). For FACTS about this practice (fees, hours, location, cancellation rules, consultation types), use ONLY the "Practice info" and "SYSTEM FACTS — FEES" blocks injected into this prompt from our live database. Those blocks are the source of truth. Never contradict them. Never tell the patient that fee or pricing information is "not in the system", "not visible", or "missing" when those blocks list an amount or note. If a block is empty for a detail, say the clinic can confirm — do not invent rupee amounts.
 
-GREETING: When currentIntent is greeting, the system already sends a fixed receptionist line. If you still write a greeting, use this sense only: Hi — I'm the receptionist. I can help with timings, availability, or a booking link. How can I help today? Never introduce yourself as a doctor's assistant. Never say doctor, Dr, teleconsult, teleconsultation, medical advice, or patient. Never ask for name, phone, age, gender, email, or reason for visit.
+GREETING: When currentIntent is greeting, the system already sends a fixed receptionist line. If you still write a greeting, use this sense only: Hi — I'm the receptionist. I can help with availability, cancel/reschedule, or a booking link. How can I help today? Mention the consult fee only when Practice info says single_fee. Never introduce yourself as a doctor's assistant. Never say doctor, Dr, teleconsult, teleconsultation, medical advice, or patient. Never ask for name, phone, age, gender, email, or reason for visit.
 
 BOOKING (MCA-DL-4): This chat is FAQ + a booking-link handoff only. Do NOT collect full name, age, gender, phone, email, reason for visit, or consent in the thread. Those belong on the owned booking page. When the user wants to book, do not ask for those fields — the system sends the booking link. If they ask "what's YOUR name" (to the bot), say you're the receptionist. Do not ask for theirs.
 
@@ -472,15 +472,9 @@ export function redactPhiForAI(text: string): string {
   if (!text || typeof text !== 'string') return '';
   let out = text;
   // Email (simple pattern) — first so digits in local-parts aren't mangled
-  out = out.replace(
-    /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/gi,
-    '[REDACTED_EMAIL]'
-  );
+  out = out.replace(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/gi, '[REDACTED_EMAIL]');
   // Indian mobile: +91 / 00 / 0 prefix or 5-5 spaced/dashed (starts 6-9)
-  out = out.replace(
-    /(?:(?:\+|00)?91[\s.-]?|0?)[6-9]\d{4}[\s.-]?\d{5}\b/g,
-    '[REDACTED_PHONE]'
-  );
+  out = out.replace(/(?:(?:\+|00)?91[\s.-]?|0?)[6-9]\d{4}[\s.-]?\d{5}\b/g, '[REDACTED_PHONE]');
   // US/international phone: digits with optional spaces/dots/dashes/parens
   out = out.replace(
     /(\+?1?[-.\s]?)?\(?[0-9]{3}\)?[-.\s]?[0-9]{3}[-.\s]?[0-9]{4}\b/g,
@@ -563,7 +557,10 @@ export function classifierSignalsFeeThreadContinuation(
   result: IntentDetectionResult,
   lastBotMessage: string | undefined
 ): boolean {
-  if (!pricingSubsignalConfidenceTrusted(result.confidence) || result.fee_thread_continuation !== true) {
+  if (
+    !pricingSubsignalConfidenceTrusted(result.confidence) ||
+    result.fee_thread_continuation !== true
+  ) {
     return false;
   }
   return lastBotDiscussesFeesTopic(lastBotMessage);
@@ -574,8 +571,7 @@ export function classifierSignalsFeeThreadContinuation(
  */
 export function classifierSignalsReasonFirstDoneAdding(result: IntentDetectionResult): boolean {
   return (
-    pricingSubsignalConfidenceTrusted(result.confidence) &&
-    result.reason_first_done_adding === true
+    pricingSubsignalConfidenceTrusted(result.confidence) && result.reason_first_done_adding === true
   );
 }
 
@@ -750,8 +746,9 @@ Return JSON only.`;
       // Belt-and-braces: even with the correction-mode prompt, a stray model
       // might emit `name: "wrong"` for a complaint reply. Drop these
       // sentinels at the boundary.
-      const isComplaintSentinel =
-        /^(?:wrong|incorrect|not\s+right|nothing|none|n\/?a)$/i.test(name);
+      const isComplaintSentinel = /^(?:wrong|incorrect|not\s+right|nothing|none|n\/?a)$/i.test(
+        name
+      );
       const isVerbStartingPhrase =
         /^\s*(i\s+have|i\s+took|i've\s+got|she\s+has|he\s+has|having|suffering)\b/i.test(name);
       // "my <other-field>" or "your <field>" payloads are never names —
@@ -770,13 +767,19 @@ Return JSON only.`;
     if (typeof parsed.age === 'number' && parsed.age >= 1 && parsed.age <= 120) {
       result.age = parsed.age;
     }
-    if (typeof parsed.gender === 'string' && ['male', 'female', 'other'].includes(parsed.gender.toLowerCase())) {
+    if (
+      typeof parsed.gender === 'string' &&
+      ['male', 'female', 'other'].includes(parsed.gender.toLowerCase())
+    ) {
       result.gender = parsed.gender.toLowerCase();
     }
     if (typeof parsed.reason_for_visit === 'string' && parsed.reason_for_visit.trim().length >= 2) {
       result.reason_for_visit = parsed.reason_for_visit.trim().slice(0, 500);
     }
-    if (typeof parsed.email === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(parsed.email.trim())) {
+    if (
+      typeof parsed.email === 'string' &&
+      /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(parsed.email.trim())
+    ) {
       result.email = parsed.email.trim().toLowerCase();
     }
 
@@ -911,7 +914,7 @@ function buildIntentClassificationUserContent(
       .find((t) => t.role === 'assistant' && assistantMessageIsEmergencyEscalationCopy(t.content));
     if (assistantEmergencyFollowUp) {
       blocks.push(
-        '[Assistant_context: The assistant already sent a standard emergency escalation message (e.g. call 112/108 or go to hospital). Read the **whole thread**: if the patient\'s **current** message indicates **resolved/improved** situation, **stable** vitals, **non-crisis** readings, or they want **booking/fees/guidance** without reporting a **new** ongoing crisis — classify **medical_query**, not emergency. If they still describe **immediate** danger or **crisis-level** vitals as their **present** state, **emergency** may still apply. Do not repeat emergency for a **pure** stability/update turn.]'
+        "[Assistant_context: The assistant already sent a standard emergency escalation message (e.g. call 112/108 or go to hospital). Read the **whole thread**: if the patient's **current** message indicates **resolved/improved** situation, **stable** vitals, **non-crisis** readings, or they want **booking/fees/guidance** without reporting a **new** ongoing crisis — classify **medical_query**, not emergency. If they still describe **immediate** danger or **crisis-level** vitals as their **present** state, **emergency** may still apply. Do not repeat emergency for a **pure** stability/update turn.]"
       );
     }
     blocks.push(
@@ -952,8 +955,7 @@ export function applyIntentPostClassificationPolicy(
   const digits = t.replace(/\D/g, '');
   if (digits.length >= 10 && /^[6-9]/.test(digits)) return result;
   if (t.length > 220) return result;
-  const looksFeeRelated =
-    isPricingInquiryMessage(t) || isConsultationTypePricingFollowUp(t);
+  const looksFeeRelated = isPricingInquiryMessage(t) || isConsultationTypePricingFollowUp(t);
   if (!looksFeeRelated) return result;
   const topicSet = new Set(result.topics ?? []);
   topicSet.add('pricing');
@@ -1054,8 +1056,7 @@ export async function resolvePostMedicalPaymentExistenceAck(
   }
 
   const userPayload = `SOURCE:\n"""\n${fallback}\n"""`;
-  const systemContent =
-    `${POST_MED_ACK_LOCALIZE_SYSTEM}\n\n${buildLanguageReplyDirective(turnLanguage)}`;
+  const systemContent = `${POST_MED_ACK_LOCALIZE_SYSTEM}\n\n${buildLanguageReplyDirective(turnLanguage)}`;
 
   try {
     const completion = await client.chat.completions.create({
@@ -1106,10 +1107,7 @@ export async function resolvePostMedicalPaymentExistenceAck(
     });
     return content;
   } catch (err) {
-    logger.warn(
-      { correlationId, err },
-      'Post-med ack localize failed; using canonical EN'
-    );
+    logger.warn({ correlationId, err }, 'Post-med ack localize failed; using canonical EN');
     await logAuditEvent({
       correlationId,
       action: 'ai_post_med_ack_localize',
@@ -1307,10 +1305,7 @@ export async function classifyIntent(
   const client = getOpenAIClient();
 
   if (!client) {
-    logger.warn(
-      { correlationId },
-      'Intent classification skipped: OPENAI_API_KEY not set'
-    );
+    logger.warn({ correlationId }, 'Intent classification skipped: OPENAI_API_KEY not set');
     return { intent: 'unknown', confidence: 0 };
   }
 
@@ -1331,6 +1326,12 @@ export async function classifyIntent(
   }
   if (isCheckAppointmentStatus(redactedText)) {
     return { intent: 'check_appointment_status', confidence: 1 };
+  }
+  if (isStandaloneBookingRequest(redactedText) || userExplicitlyWantsToBookNow(redactedText)) {
+    return { intent: 'book_appointment', confidence: 1 };
+  }
+  if (isClinicalAdviceUserMessage(redactedText)) {
+    return { intent: 'medical_query', confidence: 1 };
   }
 
   if (!skipIntentCache) {
@@ -1390,9 +1391,7 @@ export async function classifyIntent(
         return { intent: 'unknown', confidence: 0 };
       }
 
-      const intent = toIntent(
-        typeof parsed.intent === 'string' ? parsed.intent : ''
-      );
+      const intent = toIntent(typeof parsed.intent === 'string' ? parsed.intent : '');
       const confidence = clampConfidence(
         typeof parsed.confidence === 'number' ? parsed.confidence : 0
       );
@@ -1544,7 +1543,11 @@ async function callBookingTurnClassifier(
     } catch (err) {
       const isLast = attempt === MAX_RETRIES - 1;
       logger.warn(
-        { correlationId, attempt: attempt + 1, err: err instanceof Error ? err.message : 'unknown' },
+        {
+          correlationId,
+          attempt: attempt + 1,
+          err: err instanceof Error ? err.message : 'unknown',
+        },
         'Booking turn classification attempt failed'
       );
       if (isLast) {
@@ -1601,7 +1604,9 @@ function confirmDetailsDeterministic(text: string): ConfirmDetailsReplyResult | 
   if (/^(actually|no,)\s+/i.test(raw)) return 'correction';
   if (/^(yes|yeah|yep|ok|okay|correct|looks good|confirmed)$/.test(s)) return 'confirm';
   if (
-    /^(yes|yeah|yep|ok|okay)\s*[,!.]?\s*(correct|right|that'?s|that is|good|confirmed)\s*\.?$/i.test(s)
+    /^(yes|yeah|yep|ok|okay)\s*[,!.]?\s*(correct|right|that'?s|that is|good|confirmed)\s*\.?$/i.test(
+      s
+    )
   ) {
     return 'confirm';
   }
@@ -1684,10 +1689,7 @@ export async function classifyCommentIntent(
   const client = getOpenAIClient();
 
   if (!client) {
-    logger.warn(
-      { correlationId },
-      'Comment intent classification skipped: OPENAI_API_KEY not set'
-    );
+    logger.warn({ correlationId }, 'Comment intent classification skipped: OPENAI_API_KEY not set');
     return { intent: 'other', confidence: 0 };
   }
 
@@ -1833,7 +1835,10 @@ export async function isPossiblyMedicalComment(
 
     const content = completion.choices[0]?.message?.content?.trim().toLowerCase();
     if (!content) {
-      logger.info({ correlationId, commentPreview: redactedText.slice(0, 50) }, 'Second-stage medical: empty response');
+      logger.info(
+        { correlationId, commentPreview: redactedText.slice(0, 50) },
+        'Second-stage medical: empty response'
+      );
       return false;
     }
 
@@ -1848,7 +1853,11 @@ export async function isPossiblyMedicalComment(
       });
     } else {
       logger.info(
-        { correlationId, secondStageAnswer: content.slice(0, 30), commentPreview: redactedText.slice(0, 50) },
+        {
+          correlationId,
+          secondStageAnswer: content.slice(0, 30),
+          commentPreview: redactedText.slice(0, 50),
+        },
         'Second-stage medical: model said no'
       );
     }
@@ -1967,8 +1976,7 @@ function buildResponseSystemPrompt(
   const suppressAllConsultationFees = promptOpts?.suppressConsultationFeeFacts === true;
   const suppressMultiTierFeeCatalog =
     !suppressAllConsultationFees &&
-    (promptOpts?.competingVisitTypeBuckets === true ||
-      promptOpts?.silentAssignmentStrict === true);
+    (promptOpts?.competingVisitTypeBuckets === true || promptOpts?.silentAssignmentStrict === true);
   let prompt = RESPONSE_SYSTEM_PROMPT_BASE;
   prompt += `\n\n${buildLanguageReplyDirective(turnLanguage)}`;
   const parts: string[] = [];
@@ -1981,8 +1989,13 @@ function buildResponseSystemPrompt(
   if (doctorContext?.address_summary?.trim()) {
     parts.push(`Location: ${doctorContext.address_summary.trim()}.`);
   }
-  if (doctorContext?.cancellation_policy_hours != null && doctorContext.cancellation_policy_hours > 0) {
-    parts.push(`Please cancel at least ${doctorContext.cancellation_policy_hours} hours in advance if you need to reschedule.`);
+  if (
+    doctorContext?.cancellation_policy_hours != null &&
+    doctorContext.cancellation_policy_hours > 0
+  ) {
+    parts.push(
+      `Please cancel at least ${doctorContext.cancellation_policy_hours} hours in advance if you need to reschedule.`
+    );
   }
   if (parts.length > 0) {
     prompt += `\n\nPractice info (use when relevant): ${parts.join(' ')}`;
@@ -1990,32 +2003,32 @@ function buildResponseSystemPrompt(
 
   const feeFacts: string[] = [];
   if (!suppressAllConsultationFees) {
-  const catalogSummary = doctorContext?.service_catalog_summary_for_ai?.trim();
+    const catalogSummary = doctorContext?.service_catalog_summary_for_ai?.trim();
     const cur = (doctorContext?.appointment_fee_currency || 'INR').trim().toUpperCase() || 'INR';
     if (cur !== 'INR') {
       feeFacts.push(
         `Practice currency: ${cur}. Treat catalog and on-file amounts as being in this currency unless a line states otherwise.`
       );
     }
-  if (catalogSummary) {
+    if (catalogSummary) {
       if (suppressMultiTierFeeCatalog) {
         feeFacts.push(
           `Teleconsult catalog: this practice has multiple visit types and prices on file, but **this thread is flagged** — do **not** paste, list, or compare specific prices for different visit types; do **not** ask the patient to pick a fee tier or service row. Acknowledge warmly; for fee questions say **the practice will confirm the correct visit type** and then the exact fee — **no multi-tier amounts or comparisons in this reply**. Do not collect name, phone, or reason for visit in this chat.`
         );
       } else {
-    feeFacts.push(
-      `Teleconsult fee schedule from practice catalog (verbatim; do not invent or change amounts): ${catalogSummary}`
-    );
+        feeFacts.push(
+          `Teleconsult fee schedule from practice catalog (verbatim; do not invent or change amounts): ${catalogSummary}`
+        );
       }
-  }
-  const feeSummary = doctorContext?.appointment_fee_summary?.trim();
-  if (feeSummary) feeFacts.push(feeSummary);
-  const consultRaw = doctorContext?.consultation_types?.trim();
+    }
+    const feeSummary = doctorContext?.appointment_fee_summary?.trim();
+    if (feeSummary) feeFacts.push(feeSummary);
+    const consultRaw = doctorContext?.consultation_types?.trim();
     if (consultRaw && !suppressMultiTierFeeCatalog) {
       const legacyNote = catalogSummary
         ? ' Supplemental notes only — teleconsult/modality prices in the catalog above take precedence when both apply.'
         : '';
-    feeFacts.push(
+      feeFacts.push(
         `Legacy consultation types / per-visit notes exactly as stored: ${consultRaw}.${legacyNote} Use any amounts or labels you find here verbatim; do not invent prices.`
       );
     }
@@ -2064,7 +2077,7 @@ type ReplyMessage = {
 function replyCacheKey(
   practiceName: string,
   turnLanguage: string,
-  promptOpts?: BuildResponseSystemPromptOptions,
+  promptOpts?: BuildResponseSystemPromptOptions
 ): string {
   const feeMode = promptOpts?.suppressConsultationFeeFacts
     ? 'nofee'
@@ -2096,10 +2109,7 @@ function buildReplyMessages(input: {
       messages: [
         {
           role: 'system',
-          content: [
-            cachedSystemTextPart(stableSystem),
-            { type: 'text', text: volatileSystem },
-          ],
+          content: [cachedSystemTextPart(stableSystem), { type: 'text', text: volatileSystem }],
         },
         ...historyMsgs,
         { role: 'user', content: userContent },
@@ -2161,10 +2171,9 @@ export async function generateResponse(input: GenerateResponseInput): Promise<st
   }
 
   const stepContext = state?.step ? ` Current step in flow: ${state.step}.` : '';
-  const collectedContext =
-    state?.collectedFields?.length
-      ? ` Already on file: ${state.collectedFields.join(', ')}. Do not ask for more identity or visit-reason details in this chat.`
-      : '';
+  const collectedContext = state?.collectedFields?.length
+    ? ` Already on file: ${state.collectedFields.join(', ')}. Do not ask for more identity or visit-reason details in this chat.`
+    : '';
   // e-task-1: Richer context for context-aware replies (no PHI)
   const contextParts: string[] = [];
   if (aiContext?.collectedDataSummary?.trim()) {
@@ -2179,9 +2188,13 @@ export async function generateResponse(input: GenerateResponseInput): Promise<st
     contextParts.push(`Last thing you asked: "${aiContext.lastBotMessage.trim()}".`);
   }
   if (aiContext?.bookingForSomeoneElse && aiContext?.relation) {
-    contextParts.push(`Booking for user's ${aiContext.relation}. Use "your ${aiContext.relation}" or "for them" in replies.`);
+    contextParts.push(
+      `Booking for user's ${aiContext.relation}. Use "your ${aiContext.relation}" or "for them" in replies.`
+    );
   } else if (aiContext?.bookingForSomeoneElse) {
-    contextParts.push(`Booking for someone else (relation not specified). Use "for them" in replies.`);
+    contextParts.push(
+      `Booking for someone else (relation not specified). Use "for them" in replies.`
+    );
   }
   if (aiContext?.idleDialogueHint?.trim()) {
     contextParts.push(aiContext.idleDialogueHint.trim());
@@ -2221,8 +2234,7 @@ export async function generateResponse(input: GenerateResponseInput): Promise<st
         ? ' PRIORITY: Latest turn may be about fees — **server flag: no multi-tier fee menu**. Do NOT quote or compare amounts for different visit types. Say the **practice will confirm visit type** and exact fee after. Do not collect booking fields in this chat. Reply in the language from the LANGUAGE directive.'
         : ' PRIORITY: The latest user message is about pricing/fees (including paise/kitne/rupees). Lead with SYSTEM FACTS - FEES if any amount is listed; state the exact fee clearly. Never claim fees are missing from the system when that block includes an amount. Do not collect booking fields in this chat. Reply in the language from the LANGUAGE directive.'
       : '';
-  const volatileSystem =
-    `\n\nCurrent detected intent for the latest user message: ${currentIntent}.${stepContext}${collectedContext}${aiContextBlock}${noChatIntakeHint}${pricingFocusHint}`;
+  const volatileSystem = `\n\nCurrent detected intent for the latest user message: ${currentIntent}.${stepContext}${collectedContext}${aiContextBlock}${noChatIntakeHint}${pricingFocusHint}`;
   const practiceName = doctorContext?.practice_name?.trim() || 'Halo Aid';
   const { messages, cacheParams } = buildReplyMessages({
     model: config.model,
@@ -2266,7 +2278,7 @@ export async function generateResponse(input: GenerateResponseInput): Promise<st
           cachedTokens: usage?.prompt_tokens_details?.cached_tokens ?? 0,
           promptTokens: usage?.prompt_tokens,
         },
-        'Response generation: prompt cache',
+        'Response generation: prompt cache'
       );
       await logAIResponseGeneration({
         correlationId,
@@ -2321,7 +2333,7 @@ const CONFIRM_CANCEL_TOOL = {
   function: {
     name: 'confirm_cancel',
     description:
-      'Call when user confirms they want to cancel (yes, yeah, go ahead, do it, 2737, etc.) or to keep (no, nope, don\'t).',
+      "Call when user confirms they want to cancel (yes, yeah, go ahead, do it, 2737, etc.) or to keep (no, nope, don't).",
     parameters: {
       type: 'object',
       properties: {
@@ -2418,8 +2430,7 @@ export async function generateResponseWithActions(
       : '';
 
   const systemPrompt = buildResponseSystemPrompt(doctorContext, turnLanguage);
-  const volatileSystem =
-    `\n\nIntent: ${currentIntent}.${stepContext}${cancelContext}${pickContext} If the user clearly confirms or picks, call the appropriate tool. Otherwise reply with a short clarification.`;
+  const volatileSystem = `\n\nIntent: ${currentIntent}.${stepContext}${cancelContext}${pickContext} If the user clearly confirms or picks, call the appropriate tool. Otherwise reply with a short clarification.`;
   const practiceName = doctorContext?.practice_name?.trim() || 'Halo Aid';
   const { messages, cacheParams } = buildReplyMessages({
     model: config.model,
@@ -2444,7 +2455,7 @@ export async function generateResponseWithActions(
     availableTools[0] === 'confirm_cancel' &&
     state.step === 'awaiting_cancel_confirmation';
   const toolChoice = forceConfirmCancel
-    ? ({ type: 'function' as const, function: { name: 'confirm_cancel' } })
+    ? { type: 'function' as const, function: { name: 'confirm_cancel' } }
     : 'auto';
 
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
@@ -2562,8 +2573,7 @@ export async function appendOptionalDmReplyBridge(params: {
     return baseReply;
   }
 
-  const systemContent =
-    `${DM_REPLY_BRIDGE_SYSTEM}\n\n${buildLanguageReplyDirective(turnLanguage)}`;
+  const systemContent = `${DM_REPLY_BRIDGE_SYSTEM}\n\n${buildLanguageReplyDirective(turnLanguage)}`;
 
   try {
     const completion = await client.chat.completions.create({

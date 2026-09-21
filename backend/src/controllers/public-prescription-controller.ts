@@ -39,7 +39,7 @@ import {
   resolveLetterhead,
 } from '../services/letterhead-service';
 import type { BrandingAssetSlot } from '../types/letterhead';
-import { computeAgeLabel } from '../templates/prescription-pdf/patient-identity';
+import { resolvePatientAgeLabel } from '../templates/prescription-pdf/patient-identity';
 import {
   generatePrescriptionPdf,
   getFreshSignedUrlForExistingPdf,
@@ -205,13 +205,14 @@ export const getPublicPrescriptionHandler = asyncHandler(async (req: Request, re
     const { data: pData } = await admin
       .from('patients')
       .select(
-        'name, date_of_birth, gender, phone, guardian_name, guardian_relation, address, medical_record_number'
+        'name, date_of_birth, age, gender, phone, guardian_name, guardian_relation, address, medical_record_number'
       )
       .eq('id', apt.patient_id)
       .single();
     const row = pData as {
       name?: string | null;
       date_of_birth?: string | null;
+      age?: number | null;
       gender?: string | null;
       phone?: string | null;
       guardian_name?: string | null;
@@ -222,7 +223,7 @@ export const getPublicPrescriptionHandler = asyncHandler(async (req: Request, re
     const candidate = row?.name?.trim();
     if (candidate) patientName = candidate;
     if (row) {
-      patientAge = computeAgeLabel(row.date_of_birth ?? null);
+      patientAge = resolvePatientAgeLabel(row.date_of_birth ?? null, row.age);
       patientGender = row.gender?.trim() || null;
       patientPhone = row.phone?.trim() || patientPhone;
       guardianName = row.guardian_name?.trim() || null;

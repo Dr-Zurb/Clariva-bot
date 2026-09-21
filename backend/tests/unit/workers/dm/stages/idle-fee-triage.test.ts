@@ -123,8 +123,9 @@ describe('idleFeeTriageStage', () => {
 
     const result = await idleFeeTriageStage.handle(ctx);
     expect(result.branch).toBe('fee_deterministic_idle');
-    expect(result.reply).toContain('Prices are on the booking page.');
+    expect(result.reply).toContain('Visit prices are on this page:');
     expect(result.reply).toContain('https://example.com/book');
+    expect(result.reply).not.toMatch(/get an appointment/i);
     expect(result.reply).not.toMatch(/Dr |Fever|hypertension|diabetes/i);
     expect(composeIdleFeeQuoteDmWithMetaAsync).not.toHaveBeenCalled();
   });
@@ -144,8 +145,9 @@ describe('idleFeeTriageStage', () => {
 
     const result = await idleFeeTriageStage.handle(ctx);
     expect(result.branch).toBe('fee_deterministic_mid_collection');
-    expect(result.reply).toContain('Prices are on the booking page.');
+    expect(result.reply).toContain('Visit prices are on this page:');
     expect(result.reply).toContain('https://example.com/book');
+    expect(result.reply).not.toMatch(/get an appointment/i);
     expect(composeMidCollectionFeeQuoteDmWithMetaAsync).not.toHaveBeenCalled();
   });
 
@@ -198,6 +200,38 @@ describe('idleFeeTriageStage', () => {
     expect(result.nextState.step).toBe('awaiting_slot_selection');
   });
 
+  it('greeting-classified symptom report → medical_safety, not greeting', async () => {
+    const ctx = minimalTurnCtx({
+      intentResult: { intent: 'greeting', confidence: 1 },
+      text: 'i have headache',
+    });
+
+    expect(isIdleFeeTriageTurn(ctx)).toBe(true);
+    const result = await idleFeeTriageStage.handle(ctx);
+    expect(result.branch).toBe('medical_safety');
+    expect(result.reply).toBe(
+      "I'm the receptionist. I can help with timings, availability, or a booking link."
+    );
+    expect(result.reply).not.toContain('https://example.com/book');
+  });
+
+  it('bare book after medical intent is not claimed by idle medical_safety', () => {
+    const ctx = minimalTurnCtx({
+      intentResult: { intent: 'medical_query', confidence: 1 },
+      text: 'book',
+      isBookIntent: true,
+      state: {
+        step: 'responded',
+        collectedFields: [],
+        updatedAt: new Date().toISOString(),
+        triage: { lastMedicalDeflectionAt: new Date().toISOString() },
+      },
+    });
+
+    expect(isIdleFeeTriageTurn(ctx)).toBe(false);
+    expect(resolveStage({ ...ctx, isBookIntent: true })).toBe('booking_entry');
+  });
+
   it('greeting while idle → greeting_template + locked receptionist line', async () => {
     const ctx = minimalTurnCtx({
       intentResult: { intent: 'greeting', confidence: 1 },
@@ -208,10 +242,75 @@ describe('idleFeeTriageStage', () => {
     expect(result.branch).toBe('greeting_template');
     expect(ctx.runGenerateResponse).not.toHaveBeenCalled();
     expect(result.reply).toBe(
-      "Hi — I'm the receptionist. I can help with timings, availability, or a booking link. How can I help today?"
+      "Hi — I'm the receptionist. I can help with availability, cancel/reschedule, or a booking link. How can I help today?"
     );
     expect(result.reply).not.toMatch(/doctor|teleconsult|medical|Dr\b/i);
     expect(composeDmReplySegments).not.toHaveBeenCalled();
+  });
+
+  it('single_fee greeting mentions fee, not a rupee amount', async () => {
+    const ctx = minimalTurnCtx({
+      intentResult: { intent: 'greeting', confidence: 1 },
+      text: 'hi',
+      doctorSettings: {
+        timezone: 'Asia/Kolkata',
+        catalog_mode: 'single_fee',
+        appointment_fee_minor: 50000,
+        address_summary: 'Batala',
+      } as never,
+    });
+
+    const result = await idleFeeTriageStage.handle(ctx);
+    expect(result.reply).toMatch(/consult fee/i);
+    expect(result.reply).toMatch(/address/i);
+    expect(result.reply).not.toMatch(/₹/);
+  });
+
+  it('hours on file → quote only, no /book', async () => {
+    const ctx = minimalTurnCtx({
+      intentResult: { intent: 'ask_question', confidence: 1 },
+      text: 'timings?',
+      doctorSettings: {
+        timezone: 'Asia/Kolkata',
+        business_hours_summary: 'Mon–Fri 9am–5pm',
+      } as never,
+    });
+
+    const result = await idleFeeTriageStage.handle(ctx);
+    expect(result.reply).toBe('Timings: Mon–Fri 9am–5pm');
+    expect(result.reply).not.toContain('https://example.com/book');
+    expect(result.reply).not.toMatch(/get an appointment/i);
+  });
+
+  it('hours missing → page link, not booking CTA', async () => {
+    const ctx = minimalTurnCtx({
+      intentResult: { intent: 'ask_question', confidence: 1 },
+      text: 'timings?',
+    });
+
+    const result = await idleFeeTriageStage.handle(ctx);
+    expect(result.reply).toContain("I don't have timings saved. They're on this page:");
+    expect(result.reply).toContain('https://example.com/book');
+    expect(result.reply).not.toMatch(/get an appointment/i);
+  });
+
+  it('single_fee price ask quotes ₹ without a booking CTA', async () => {
+    const ctx = minimalTurnCtx({
+      intentResult: { intent: 'ask_question', confidence: 1 },
+      signalsFeePricing: true,
+      text: 'how much is consultation',
+      doctorSettings: {
+        timezone: 'Asia/Kolkata',
+        catalog_mode: 'single_fee',
+        appointment_fee_minor: 50000,
+        appointment_fee_currency: 'INR',
+      } as never,
+    });
+
+    const result = await idleFeeTriageStage.handle(ctx);
+    expect(result.reply).toBe('Consult fee is ₹500.');
+    expect(result.reply).not.toContain('https://example.com/book');
+    expect(result.reply).not.toMatch(/get an appointment/i);
   });
 
   it('consented returning greeting prepends welcome_back when flag on (rcp-21)', async () => {
@@ -302,6 +401,36 @@ describe('idleFeeTriageStage', () => {
     ).toBe(fixture.expectedWelcomeBackPrefix);
   });
 
+  it('insurance / cash-or-UPI → page link, not a consult-fee quote', async () => {
+    const insurance = await idleFeeTriageStage.handle(
+      minimalTurnCtx({
+        intentResult: { intent: 'ask_question', confidence: 1 },
+        signalsFeePricing: true,
+        text: 'do you take insurance',
+      })
+    );
+    expect(isIdleFeeTriageTurn(
+      minimalTurnCtx({
+        intentResult: { intent: 'ask_question', confidence: 1 },
+        signalsFeePricing: true,
+        text: 'do you take insurance',
+      })
+    )).toBe(true);
+    expect(insurance.reply).toContain("I don't have payment details saved");
+    expect(insurance.reply).toContain('https://example.com/book');
+    expect(insurance.reply).not.toMatch(/get an appointment|₹|Consult fee/i);
+
+    const upi = await idleFeeTriageStage.handle(
+      minimalTurnCtx({
+        intentResult: { intent: 'ask_question', confidence: 1 },
+        signalsFeePricing: true,
+        text: 'cash or UPI',
+      })
+    );
+    expect(upi.reply).toContain("I don't have payment details saved");
+    expect(upi.reply).not.toMatch(/get an appointment|₹|Consult fee/i);
+  });
+
   it('misclassified book + pricing → idle stage quotes fee (legacy order: idle before book_misclassified branch)', async () => {
     const ctx = minimalTurnCtx({
       intentResult: { intent: 'book_appointment', confidence: 1 },
@@ -314,7 +443,8 @@ describe('idleFeeTriageStage', () => {
     expect(isIdleFeeTriageTurn(ctx)).toBe(true);
     const result = await idleFeeTriageStage.handle(ctx);
     expect(result.branch).toBe('fee_deterministic_idle');
-    expect(result.reply).toContain('Prices are on the booking page.');
+    expect(result.reply).toContain('Visit prices are on this page:');
+    expect(result.reply).not.toMatch(/get an appointment/i);
     expect(composeIdleFeeQuoteDmWithMetaAsync).not.toHaveBeenCalled();
   });
 
