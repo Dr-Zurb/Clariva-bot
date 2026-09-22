@@ -29,6 +29,10 @@ jest.mock('../../../../../src/services/patient-service', () => ({
   findPatientByIdWithAdmin: jest.fn(),
 }));
 
+jest.mock('../../../../../src/services/instagram-connect-service', () => ({
+  getConnectedInstagramDisplayName: jest.fn(async () => null),
+}));
+
 jest.mock('../../../../../src/workers/dm/returning-patient', () => ({
   extractPatientFirstName: jest.fn((name?: string | null) => {
     const trimmed = name?.trim();
@@ -53,6 +57,7 @@ import {
 } from '../../../../../src/utils/dm-reply-composer';
 import * as patientService from '../../../../../src/services/patient-service';
 import { shouldUseReturningPatientMemory } from '../../../../../src/workers/dm/returning-patient';
+import { getConnectedInstagramDisplayName } from '../../../../../src/services/instagram-connect-service';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 
@@ -246,6 +251,17 @@ describe('idleFeeTriageStage', () => {
     );
     expect(result.reply).not.toMatch(/doctor|teleconsult|medical|Dr\b/i);
     expect(composeDmReplySegments).not.toHaveBeenCalled();
+  });
+
+  it('greeting names the connected Instagram account', async () => {
+    jest.mocked(getConnectedInstagramDisplayName).mockResolvedValueOnce('Halo Aid');
+    const ctx = minimalTurnCtx({
+      intentResult: { intent: 'greeting', confidence: 1 },
+      text: 'hi',
+    });
+
+    const result = await idleFeeTriageStage.handle(ctx);
+    expect(result.reply).toContain("I'm Halo Aid's receptionist");
   });
 
   it('single_fee greeting mentions fee, not a rupee amount', async () => {

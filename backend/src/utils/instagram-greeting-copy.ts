@@ -15,7 +15,17 @@ import {
 export type ReceptionistGreetingOpts = {
   catalogMode?: string | null;
   hasAddress?: boolean;
+  /** Display name of the connected Instagram account (not the numeric id, not the @handle). */
+  accountName?: string | null;
 };
+
+/** Instagram profile name safe to speak in the hello. Digits-only ids are dropped. */
+export function instagramAccountNameForGreeting(raw: string | null | undefined): string | null {
+  if (typeof raw !== 'string') return null;
+  const name = raw.replace(/\s+/g, ' ').trim();
+  if (!name || name.length > 30 || /^\d+$/.test(name)) return null;
+  return name;
+}
 
 /** Default hello: packaged / no address (no fee in the menu). */
 export const RECEPTIONIST_GREETING_EN =
@@ -42,6 +52,16 @@ const OPENER: Record<StaticMessageLocale, string> = {
   pa: 'Sat sri akal — main receptionist haan. Main madad kar sakda haan',
 };
 
+function namedOpener(locale: StaticMessageLocale, name: string): string {
+  if (locale === 'hi') {
+    return `Namaste — main ${name} ka receptionist hoon. Main madad kar sakta hoon`;
+  }
+  if (locale === 'pa') {
+    return `Sat sri akal — main ${name} da receptionist haan. Main madad kar sakda haan`;
+  }
+  return `Hi — I'm ${name}'s receptionist. I can help with`;
+}
+
 const CLOSER: Record<StaticMessageLocale, string> = {
   en: 'How can I help today?',
   hi: 'Aaj kaise help karun?',
@@ -59,9 +79,12 @@ export function buildReceptionistGreetingMessage(
       : locale === 'pa' && !languageUsesGurmukhi(language)
         ? 'pa'
         : locale;
+  const accountName = instagramAccountNameForGreeting(opts?.accountName);
   const topics = joinHelpTopics(greetingHelpTopics(opts));
   if (!opts?.hasAddress && opts?.catalogMode !== 'single_fee' && openerLocale === 'en') {
-    return RECEPTIONIST_GREETING_EN;
+    if (!accountName) return RECEPTIONIST_GREETING_EN;
+    return `Hi — I'm ${accountName}'s receptionist. I can help with availability, cancel/reschedule, or a booking link. How can I help today?`;
   }
-  return `${OPENER[openerLocale]} ${topics}. ${CLOSER[openerLocale]}`;
+  const opener = accountName ? namedOpener(openerLocale, accountName) : OPENER[openerLocale];
+  return `${opener} ${topics}. ${CLOSER[openerLocale]}`;
 }

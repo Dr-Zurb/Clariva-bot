@@ -27,6 +27,7 @@ import {
 import { handleSupabaseError } from '../utils/db-helpers';
 import type { InstagramConnectStatePayload } from '../types/instagram-connect';
 import type { InsertDoctorInstagram } from '../types/database';
+import { instagramAccountNameForGreeting } from '../utils/instagram-greeting-copy';
 
 // ============================================================================
 // Constants (Instagram API with Instagram Login — ilr-18 / e-task-13)
@@ -911,6 +912,45 @@ export async function getInstagramUserInfo(
       'Instagram /me request failed'
     );
     throw new UnauthorizedError('Failed to get Instagram account info');
+  }
+}
+
+const DISPLAY_NAME_TTL_MS = 6 * 60 * 60 * 1000;
+const displayNameCache = new Map<string, { name: string; expiresAt: number }>();
+
+/**
+ * Profile name of the Instagram account this doctor connected ("Halo Aid"),
+ * not the numeric id and not the @handle. Used in the hello line.
+ * Failures stay unnamed so the greeting still sends.
+ */
+export async function getConnectedInstagramDisplayName(
+  doctorId: string,
+  correlationId: string
+): Promise<string | null> {
+  const cached = displayNameCache.get(doctorId);
+  if (cached && cached.expiresAt > Date.now()) return cached.name;
+
+  const token = await getInstagramAccessTokenForDoctor(doctorId, correlationId);
+  if (!token) return null;
+
+  try {
+    const res = await axios.get<{ name?: string }>(`${INSTAGRAM_GRAPH_BASE}/v18.0/me`, {
+      params: { fields: 'name', access_token: token },
+      timeout: META_HTTP_TIMEOUT_MS,
+    });
+    const name = instagramAccountNameForGreeting(res.data?.name);
+    if (!name) return null;
+    displayNameCache.set(doctorId, { name, expiresAt: Date.now() + DISPLAY_NAME_TTL_MS });
+    return name;
+  } catch (err: unknown) {
+    logger.warn(
+      {
+        correlationId,
+        status: axios.isAxiosError(err) ? err.response?.status : undefined,
+      },
+      'Instagram profile name lookup failed'
+    );
+    return null;
   }
 }
 

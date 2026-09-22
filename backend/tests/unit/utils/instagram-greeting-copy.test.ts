@@ -28,4 +28,14 @@ describe('instagram-greeting-copy', () => {
   it('falls back to English for other', () => {
     expect(buildReceptionistGreetingMessage('other')).toBe(RECEPTIONIST_GREETING_EN);
   });
+
+  it('uses the connected Instagram display name, not a numeric id', () => {
+    const line = buildReceptionistGreetingMessage('en', { accountName: 'Halo Aid' });
+    expect(line).toBe(
+      "Hi — I'm Halo Aid's receptionist. I can help with availability, cancel/reschedule, or a booking link. How can I help today?"
+    );
+    expect(buildReceptionistGreetingMessage('en', { accountName: '17841433414940360' })).toBe(
+      RECEPTIONIST_GREETING_EN
+    );
+  });
 });

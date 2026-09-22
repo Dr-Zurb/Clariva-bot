@@ -42,6 +42,7 @@ import {
 } from '../booking-entry-ready-path';
 import { isIdleFeeTriageTurn } from './idle-fee-triage-predicate';
 import { buildReceptionistGreetingMessage } from '../../../utils/instagram-greeting-copy';
+import { getConnectedInstagramDisplayName } from '../../../services/instagram-connect-service';
 import {
   buildHoursMissingLead,
   buildHoursQuoteLead,
@@ -453,11 +454,16 @@ export const idleFeeTriageStage: DmStageHandler = {
         };
       }
 
+      const accountName =
+        conversation.platform === 'instagram'
+          ? await getConnectedInstagramDisplayName(ctx.doctorId, correlationId)
+          : null;
       const greetingReply = isThanksOnlyUserMessage(text)
         ? buildReceptionistThanksMessage(ctx.turnLanguage)
         : buildReceptionistGreetingMessage(ctx.turnLanguage, {
             catalogMode: doctorSettings?.catalog_mode,
             hasAddress: Boolean(doctorSettings?.address_summary?.trim()),
+            accountName,
           });
       replyText =
         welcomeBackSegment != null && !isThanksOnlyUserMessage(text)
