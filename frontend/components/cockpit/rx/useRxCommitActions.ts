@@ -279,26 +279,95 @@ async function fetchPdfObjectUrl(signedUrl: string): Promise<string> {
   return URL.createObjectURL(blob);
 }
 
+function mountRxPrintIframe(objectUrl: string): HTMLIFrameElement {
+  const iframe = document.createElement("iframe");
+  iframe.setAttribute("aria-hidden", "true");
+  iframe.setAttribute("data-rx-print", "1");
+  iframe.title = "Print prescription";
+  // Off-screen but non-zero: a 0×0 PDF iframe makes Chrome dismiss the
+  // system print dialog as soon as it opens.
+  iframe.style.position = "fixed";
+  iframe.style.left = "-10000px";
+  iframe.style.top = "0";
+  iframe.style.width = "800px";
+  iframe.style.height = "600px";
+  iframe.style.border = "0";
+  iframe.style.opacity = "0";
+  iframe.style.pointerEvents = "none";
+  iframe.src = objectUrl;
+  return iframe;
+}
+
+/** Open the system dialog for an iframe whose PDF has already loaded. */
+function printPreparedIframe(
+  iframe: HTMLIFrameElement,
+  onDialogClosed?: () => void,
+): boolean {
+  if (iframe.dataset.rxPrintFired === "1") return true;
+  const win = iframe.contentWindow;
+  if (!win) return false;
+  try {
+    win.focus();
+    win.print();
+  } catch {
+    return false;
+  }
+  iframe.dataset.rxPrintFired = "1";
+  watchPrintDialogClosed(win, () => onDialogClosed?.());
+  window.setTimeout(() => {
+    iframe.remove();
+    const src = iframe.src;
+    if (src.startsWith("blob:")) URL.revokeObjectURL(src);
+  }, PRINT_IFRAME_KEEPALIVE_MS);
+  return true;
+}
+
+/**
+ * Load the PDF into a hidden iframe while the doctor is still reading the
+ * preview, so Send & finish can call print() without another render.
+ */
+function preloadRxPrintIframe(objectUrl: string): {
+  iframe: HTMLIFrameElement;
+  whenReady: Promise<HTMLIFrameElement>;
+} {
+  const iframe = mountRxPrintIframe(objectUrl);
+  const whenReady = new Promise<HTMLIFrameElement>((resolve, reject) => {
+    let settled = false;
+    const succeed = () => {
+      if (settled) return;
+      settled = true;
+      window.clearInterval(poll);
+      window.clearTimeout(cap);
+      iframe.dataset.rxPrintReady = "1";
+      resolve(iframe);
+    };
+    const fail = () => {
+      if (settled) return;
+      settled = true;
+      window.clearInterval(poll);
+      window.clearTimeout(cap);
+      iframe.remove();
+      reject(new Error("Could not load prescription PDF"));
+    };
+    iframe.onload = () => succeed();
+    iframe.onerror = () => fail();
+    const poll = window.setInterval(() => {
+      if (iframe.dataset.rxPrintReady === "1") succeed();
+    }, PRINT_POLL_MS);
+    const cap = window.setTimeout(() => {
+      if (!settled) fail();
+    }, PRINT_DEADLINE_MS);
+  });
+  document.body.appendChild(iframe);
+  return { iframe, whenReady };
+}
+
 function printPdfObjectUrl(
   objectUrl: string,
   opts?: { onDialogClosed?: () => void }
 ): Promise<void> {
   return new Promise<void>((resolve, reject) => {
-    const iframe = document.createElement("iframe");
-    iframe.setAttribute("aria-hidden", "true");
-    iframe.setAttribute("data-rx-print", "1");
-    iframe.title = "Print prescription";
-    iframe.src = objectUrl;
-    // Off-screen but non-zero: a 0×0 PDF iframe makes Chrome dismiss the
-    // system print dialog as soon as it opens.
-    iframe.style.position = "fixed";
-    iframe.style.left = "-10000px";
-    iframe.style.top = "0";
-    iframe.style.width = "800px";
-    iframe.style.height = "600px";
-    iframe.style.border = "0";
-    iframe.style.opacity = "0";
-    iframe.style.pointerEvents = "none";
+    const iframe = mountRxPrintIframe(objectUrl);
 
     let settled = false;
     let printed = false;
@@ -344,21 +413,10 @@ function printPdfObjectUrl(
 
     const triggerPrint = () => {
       if (printed) return;
-      const win = iframe.contentWindow;
-      if (!win) return;
+      if (!printPreparedIframe(iframe, notifyDialogClosed)) return;
       printed = true;
-      try {
-        win.focus();
-        win.print();
-        // Keep the iframe on <body> so the dialog stays owned by this
-        // document. Do not remove it on afterprint — Chrome fires that
-        // when the dialog opens.
-        window.setTimeout(() => cleanup(true), PRINT_IFRAME_KEEPALIVE_MS);
-        watchPrintDialogClosed(win, notifyDialogClosed);
-        succeed();
-      } catch {
-        fail("Could not open the print dialog");
-      }
+      window.setTimeout(() => cleanup(true), PRINT_IFRAME_KEEPALIVE_MS);
+      succeed();
     };
 
     iframe.onload = () => {
@@ -523,7 +581,12 @@ export function useRxCommitActions({
     rxId: string;
     objectUrl: Promise<string>;
     medicineKey: string;
+    contentKey: string;
+    iframe: HTMLIFrameElement | null;
+    whenReady: Promise<HTMLIFrameElement>;
   } | null>(null);
+  const isDirtyRef = useRef(isDirty);
+  isDirtyRef.current = isDirty;
   const doctorMetaRef = useRef<{
     doctorName: string;
     doctorSpecialty: string | null;
@@ -848,7 +911,11 @@ export function useRxCommitActions({
   const dropPdfWarm = useCallback((revoke: boolean) => {
     const existing = pdfWarmRef.current;
     pdfWarmRef.current = null;
-    if (revoke && existing) {
+    if (!existing) return;
+    if (existing.iframe && existing.iframe.dataset.rxPrintFired !== "1") {
+      existing.iframe.remove();
+    }
+    if (revoke) {
       void existing.objectUrl
         .then((url) => URL.revokeObjectURL(url))
         .catch(() => undefined);
@@ -982,9 +1049,15 @@ export function useRxCommitActions({
 
   const prewarmPdf = useCallback(
     (rxId: string): Promise<string> => {
-      const medicineKey = rxPdfWarmMedicineKey(buildPayload().medicines);
+      const payload = buildPayload();
+      const medicineKey = rxPdfWarmMedicineKey(payload.medicines);
+      const contentKey = JSON.stringify(payload);
       const existing = pdfWarmRef.current;
-      if (existing?.rxId === rxId && existing.medicineKey === medicineKey) {
+      if (
+        existing?.rxId === rxId &&
+        existing.medicineKey === medicineKey &&
+        existing.contentKey === contentKey
+      ) {
         return existing.objectUrl;
       }
       dropPdfWarm(true);
@@ -992,7 +1065,20 @@ export function useRxCommitActions({
         if (pdfWarmRef.current?.rxId === rxId) pdfWarmRef.current = null;
         throw err;
       });
-      pdfWarmRef.current = { rxId, objectUrl, medicineKey };
+      const warm = {
+        rxId,
+        objectUrl,
+        medicineKey,
+        contentKey,
+        iframe: null as HTMLIFrameElement | null,
+        whenReady: Promise.resolve(null as unknown as HTMLIFrameElement),
+      };
+      warm.whenReady = objectUrl.then((url) => {
+        const preloaded = preloadRxPrintIframe(url);
+        warm.iframe = preloaded.iframe;
+        return preloaded.whenReady;
+      });
+      pdfWarmRef.current = warm;
       return objectUrl;
     },
     [buildPayload, dropPdfWarm, loadPdfObjectUrl]
@@ -1140,37 +1226,80 @@ export function useRxCommitActions({
     printAfterSendRef.current = false;
     finishAfterSendRef.current = false;
     try {
-      try {
-        await persistDraftForCommit({ force: true });
-      } catch (saveErr) {
-        setCommitError(
-          saveErr instanceof Error
-            ? `Save failed before send: ${saveErr.message}`
-            : "Save failed before send"
-        );
-        return;
+      // The preview already rendered this slip. Print that file now,
+      // before another save round-trip, when the screen has not changed.
+      const warm = pdfWarmRef.current;
+      const warmRxId = prescriptionIdRef?.current;
+      const warmPayload = buildPayload();
+      const warmMatches =
+        shouldPrint &&
+        !isDirtyRef.current &&
+        !!warm &&
+        !!warmRxId &&
+        warm.rxId === warmRxId &&
+        warm.medicineKey === rxPdfWarmMedicineKey(warmPayload.medicines) &&
+        warm.contentKey === JSON.stringify(warmPayload);
+      const claimed = warmMatches ? warm : null;
+      if (claimed) pdfWarmRef.current = null;
+
+      if (shouldPrint) {
+        beginPrintAdvanceHold();
+        setAdvanceCancelled(true);
+      }
+
+      let printJob: Promise<void> | null = null;
+      if (claimed?.iframe?.dataset.rxPrintReady === "1") {
+        if (!printPreparedIframe(claimed.iframe, releasePrintAdvanceHold)) {
+          printJob = Promise.reject(new Error("Could not open the print dialog"));
+        } else {
+          printJob = Promise.resolve();
+        }
+      } else if (claimed) {
+        printJob = claimed.whenReady
+          .then((iframe) => {
+            if (!printPreparedIframe(iframe, releasePrintAdvanceHold)) {
+              throw new Error("Could not open the print dialog");
+            }
+          })
+          .catch(async () => {
+            await persistDraftForCommit({ force: true });
+            const id = prescriptionIdRef?.current;
+            if (!id) {
+              throw new Error("Prescription was not saved. Please try again.");
+            }
+            const { blob } = await fetchVerifiedPdf(id);
+            await printPdfObjectUrl(
+              URL.createObjectURL(pdfBlobForObjectUrl(blob)),
+              { onDialogClosed: releasePrintAdvanceHold },
+            );
+          });
+      }
+
+      if (!printJob && (isDirtyRef.current || !prescriptionIdRef?.current)) {
+        try {
+          await persistDraftForCommit({ force: true });
+        } catch (saveErr) {
+          setCommitError(
+            saveErr instanceof Error
+              ? `Save failed before send: ${saveErr.message}`
+              : "Save failed before send"
+          );
+          return;
+        }
       }
       const rxId = prescriptionIdRef?.current;
       if (!rxId) {
         setCommitError("Prescription was not saved. Please try again.");
         return;
       }
-      // Print parks navigation until the dialog closes. Finish without
-      // print must not automove — same rule for a new visit and a revise.
-      if (shouldPrint) {
-        beginPrintAdvanceHold();
-        setAdvanceCancelled(true);
-      }
 
-      // Never reuse a preview-warmed blob. That fetch can finish against
-      // an older medicines row while the form (and HTML preview) already
-      // shows the current list.
-      if (shouldPrint) dropPdfWarm(true);
-      const printJob = shouldPrint
-        ? fetchVerifiedPdf(rxId).then(({ blob }) =>
-            URL.createObjectURL(pdfBlobForObjectUrl(blob)),
-          )
-        : null;
+      if (shouldPrint && !printJob) {
+        printJob = fetchVerifiedPdf(rxId).then(({ blob }) =>
+          printPdfObjectUrl(URL.createObjectURL(pdfBlobForObjectUrl(blob)), {
+            onDialogClosed: releasePrintAdvanceHold,
+          }),
+        );
+      }
       printJob?.catch(() => undefined);
 
       setCommitSuccess("Sending to patient…");
@@ -1213,10 +1342,7 @@ export function useRxCommitActions({
       // close signal — matchMedia often never fires and the modal hung.
       if (printJob) {
         try {
-          const objectUrl = await printJob;
-          await printPdfObjectUrl(objectUrl, {
-            onDialogClosed: releasePrintAdvanceHold,
-          });
+          await printJob;
         } catch (printErr) {
           releasePrintAdvanceHold();
           setAdvanceCancelled(true);
@@ -1264,6 +1390,7 @@ export function useRxCommitActions({
     }
   }, [
     persistDraftForCommit,
+    buildPayload,
     setAdvanceCancelled,
     releasePrintAdvanceHold,
     prescriptionIdRef,

@@ -985,7 +985,7 @@ describe("useRxCommitActions", () => {
     });
   });
 
-  it("refetches the PDF on print even when the draft looks unchanged", async () => {
+  it("prints the preview PDF immediately when the draft has not changed", async () => {
     const { fetchPrescriptionPdf, sendPrescriptionToPatient } =
       await import("@/lib/api");
     vi.mocked(sendPrescriptionToPatient).mockResolvedValue({
@@ -1024,7 +1024,7 @@ describe("useRxCommitActions", () => {
     await waitFor(() => {
       expect(print).toHaveBeenCalledTimes(1);
     });
-    expect(fetchPrescriptionPdf).toHaveBeenCalledTimes(2);
+    expect(fetchPrescriptionPdf).toHaveBeenCalledTimes(1);
     printStub.restore();
   });
 
