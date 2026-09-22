@@ -567,48 +567,32 @@ export function CockpitQueueRail({
             ) : null}
           </div>
           <div className="grid min-w-0 flex-1 grid-cols-[1fr_auto_1fr] items-center gap-x-10">
-            {isLoading ? (
-              <span className="col-start-2 text-xs text-muted-foreground">
-                …
-              </span>
-            ) : (
-              <>
-                <div className="hidden justify-end sm:flex">
-                  {prev ? (
-                    <SlotChip
-                      entry={prev}
-                      slot="prev"
-                      source={source}
-                      quiet
-                    />
+            <div className="hidden justify-end sm:flex">
+              {!isLoading && prev ? (
+                <SlotChip entry={prev} slot="prev" source={source} quiet />
+              ) : (
+                <EmptyPlaceholder quiet />
+              )}
+            </div>
+            <div className="justify-self-center px-1">
+              {typeof nowSlot === "function"
+                ? nowSlot({ now, source })
+                : (nowSlot ??
+                  (now ? (
+                    <SlotChip entry={now} slot="now" source={source} />
+                  ) : isLoading ? (
+                    <span className="text-xs text-muted-foreground">…</span>
                   ) : (
                     <EmptyPlaceholder quiet />
-                  )}
-                </div>
-                <div className="justify-self-center px-1">
-                  {typeof nowSlot === "function"
-                    ? nowSlot({ now, source })
-                    : (nowSlot ??
-                      (now ? (
-                        <SlotChip entry={now} slot="now" source={source} />
-                      ) : (
-                        <EmptyPlaceholder quiet />
-                      )))}
-                </div>
-                <div className="hidden justify-start sm:flex">
-                  {next ? (
-                    <SlotChip
-                      entry={next}
-                      slot="next"
-                      source={source}
-                      quiet
-                    />
-                  ) : (
-                    <EmptyPlaceholder quiet />
-                  )}
-                </div>
-              </>
-            )}
+                  )))}
+            </div>
+            <div className="hidden justify-start sm:flex">
+              {!isLoading && next ? (
+                <SlotChip entry={next} slot="next" source={source} quiet />
+              ) : (
+                <EmptyPlaceholder quiet />
+              )}
+            </div>
           </div>
         </nav>
       </TooltipProvider>

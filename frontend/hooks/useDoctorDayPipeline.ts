@@ -23,6 +23,7 @@ import { useSearchParams } from "next/navigation";
 import { useOpdSnapshot } from "@/hooks/useOpdSnapshot";
 import { useTodaysAppointments } from "@/components/dashboard/cockpit/useTodaysAppointments";
 import { COCKPIT_DATE_PARAM } from "@/lib/cockpit/back-target";
+import { POLL_INTERVAL } from "@/lib/query/polling";
 import { resolveSessionDate } from "@/lib/dates";
 import type { DoctorQueueSessionRow } from "@/types/opd-doctor";
 import type { Appointment, ConsultationModality } from "@/types/appointment";
@@ -182,7 +183,7 @@ export function useDoctorDayPipeline(
 
   // Both hooks are always called — hooks must not be called conditionally.
   // Only one source's output is used in the final result (selected by opd_mode).
-  const opdSnap = useOpdSnapshot(token, sessionDate);
+  const opdSnap = useOpdSnapshot(token, sessionDate, POLL_INTERVAL.COCKPIT_QUEUE);
   const schedule = useTodaysAppointments(token, sessionDate);
 
   // isOpdEnabled: null while settings load; true = queue; false = slot/telemed.

@@ -3,7 +3,10 @@
 /**
  * useOpdSnapshot (task-ui-C3, np-05)
  *
- * Doctor settings (once) + live OPD queue session (polled every 30 s).
+ * Doctor settings (once) + live OPD queue session.
+ * The dashboard poll stays on the shared 30s cadence. The cockpit
+ * pipeline passes a shorter interval so a desk walk-in shows up
+ * while the doctor is still on the last token.
  * Queue data shares `queryKeys.opd.queueSession` with useDashboardCounts.
  */
 
@@ -39,11 +42,15 @@ export interface OpdSnapshotState {
   entries: DoctorQueueSessionRow[];
 }
 
-export function useOpdSnapshot(token: string, dateOverride?: string): OpdSnapshotState {
+export function useOpdSnapshot(
+  token: string,
+  dateOverride?: string,
+  refetchIntervalMs?: number,
+): OpdSnapshotState {
   const date = dateOverride ?? todayLocalIso();
 
   const settingsQuery = useDoctorSettingsQuery(token);
-  const queueQuery = useOpdQueueSessionQuery(token, date);
+  const queueQuery = useOpdQueueSessionQuery(token, date, refetchIntervalMs);
 
   const snapshot = useMemo(() => {
     const all = (queueQuery.data?.data.entries ?? []) as DoctorQueueSessionRow[];

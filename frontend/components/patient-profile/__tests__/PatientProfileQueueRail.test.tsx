@@ -215,6 +215,32 @@ describe("CockpitQueueRail", () => {
     // just confirm no crash.
   });
 
+  it("keeps the current patient title visible while the queue is still loading", () => {
+    mockUsePipeline.mockReturnValue({
+      entries: [],
+      currentIndex: null,
+      doneCount: 0,
+      activeCount: 0,
+      missedCount: 0,
+      totalCount: 0,
+      source: "queue",
+      isLoading: true,
+      error: null,
+      sessionDate: todayLocalIso(),
+    });
+    renderWithClient(
+      <CockpitQueueRail
+        currentAppointmentId="appt-1"
+        state="live"
+        token="tok"
+        variant="inline"
+        nowSlot={() => <span>Demo Patient 31 y / F</span>}
+      />,
+    );
+    expect(screen.getByText("Demo Patient 31 y / F")).toBeInTheDocument();
+    expect(screen.queryByText("…")).not.toBeInTheDocument();
+  });
+
   // ── Three-slot layout ───────────────────────────────────────────────────
 
   it("renders now chip with current patient first name", () => {
@@ -588,7 +614,7 @@ describe("CockpitQueueRail", () => {
         appointmentDate: "2099-01-01T10:00:00Z",
       }),
     ];
-    pipelineResult(entries, 1, { totalCount: 8 });
+    pipelineResult(entries, 1, { totalCount: 8, sessionDate: "2026-09-13" });
     const { container } = renderRail();
     expect(container.firstChild).toMatchSnapshot();
   });

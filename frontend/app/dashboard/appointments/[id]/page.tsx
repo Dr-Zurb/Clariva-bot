@@ -19,7 +19,8 @@ interface PageProps {
  *
  * Fetches by ID; 404/403 handling; no PHI in logs.
  * np-08: overlaps consult-vitals prefetch with the appointment fetch so the
- * cockpit strip + Objective grid hydrate from cache on first paint.
+ * cockpit strip + Objective grid hydrate from cache when those reads
+ * finish in time. The page does not wait on them.
  * @see e-task-4; FRONTEND_RECIPES F4
  */
 

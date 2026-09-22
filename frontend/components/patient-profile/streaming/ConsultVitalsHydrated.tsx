@@ -24,7 +24,10 @@ export async function ConsultVitalsHydrated({
   token,
 }: ConsultVitalsHydratedProps) {
   const queryClient = getQueryClient();
-  await prefetchConsultVitalsQueries(
+  // The visit page already started this prefetch beside the appointment
+  // read. Do not hold the name strip for desk vitals or last-visit;
+  // dehydrate whatever has already landed.
+  void prefetchConsultVitalsQueries(
     queryClient,
     token,
     appointment.id,
