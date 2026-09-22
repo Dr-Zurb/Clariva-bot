@@ -36,6 +36,15 @@ const TOAST_CLASS =
   "fixed top-4 right-4 z-50 flex items-center gap-2 rounded-md border border-border bg-card px-3 py-1.5 text-sm text-foreground shadow-lg";
 
 const EMPTY_QUEUE_TOAST_MS = 3500;
+/**
+ * Chrome often never reports that the system print dialog closed, so the
+ * in-memory hold and the session park stay set and this toast sits forever.
+ * Release both and move. Long enough for the dialog to attach; short enough
+ * that a missed close signal cannot strand the queue.
+ */
+const PRINT_PARK_CAP_MS = 8_000;
+/** Client router.push is sometimes dropped after the leave-guard history edit. */
+const ADVANCE_NAV_FALLBACK_MS = 700;
 
 export interface AdvanceToNextPatientProps {
   currentAppointmentId: string;
@@ -71,15 +80,36 @@ export function AdvanceToNextPatient({
 
   const warmAndPush = useCallback(
     (target: { url: string; appointmentId: string; patientId: string | null }) => {
+      firedRef.current = true;
       router.prefetch(target.url);
       prefetchNextConsult(queryClient, token, {
         appointmentId: target.appointmentId,
         patientId: target.patientId,
       });
       router.push(target.url);
+      // If the app router drops the transition, the toast stays on this
+      // visit. A full load still lands on the next patient.
+      window.setTimeout(() => {
+        try {
+          if (window.location.pathname.includes(target.appointmentId)) return;
+          window.location.assign(target.url);
+        } catch {
+          // jsdom has no navigation.
+        }
+      }, ADVANCE_NAV_FALLBACK_MS);
     },
     [queryClient, router, token]
   );
+
+  const releasePark = useCallback(() => {
+    try {
+      sessionStorage.removeItem(cancelStorageKey(currentAppointmentId));
+    } catch {
+      // private mode / SSR
+    }
+    endPrintAdvanceHold();
+    setPrintParked(false);
+  }, [currentAppointmentId]);
 
   useEffect(() => {
     const syncPark = () => {
@@ -88,6 +118,12 @@ export function AdvanceToNextPatient({
     syncPark();
     return subscribePrintAdvanceHold(syncPark);
   }, [currentAppointmentId]);
+
+  useEffect(() => {
+    if (!next || !printParked) return;
+    const id = window.setTimeout(releasePark, PRINT_PARK_CAP_MS);
+    return () => window.clearTimeout(id);
+  }, [next, printParked, releasePark]);
 
   useEffect(() => {
     if (firedRef.current) return;
@@ -125,12 +161,7 @@ export function AdvanceToNextPatient({
         role="status"
         className={`${TOAST_CLASS} pointer-events-auto`}
         onClick={() => {
-          endPrintAdvanceHold();
-          try {
-            sessionStorage.removeItem(cancelStorageKey(currentAppointmentId));
-          } catch {
-            // private mode / SSR
-          }
+          releasePark();
           warmAndPush(next);
         }}
       >

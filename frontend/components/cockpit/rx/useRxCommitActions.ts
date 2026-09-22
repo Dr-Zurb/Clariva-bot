@@ -162,6 +162,29 @@ function isSafariPrintHost(): boolean {
 /** Chrome fires afterprint when the preview opens — ignore that first beat. */
 const PRINT_CLOSE_GRACE_MS = 800;
 
+function watchPrintMedia(win: Window, done: () => void, stoppers: Array<() => void>): void {
+  try {
+    const media = win.matchMedia("print");
+    let sawPrint = media.matches;
+    const onChange = (event: MediaQueryListEvent) => {
+      if (event.matches) {
+        sawPrint = true;
+        return;
+      }
+      if (sawPrint) done();
+    };
+    if (typeof media.addEventListener === "function") {
+      media.addEventListener("change", onChange);
+      stoppers.push(() => media.removeEventListener("change", onChange));
+    } else if (typeof media.addListener === "function") {
+      media.addListener(onChange);
+      stoppers.push(() => media.removeListener(onChange));
+    }
+  } catch {
+    // afterprint / focus still cover this window.
+  }
+}
+
 function watchPrintDialogClosed(win: Window, onClosed: () => void): void {
   let closed = false;
   const openedAt = Date.now();
@@ -182,29 +205,16 @@ function watchPrintDialogClosed(win: Window, onClosed: () => void): void {
 
   const afterGrace = (): boolean => Date.now() - openedAt >= PRINT_CLOSE_GRACE_MS;
 
-  try {
-    const media = win.matchMedia("print");
-    let sawPrint = media.matches;
-    const onChange = (event: MediaQueryListEvent) => {
-      if (event.matches) {
-        sawPrint = true;
-        return;
-      }
-      if (sawPrint) done();
-    };
-    if (typeof media.addEventListener === "function") {
-      media.addEventListener("change", onChange);
-      stoppers.push(() => media.removeEventListener("change", onChange));
-    } else if (typeof media.addListener === "function") {
-      media.addListener(onChange);
-      stoppers.push(() => media.removeListener(onChange));
-    }
-  } catch {
-    // afterprint / focus still cover Chrome.
-  }
+  // Iframe print often never flips matchMedia or afterprint on the frame
+  // that called print(). Listen on both windows.
+  watchPrintMedia(win, done, stoppers);
+  if (win !== window) watchPrintMedia(window, done, stoppers);
 
+  // The first afterprint is the dialog opening. A later one is the close.
+  let afterPrintCount = 0;
   const onAfterPrint = () => {
-    if (afterGrace()) done();
+    afterPrintCount += 1;
+    if (afterPrintCount >= 2 || afterGrace()) done();
   };
   try {
     win.addEventListener("afterprint", onAfterPrint);
@@ -220,6 +230,41 @@ function watchPrintDialogClosed(win: Window, onClosed: () => void): void {
   };
   window.addEventListener("focus", onFocus);
   stoppers.push(() => window.removeEventListener("focus", onFocus));
+
+  // A modal print dialog swallows page input. The first click or key
+  // after the grace window means the doctor is back on the cockpit.
+  const onInteract = () => {
+    if (afterGrace()) done();
+  };
+  document.addEventListener("pointerdown", onInteract, true);
+  document.addEventListener("keydown", onInteract, true);
+  stoppers.push(() => {
+    document.removeEventListener("pointerdown", onInteract, true);
+    document.removeEventListener("keydown", onInteract, true);
+  });
+
+  // Focus often returns without a focus event. A blur then a focused
+  // document is the dialog closing.
+  let sawBlur = false;
+  try {
+    sawBlur = !document.hasFocus();
+  } catch {
+    sawBlur = false;
+  }
+  const focusPoll = window.setInterval(() => {
+    let focused = false;
+    try {
+      focused = document.hasFocus();
+    } catch {
+      return;
+    }
+    if (!focused) {
+      sawBlur = true;
+      return;
+    }
+    if (sawBlur && afterGrace()) done();
+  }, 250);
+  stoppers.push(() => window.clearInterval(focusPoll));
 }
 
 /** Download the signed PDF into a blob URL the iframe can print same-origin. */

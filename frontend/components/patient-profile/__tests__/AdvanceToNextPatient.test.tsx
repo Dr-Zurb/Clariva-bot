@@ -252,6 +252,35 @@ describe("AdvanceToNextPatient", () => {
     expect(push).toHaveBeenCalledTimes(1);
   });
 
+  it("moves on its own when the print dialog never reports closing", async () => {
+    vi.useFakeTimers();
+    beginPrintAdvanceHold();
+    sessionStorage.setItem("pf11_cancelled_appt-1", "1");
+    mockUseNextAppointmentRoute.mockReturnValue({
+      next: {
+        appointmentId: "appt-2",
+        patientId: "pat-2",
+        url: "/dashboard/appointments/appt-2",
+        label: "Mohit K (#5)",
+        modality: "in_clinic",
+        positionLabel: "#5 of 12",
+      },
+      isLoading: false,
+      error: null,
+      isLastInQueue: false,
+    });
+
+    renderAdvance();
+    expect(push).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(8_000);
+    });
+
+    expect(push).toHaveBeenCalledWith("/dashboard/appointments/appt-2");
+    expect(sessionStorage.getItem("pf11_cancelled_appt-1")).toBeNull();
+  });
+
   it("lets the doctor leave while print is parked", async () => {
     beginPrintAdvanceHold();
     sessionStorage.setItem("pf11_cancelled_appt-1", "1");
