@@ -14,6 +14,15 @@ dotenv.config({ path: envPath, override: true });
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  webpack: (config) => {
+    // pdf.js optionally requires the Node canvas addon. The browser draws
+    // on a real <canvas>; bundling the .node file breaks `next build`.
+    config.resolve.alias = {
+      ...(config.resolve.alias ?? {}),
+      canvas: false,
+    };
+    return config;
+  },
   // Pre-existing project-wide TS debt (~90 errors outside the vitals fixes)
   // blocks `next build` typecheck. Runtime/dev is fine; tighten and remove
   // this once `npx tsc --noEmit` is green for app sources.
