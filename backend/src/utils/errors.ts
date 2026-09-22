@@ -134,6 +134,19 @@ export class ConflictError extends AppError {
 }
 
 /**
+ * Print refused because the stored medicine rows do not match the list
+ * the doctor is looking at. The client saves again and retries. Nothing
+ * is sent to the printer.
+ */
+export class PrescriptionMedicinesMismatchError extends AppError {
+  constructor(
+    message: string = 'Prescription medicines were not ready to print. Nothing was printed.',
+  ) {
+    super(message, 409);
+  }
+}
+
+/**
  * Consultation quote: service_key not present in catalog (SFU-03)
  */
 export class ServiceNotFoundForQuote extends AppError {

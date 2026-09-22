@@ -226,6 +226,29 @@ export function shiftOverflowingPreviewPages(
   return next;
 }
 
+/**
+ * Every block index appears on exactly one sheet. A packer that dropped
+ * a medicine (or listed it twice) cannot hide it off the preview.
+ */
+export function coverEveryPreviewBlock(
+  pages: number[][],
+  blockCount: number,
+): number[][] {
+  const seen = new Set<number>();
+  const next = pages.map((page) =>
+    page.filter((index) => {
+      if (index < 0 || index >= blockCount || seen.has(index)) return false;
+      seen.add(index);
+      return true;
+    }),
+  );
+  for (let index = 0; index < blockCount; index += 1) {
+    if (!seen.has(index)) next.push([index]);
+  }
+  const covered = next.filter((page) => page.length > 0);
+  return covered.length > 0 ? covered : [[]];
+}
+
 function previewPagesEqual(a: number[][], b: number[][]): boolean {
   return (
     a.length === b.length &&
@@ -964,8 +987,10 @@ function PreviewSheet({
               data-preview-body
               className="flex min-h-0 flex-1 flex-col overflow-hidden px-12 py-4"
             >
-              {showHeader ? <PatientIdentity model={model} /> : null}
-              {body}
+              <div data-preview-content>
+                {showHeader ? <PatientIdentity model={model} /> : null}
+                {body}
+              </div>
             </div>
             <div
               className="flex items-center justify-center border-t border-dashed border-[#CBD5E1] bg-[#F8FAFC] text-[10px] text-[#64748B]"
@@ -987,7 +1012,7 @@ function PreviewSheet({
               data-preview-body
               className="min-h-0 flex-1 overflow-hidden"
             >
-              {body}
+              <div data-preview-content>{body}</div>
             </div>
             <Footer model={model} pageNumber={pageIndex + 1} pageCount={pageCount} />
           </>
@@ -1074,7 +1099,12 @@ export function LetterheadPagePreview({
     const heights = Array.from(
       root.querySelectorAll<HTMLElement>("[data-preview-block]"),
     ).map((el) => Math.max(el.offsetHeight, el.scrollHeight));
-    setPages(packPreviewBlocks(heights, page1, later));
+    setPages(
+      coverEveryPreviewBlock(
+        packPreviewBlocks(heights, page1, later),
+        blocks.length,
+      ),
+    );
     setHideMeasure(true);
   }, [
     hideMeasure,
@@ -1104,7 +1134,7 @@ export function LetterheadPagePreview({
       bodyRefs.current[i],
     ).every((el) => el != null);
     if (!attached) {
-      if (overflowWaitRef.current >= 8) return;
+      if (overflowWaitRef.current >= 60) return;
       overflowWaitRef.current += 1;
       const id = requestAnimationFrame(() => setOverflowTick((n) => n + 1));
       return () => cancelAnimationFrame(id);
@@ -1117,7 +1147,10 @@ export function LetterheadPagePreview({
         bodyRefs.current,
         pages.length,
       );
-      const next = shiftOverflowingPreviewPages(pages, overflowing);
+      const next = coverEveryPreviewBlock(
+        shiftOverflowingPreviewPages(pages, overflowing),
+        blocks.length,
+      );
       if (!previewPagesEqual(pages, next)) setPages(next);
     };
 
@@ -1128,6 +1161,8 @@ export function LetterheadPagePreview({
       if (!el) return;
       const ro = new ResizeObserver(applyShift);
       ro.observe(el);
+      const content = el.querySelector("[data-preview-content]");
+      if (content) ro.observe(content);
       observers.push(ro);
     });
     const id = requestAnimationFrame(applyShift);
@@ -1135,7 +1170,7 @@ export function LetterheadPagePreview({
       observers.forEach((ro) => ro.disconnect());
       cancelAnimationFrame(id);
     };
-  }, [paginate, hideMeasure, pages, overflowTick]);
+  }, [paginate, hideMeasure, pages, overflowTick, blocks.length]);
 
   useEffect(() => {
     onPageCountChange?.(pageCount);

@@ -9,12 +9,16 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { CHART_COMPACT_INPUT_CLASS, chartOptionChipClass } from "@/components/ehr/chart/chart-chip-styles";
+import {
+  CHART_COMPACT_INPUT_CLASS,
+  chartOptionChipClass,
+} from "@/components/ehr/chart/chart-chip-styles";
 import type { LabExtractSource } from "@/lib/api/lab-extract";
 import {
   type LabExtractCandidate,
   type LabExtractFlag,
 } from "@/lib/cockpit/lab-extract-match";
+import { LabExtractPagePreview } from "@/components/cockpit/rx/objective/LabExtractPagePreview";
 import { cn } from "@/lib/utils";
 
 const FLAG_LABEL: Record<LabExtractFlag, string> = {
@@ -35,6 +39,17 @@ export interface LabExtractVerifyGroup {
   source: LabExtractSource;
   /** Signed URL for the source photo; only set for `vision` groups. */
   previewUrl: string | null;
+  /** Signed URL of the uploaded file, used to draw the page beside the rows. */
+  fileUrl?: string | null;
+  fileType?: string | null;
+}
+
+function groupPageCount(group: LabExtractVerifyGroup): number {
+  const fromRows = group.candidates.reduce(
+    (max, candidate) => Math.max(max, candidate.raw.pageIndex + 1),
+    0
+  );
+  return Math.max(group.pageCount, fromRows, 1);
 }
 
 export interface LabExtractConfirmRow extends LabExtractCandidate {
@@ -65,13 +80,13 @@ function toDrafts(groups: readonly LabExtractVerifyGroup[]): DraftRow[] {
       value: candidate.value ?? "",
       unit: candidate.unit ?? "",
       candidate,
-    })),
+    }))
   );
 }
 
 function seedDates(
   groups: readonly LabExtractVerifyGroup[],
-  defaultDate: string,
+  defaultDate: string
 ): Record<string, string> {
   const next: Record<string, string> = {};
   for (const group of groups) next[group.attachmentId] = defaultDate;
@@ -106,48 +121,76 @@ export function LabExtractVerifyDialog({
   onConfirm,
 }: LabExtractVerifyDialogProps) {
   const [drafts, setDrafts] = useState<DraftRow[]>(() => toDrafts(groups));
-  const [dates, setDates] = useState<Record<string, string>>(() => seedDates(groups, reportDate));
+  const [dates, setDates] = useState<Record<string, string>>(() =>
+    seedDates(groups, reportDate)
+  );
   const [activeId, setActiveId] = useState(groups[0]?.attachmentId ?? "");
+  const [pdfPage, setPdfPage] = useState(0);
 
   useEffect(() => {
     if (!open) return;
     setDrafts(toDrafts(groups));
     setDates(seedDates(groups, reportDate));
     setActiveId(groups[0]?.attachmentId ?? "");
+    setPdfPage(0);
   }, [open, groups, reportDate]);
 
-  const selectedCount = useMemo(() => drafts.filter((row) => row.checked).length, [drafts]);
-  const activeGroup = groups.find((group) => group.attachmentId === activeId) ?? groups[0];
-  const tabDrafts = useMemo(
-    () => (activeGroup ? drafts.filter((row) => row.attachmentId === activeGroup.attachmentId) : []),
-    [activeGroup, drafts],
+  const selectedCount = useMemo(
+    () => drafts.filter((row) => row.checked).length,
+    [drafts]
   );
-  const tabSelectedCount = tabDrafts.filter((row) => row.checked).length;
+  const activeGroup =
+    groups.find((group) => group.attachmentId === activeId) ?? groups[0];
+  const tabDrafts = useMemo(
+    () =>
+      activeGroup
+        ? drafts.filter((row) => row.attachmentId === activeGroup.attachmentId)
+        : [],
+    [activeGroup, drafts]
+  );
+  const pagesInGroup = activeGroup ? groupPageCount(activeGroup) : 1;
+  const showPages = pagesInGroup > 1;
+  const pageDrafts = showPages
+    ? tabDrafts.filter((row) => row.candidate.raw.pageIndex === pdfPage)
+    : tabDrafts;
+  const pageSelectedCount = pageDrafts.filter((row) => row.checked).length;
   const empty = drafts.length === 0;
   const showTabs = groups.length > 1;
+  const fileUrl = activeGroup?.fileUrl ?? activeGroup?.previewUrl ?? null;
+  const sideBySide = Boolean(fileUrl);
   const pageCount = groups.reduce((sum, group) => sum + group.pageCount, 0);
-  const skippedPageCount = groups.reduce((sum, group) => sum + group.skippedPageCount, 0);
+  const skippedPageCount = groups.reduce(
+    (sum, group) => sum + group.skippedPageCount,
+    0
+  );
   const groupsWithSelection = useMemo(() => {
-    const ids = new Set(drafts.filter((row) => row.checked).map((row) => row.attachmentId));
+    const ids = new Set(
+      drafts.filter((row) => row.checked).map((row) => row.attachmentId)
+    );
     return ids.size;
   }, [drafts]);
   const title =
-    groups.length === 1 && groups[0]?.sourceLabel.trim()
-      ? `Verify · ${groups[0].sourceLabel.trim()}`
-      : groups.length > 1
-        ? `Verify · ${groups.length} reports`
-        : "Verify extracted results";
-  const activeDate = activeGroup ? (dates[activeGroup.attachmentId] ?? reportDate) : reportDate;
+    groups.length === 1 && showPages
+      ? `Verify · Page ${pdfPage + 1} of ${pagesInGroup}`
+      : groups.length === 1 && groups[0]?.sourceLabel.trim()
+        ? `Verify · ${groups[0].sourceLabel.trim()}`
+        : groups.length > 1
+          ? `Verify · ${groups.length} reports`
+          : "Verify extracted results";
+  const activeDate = activeGroup
+    ? (dates[activeGroup.attachmentId] ?? reportDate)
+    : reportDate;
 
   const patchDraft = (key: string, patch: Partial<DraftRow>) => {
-    setDrafts((prev) => prev.map((row) => (row.key === key ? { ...row, ...patch } : row)));
+    setDrafts((prev) =>
+      prev.map((row) => (row.key === key ? { ...row, ...patch } : row))
+    );
   };
 
-  const setTabChecked = (checked: boolean) => {
-    if (!activeGroup) return;
-    const id = activeGroup.attachmentId;
+  const setVisibleChecked = (checked: boolean) => {
+    const keys = new Set(pageDrafts.map((row) => row.key));
     setDrafts((prev) =>
-      prev.map((row) => (row.attachmentId === id ? { ...row, checked } : row)),
+      prev.map((row) => (keys.has(row.key) ? { ...row, checked } : row))
     );
   };
 
@@ -169,7 +212,10 @@ export function LabExtractVerifyDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className="flex max-h-[90vh] max-w-3xl flex-col gap-3 overflow-hidden sm:max-w-3xl"
+        className={cn(
+          "flex max-h-[92vh] flex-col gap-3 overflow-hidden",
+          sideBySide ? "max-w-6xl sm:max-w-6xl" : "max-w-3xl sm:max-w-3xl"
+        )}
         data-testid="lab-extract-verify-dialog"
       >
         <DialogHeader>
@@ -194,9 +240,11 @@ export function LabExtractVerifyDialog({
             data-testid="lab-extract-report-tabs"
           >
             {groups.map((group) => {
-              const groupDrafts = drafts.filter((row) => row.attachmentId === group.attachmentId);
+              const groupDrafts = drafts.filter(
+                (row) => row.attachmentId === group.attachmentId
+              );
               const flagged = groupDrafts.filter(
-                (row) => row.candidate.confidence !== "green",
+                (row) => row.candidate.confidence !== "green"
               ).length;
               const selected = group.attachmentId === activeGroup?.attachmentId;
               const label = shortReportLabel(group.sourceLabel);
@@ -207,7 +255,10 @@ export function LabExtractVerifyDialog({
                   role="tab"
                   aria-selected={selected}
                   className={chartOptionChipClass(selected)}
-                  onClick={() => setActiveId(group.attachmentId)}
+                  onClick={() => {
+                    setActiveId(group.attachmentId);
+                    setPdfPage(0);
+                  }}
                   data-testid="lab-extract-report-tab"
                 >
                   {label} {groupDrafts.length}
@@ -240,8 +291,8 @@ export function LabExtractVerifyDialog({
               </a>
             ) : null}
             <p className="text-[11px] leading-snug text-foreground">
-              Read from a photo by AI, so these values are a transcription, not the
-              report itself. Check each one against the image before confirming.
+              Read by AI, so these values are a transcription, not the report
+              itself. Check each one against the report before confirming.
               {activeGroup.previewUrl ? (
                 <>
                   {" "}
@@ -268,19 +319,25 @@ export function LabExtractVerifyDialog({
               onChange={(event) => {
                 if (!activeGroup) return;
                 const value = event.target.value;
-                setDates((prev) => ({ ...prev, [activeGroup.attachmentId]: value }));
+                setDates((prev) => ({
+                  ...prev,
+                  [activeGroup.attachmentId]: value,
+                }));
               }}
-              className={cn(CHART_COMPACT_INPUT_CLASS, "mt-1 block w-[10.5rem]")}
+              className={cn(
+                CHART_COMPACT_INPUT_CLASS,
+                "mt-1 block w-[10.5rem]"
+              )}
               data-testid="lab-extract-report-date"
             />
           </label>
-          {!empty && tabDrafts.length > 0 ? (
+          {!empty && pageDrafts.length > 0 ? (
             <div className="flex gap-2">
               <button
                 type="button"
                 className="text-xs font-medium text-foreground underline-offset-2 hover:underline disabled:opacity-50"
-                onClick={() => setTabChecked(true)}
-                disabled={busy || tabSelectedCount === tabDrafts.length}
+                onClick={() => setVisibleChecked(true)}
+                disabled={busy || pageSelectedCount === pageDrafts.length}
                 data-testid="lab-extract-select-all"
               >
                 Select all
@@ -288,8 +345,8 @@ export function LabExtractVerifyDialog({
               <button
                 type="button"
                 className="text-xs font-medium text-foreground underline-offset-2 hover:underline disabled:opacity-50"
-                onClick={() => setTabChecked(false)}
-                disabled={busy || tabSelectedCount === 0}
+                onClick={() => setVisibleChecked(false)}
+                disabled={busy || pageSelectedCount === 0}
                 data-testid="lab-extract-deselect-all"
               >
                 Deselect all
@@ -298,48 +355,109 @@ export function LabExtractVerifyDialog({
           ) : null}
         </div>
 
-        {empty ? (
-          <p
-            className="rounded-md border border-dashed border-border px-3 py-4 text-center text-xs text-muted-foreground"
-            data-testid="lab-extract-empty"
-          >
-            No table could be read from this report. Enter the results manually.
-          </p>
-        ) : tabDrafts.length === 0 ? (
-          <p
-            className="rounded-md border border-dashed border-border px-3 py-4 text-center text-xs text-muted-foreground"
-            data-testid="lab-extract-tab-empty"
-          >
-            No table could be read from this report.
-          </p>
-        ) : (
-          <div className="min-h-0 flex-1 overflow-auto rounded-md border border-border/70">
-            <table className="w-full text-left text-xs">
-              <thead className="sticky top-0 bg-background">
-                <tr className="border-b border-border/60">
-                  <th className="w-8 px-2 py-1.5 font-medium">Add</th>
-                  <th className="px-2 py-1.5 font-medium">Test</th>
-                  <th className="px-2 py-1.5 font-medium">Value</th>
-                  <th className="px-2 py-1.5 font-medium">Unit</th>
-                  <th className="px-2 py-1.5 font-medium">Flags</th>
-                </tr>
-              </thead>
-              <tbody>
-                {tabDrafts.map((row) => (
-                  <RowBlock key={row.key} row={row} busy={busy} onPatch={patchDraft} />
-                ))}
-              </tbody>
-            </table>
+        <div
+          className={cn(
+            "grid min-h-0 flex-1 gap-3",
+            sideBySide && "lg:grid-cols-2"
+          )}
+        >
+          <div className="flex min-h-0 flex-col gap-2">
+            {showPages ? (
+              <div className="flex items-center justify-between gap-2">
+                <button
+                  type="button"
+                  className="rounded-md border border-border px-2 py-1 text-xs font-medium disabled:opacity-40"
+                  onClick={() => setPdfPage((page) => Math.max(0, page - 1))}
+                  disabled={pdfPage === 0}
+                  data-testid="lab-extract-page-prev"
+                >
+                  Previous
+                </button>
+                <p
+                  className="text-xs text-muted-foreground"
+                  data-testid="lab-extract-page-label"
+                >
+                  Page {pdfPage + 1} of {pagesInGroup}
+                </p>
+                <button
+                  type="button"
+                  className="rounded-md border border-border px-2 py-1 text-xs font-medium disabled:opacity-40"
+                  onClick={() =>
+                    setPdfPage((page) => Math.min(pagesInGroup - 1, page + 1))
+                  }
+                  disabled={pdfPage >= pagesInGroup - 1}
+                  data-testid="lab-extract-page-next"
+                >
+                  Next
+                </button>
+              </div>
+            ) : null}
+            {empty ? (
+              <p
+                className="rounded-md border border-dashed border-border px-3 py-4 text-center text-xs text-muted-foreground"
+                data-testid="lab-extract-empty"
+              >
+                No table could be read from this report. Enter the results
+                manually.
+              </p>
+            ) : pageDrafts.length === 0 ? (
+              <p
+                className="rounded-md border border-dashed border-border px-3 py-4 text-center text-xs text-muted-foreground"
+                data-testid="lab-extract-tab-empty"
+              >
+                {showPages
+                  ? "No table could be read from this page."
+                  : "No table could be read from this report."}
+              </p>
+            ) : (
+              <div className="min-h-0 flex-1 overflow-auto rounded-md border border-border/70">
+                <table className="w-full text-left text-xs">
+                  <thead className="sticky top-0 bg-background">
+                    <tr className="border-b border-border/60">
+                      <th className="w-8 px-2 py-1.5 font-medium">Add</th>
+                      <th className="px-2 py-1.5 font-medium">Test</th>
+                      <th className="px-2 py-1.5 font-medium">Value</th>
+                      <th className="px-2 py-1.5 font-medium">Unit</th>
+                      <th className="px-2 py-1.5 font-medium">Flags</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pageDrafts.map((row) => (
+                      <RowBlock
+                        key={row.key}
+                        row={row}
+                        busy={busy}
+                        onPatch={patchDraft}
+                      />
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
-        )}
+          {fileUrl ? (
+            <div className="min-h-[16rem] overflow-auto rounded-md border border-border/70 bg-muted/20">
+              <LabExtractPagePreview
+                fileUrl={fileUrl}
+                fileType={activeGroup?.fileType ?? null}
+                pageIndex={pdfPage}
+              />
+            </div>
+          ) : null}
+        </div>
 
         <DialogFooter className="sm:justify-between">
-          <p className="text-[11px] text-muted-foreground" data-testid="lab-extract-selection-hint">
-            {showTabs && selectedCount > 0
-              ? `${selectedCount} selected across ${groupsWithSelection} report${
-                  groupsWithSelection === 1 ? "" : "s"
-                }`
-              : null}
+          <p
+            className="text-[11px] text-muted-foreground"
+            data-testid="lab-extract-selection-hint"
+          >
+            {showPages && selectedCount > 0
+              ? `${selectedCount} selected across ${pagesInGroup} pages`
+              : showTabs && selectedCount > 0
+                ? `${selectedCount} selected across ${groupsWithSelection} report${
+                    groupsWithSelection === 1 ? "" : "s"
+                  }`
+                : null}
           </p>
           <div className="flex gap-2">
             <button
@@ -381,7 +499,8 @@ function RowBlock({
     <tr
       className={cn(
         "border-b border-border/40 last:border-0",
-        row.candidate.confidence !== "green" && "bg-amber-50/70 dark:bg-amber-950/20",
+        row.candidate.confidence !== "green" &&
+          "bg-amber-50/70 dark:bg-amber-950/20"
       )}
       data-testid="lab-extract-row"
       data-confidence={row.candidate.confidence}
@@ -390,7 +509,9 @@ function RowBlock({
         <input
           type="checkbox"
           checked={row.checked}
-          onChange={(event) => onPatch(row.key, { checked: event.target.checked })}
+          onChange={(event) =>
+            onPatch(row.key, { checked: event.target.checked })
+          }
           aria-label={`Include ${row.name || "row"}`}
           data-testid="lab-extract-row-check"
           disabled={busy}

@@ -378,12 +378,89 @@ describe("useRxCommitActions", () => {
       await result.current.printPrescription();
     });
 
-    expect(fetchPrescriptionPdf).toHaveBeenCalledWith("token", "rx-1");
+    expect(fetchPrescriptionPdf).toHaveBeenCalledWith("token", "rx-1", {
+      medicineKey: "",
+    });
     expect(printStub.createObjectURL).toHaveBeenCalled();
     expect(print).toHaveBeenCalledTimes(1);
     expect(openSpy).not.toHaveBeenCalled();
     printStub.restore();
     openSpy.mockRestore();
+  });
+
+  it("does not print until the saved medicine list matches the screen", async () => {
+    const { fetchPrescriptionPdf } = await import("@/lib/api");
+    const mismatch = Object.assign(
+      new Error(
+        "Prescription medicines were not ready to print. Nothing was printed.",
+      ),
+      { status: 409, code: "PrescriptionMedicinesMismatchError" },
+    );
+    vi.mocked(fetchPrescriptionPdf)
+      .mockRejectedValueOnce(mismatch)
+      .mockResolvedValueOnce({
+        blob: new Blob(["pdf-with-levocetirizine"], { type: "application/pdf" }),
+        filename: "prescription.pdf",
+      });
+    const print = vi.fn();
+    const printStub = installPrintIframe(print);
+
+    const shell = makeShell();
+    const { result } = renderHook(
+      () =>
+        useRxCommitActions({
+          appointmentId: "appt-1",
+          patientId: "pat-1",
+          token: "token",
+          cockpitState: "live",
+          registerActions: false,
+        }),
+      { wrapper: wrapper(shell) },
+    );
+
+    await act(async () => {
+      await result.current.printPrescription();
+    });
+
+    expect(fetchPrescriptionPdf).toHaveBeenCalledTimes(2);
+    expect(print).toHaveBeenCalledTimes(1);
+    expect(result.current.commitError).toBeNull();
+    printStub.restore();
+  });
+
+  it("does not open the print dialog when every attempt mismatches", async () => {
+    const { fetchPrescriptionPdf } = await import("@/lib/api");
+    const mismatch = Object.assign(
+      new Error(
+        "Prescription medicines were not ready to print. Nothing was printed.",
+      ),
+      { status: 409, code: "PrescriptionMedicinesMismatchError" },
+    );
+    vi.mocked(fetchPrescriptionPdf).mockRejectedValue(mismatch);
+    const print = vi.fn();
+    const printStub = installPrintIframe(print);
+
+    const shell = makeShell();
+    const { result } = renderHook(
+      () =>
+        useRxCommitActions({
+          appointmentId: "appt-1",
+          patientId: "pat-1",
+          token: "token",
+          cockpitState: "live",
+          registerActions: false,
+        }),
+      { wrapper: wrapper(shell) },
+    );
+
+    await act(async () => {
+      await result.current.printPrescription();
+    });
+
+    expect(fetchPrescriptionPdf).toHaveBeenCalledTimes(4);
+    expect(print).not.toHaveBeenCalled();
+    expect(result.current.commitError).toMatch(/nothing was printed/i);
+    printStub.restore();
   });
 
   it("downloads the signed PDF without opening a print tab", async () => {
@@ -419,7 +496,9 @@ describe("useRxCommitActions", () => {
       await result.current.downloadPrescription();
     });
 
-    expect(fetchPrescriptionPdf).toHaveBeenCalledWith("token", "rx-1");
+    expect(fetchPrescriptionPdf).toHaveBeenCalledWith("token", "rx-1", {
+      medicineKey: "",
+    });
     expect(createObjectURL).toHaveBeenCalled();
     const downloadLink = append.mock.calls
       .map(([node]) => node)
@@ -906,7 +985,7 @@ describe("useRxCommitActions", () => {
     });
   });
 
-  it("reuses the preview-warmed PDF when the draft is unchanged", async () => {
+  it("refetches the PDF on print even when the draft looks unchanged", async () => {
     const { fetchPrescriptionPdf, sendPrescriptionToPatient } =
       await import("@/lib/api");
     vi.mocked(sendPrescriptionToPatient).mockResolvedValue({
@@ -945,7 +1024,7 @@ describe("useRxCommitActions", () => {
     await waitFor(() => {
       expect(print).toHaveBeenCalledTimes(1);
     });
-    expect(fetchPrescriptionPdf).toHaveBeenCalledTimes(1);
+    expect(fetchPrescriptionPdf).toHaveBeenCalledTimes(2);
     printStub.restore();
   });
 
@@ -1083,7 +1162,9 @@ describe("useRxCommitActions", () => {
       result.current.prewarmOnIntent();
     });
     await waitFor(() => {
-      expect(fetchPrescriptionPdf).toHaveBeenCalledWith("token", "rx-1");
+      expect(fetchPrescriptionPdf).toHaveBeenCalledWith("token", "rx-1", {
+        medicineKey: "",
+      });
     });
     expect(result.current.previewOpen).toBe(false);
     printStub.restore();

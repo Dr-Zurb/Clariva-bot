@@ -11,9 +11,10 @@
  * (matches the HTML letterhead preview). Cells are direct children of
  * the row so % widths line up with the header — no nested 100% wrap.
  *
- * Multi-page flow: the table doesn't wrap rows mid-row (each `<View>`
- * with `wrap={false}` is treated as a single block by the
- * @react-pdf/renderer page-break engine).
+ * Multi-page flow: heading + header stay together (`wrap={false}`).
+ * Medicine rows may wrap so a tall first name cannot be clipped off
+ * the page-1 leftover (react-pdf drops `wrap={false}` blocks that
+ * do not fit).
  */
 
 import * as React from 'react';
@@ -85,8 +86,7 @@ export const MedicineTable: React.FC<MedicineTableProps> = ({
       <View
         key={med.id}
         style={styles.medRow}
-        wrap={false}
-        minPresenceAhead={48}
+        minPresenceAhead={64}
       >
         <Text style={[styles.medCellIdx, { fontSize: labelSize }]}>{i + 1}.</Text>
         <View style={styles.medCellName}>
@@ -115,9 +115,8 @@ export const MedicineTable: React.FC<MedicineTableProps> = ({
     );
   };
 
-  // Heading + header stay together. Each medicine is its own row so the
-  // first one is not dropped when the page-1 leftover is too small for
-  // a heading+header+row group (react-pdf wrap={false} clips that block).
+  // Heading + header stay together. Each medicine is its own wrapping
+  // row so a 3-line name is not clipped off the page-1 leftover.
   return (
     <>
       <View wrap={false} minPresenceAhead={40}>

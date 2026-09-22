@@ -50,7 +50,7 @@ import { DateTime } from 'luxon';
 
 import { getSupabaseAdminClient } from '../config/database';
 import { logger } from '../config/logger';
-import { InternalError, NotFoundError } from '../utils/errors';
+import { InternalError, NotFoundError, PrescriptionMedicinesMismatchError } from '../utils/errors';
 import { assertUnsentForRegenerate } from '../utils/prescription-pdf-freeze';
 import {
   cacheGet,
@@ -63,6 +63,8 @@ import {
   withPdfGenerateInflight,
 } from './prescription-pdf-cache';
 import { getDoctorSettings } from './doctor-settings-service';
+import { withPrescriptionMedicinesLock } from './prescription-medicine-lock';
+import { prescriptionMedicinePrintKey } from '../utils/prescription-medicine-print-key';
 import { resolveLetterhead } from './letterhead-service';
 import { PrescriptionDocument } from '../templates/prescription-pdf/PrescriptionDocument';
 import type { PrescriptionPdfData } from '../templates/prescription-pdf/types';
@@ -210,34 +212,56 @@ type BuiltPdfData =
   | { kind: 'frozen'; doctorId: string }
   | { kind: 'ready'; data: PrescriptionPdfData; doctorId: string };
 
+async function readMedicinesForPdf(
+  prescriptionId: string,
+  medicineKey: string | undefined,
+): Promise<PrescriptionMedicine[]> {
+  return withPrescriptionMedicinesLock(prescriptionId, async () => {
+    const admin = getSupabaseAdminClient();
+    if (!admin) {
+      throw new InternalError('Service role client not available for PDF generation');
+    }
+    const { data, error } = await admin
+      .from('prescription_medicines')
+      .select('*')
+      .eq('prescription_id', prescriptionId)
+      .order('sort_order', { ascending: true, nullsFirst: false });
+    if (error) {
+      throw new InternalError(`Medicines fetch failed: ${error.message}`);
+    }
+    const rows = (data ?? []) as PrescriptionMedicine[];
+    if (medicineKey !== undefined) {
+      const actual = prescriptionMedicinePrintKey(rows.map((row) => row.medicine_name));
+      if (actual !== medicineKey) {
+        throw new PrescriptionMedicinesMismatchError();
+      }
+    }
+    return rows;
+  });
+}
+
 async function buildPdfData(
   prescriptionId: string,
-  correlationId: string
+  correlationId: string,
+  medicineKey?: string,
 ): Promise<BuiltPdfData> {
   const admin = getSupabaseAdminClient();
   if (!admin) {
     throw new InternalError('Service role client not available for PDF generation');
   }
 
-  // 1. Prescription + medicines (parallel)
-  const [{ data: rxData, error: rxErr }, { data: medsData, error: medsErr }] = await Promise.all([
+  // 1. Prescription + medicines. The medicine read waits out any in-flight
+  // save so print cannot observe the insert/delete overlap.
+  const [{ data: rxData, error: rxErr }, medicines] = await Promise.all([
     admin.from('prescriptions').select('*').eq('id', prescriptionId).single(),
-    admin
-      .from('prescription_medicines')
-      .select('*')
-      .eq('prescription_id', prescriptionId)
-      .order('sort_order', { ascending: true, nullsFirst: false }),
+    readMedicinesForPdf(prescriptionId, medicineKey),
   ]);
 
   if (rxErr || !rxData) {
     throw new NotFoundError('Prescription not found');
   }
-  if (medsErr) {
-    throw new InternalError(`Medicines fetch failed: ${medsErr.message}`);
-  }
 
   const rx = rxData as PrescriptionRow;
-  const medicines = (medsData ?? []) as PrescriptionMedicine[];
 
   if (rx.sent_to_patient_at) {
     return { kind: 'frozen', doctorId: rx.doctor_id };
@@ -530,7 +554,7 @@ interface PdfBytesReady {
 async function ensurePdfBytes(
   prescriptionId: string,
   correlationId: string,
-  opts?: { skipCache?: boolean }
+  opts?: { skipCache?: boolean; medicineKey?: string }
 ): Promise<PdfBytesReady> {
   if (!opts?.skipCache) {
     const cached = cacheGetBytes(prescriptionId);
@@ -546,7 +570,7 @@ async function ensurePdfBytes(
     }
   }
 
-  return withPdfBytesInflight(prescriptionId, async () => {
+  const renderNow = async (): Promise<PdfBytesReady> => {
     const startedAtGen = pdfCacheGeneration(prescriptionId);
     if (!opts?.skipCache) {
       const again = cacheGetBytes(prescriptionId);
@@ -562,7 +586,7 @@ async function ensurePdfBytes(
       }
     }
 
-    const built = await buildPdfData(prescriptionId, correlationId);
+    const built = await buildPdfData(prescriptionId, correlationId, opts?.medicineKey);
     if (built.kind === 'frozen') {
       const storagePath = `${built.doctorId}/${prescriptionId}.pdf`;
       const downloaded = await downloadStoredPdf(storagePath);
@@ -580,7 +604,11 @@ async function ensurePdfBytes(
     const t0 = Date.now();
     const buffer = await renderPdfBuffer(built.data);
     const renderMs = Date.now() - t0;
-    cacheSetBytes(prescriptionId, buffer, startedAtGen);
+    // Unsent print must not park this buffer — a later save can finish
+    // while this render is still in flight and recache the older slip.
+    if (!opts?.skipCache) {
+      cacheSetBytes(prescriptionId, buffer, startedAtGen);
+    }
     logger.info(
       {
         correlationId,
@@ -596,7 +624,15 @@ async function ensurePdfBytes(
       doctorId: built.doctorId,
       storagePath: `${built.doctorId}/${prescriptionId}.pdf`,
     };
-  });
+  };
+
+  // A skip-cache print must not join a preview-warm render that started
+  // against an older medicines list.
+  if (opts?.skipCache) {
+    return renderNow();
+  }
+
+  return withPdfBytesInflight(prescriptionId, renderNow);
 }
 
 // ============================================================================
@@ -678,11 +714,17 @@ export async function generatePrescriptionPdf(
  */
 export async function getPrescriptionPdfBytes(
   prescriptionId: string,
-  correlationId: string
+  correlationId: string,
+  opts?: { medicineKey?: string }
 ): Promise<{ bytes: Buffer; byteCount: number }> {
   const stamp = await loadSentStamp(prescriptionId);
   // Unsent drafts re-render so a medicine saved after the last print
-  // cannot be served from a stale 5-min bytes cache.
+  // cannot be served from a stale 5-min bytes cache. A sent file is the
+  // frozen artifact; still refuse it when the screen list does not match
+  // the stored rows.
+  if (stamp?.sentToPatientAt && opts?.medicineKey !== undefined) {
+    await readMedicinesForPdf(prescriptionId, opts.medicineKey);
+  }
   if (stamp?.sentToPatientAt) {
     const cached = cacheGetBytes(prescriptionId);
     if (cached) {
@@ -696,6 +738,7 @@ export async function getPrescriptionPdfBytes(
 
   const { bytes } = await ensurePdfBytes(prescriptionId, correlationId, {
     skipCache: !stamp?.sentToPatientAt,
+    medicineKey: stamp?.sentToPatientAt ? undefined : opts?.medicineKey,
   });
   return { bytes, byteCount: bytes.length };
 }

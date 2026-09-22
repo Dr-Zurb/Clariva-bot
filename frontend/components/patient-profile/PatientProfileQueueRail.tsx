@@ -31,6 +31,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { matchesOpdSearch } from "@/components/opd/shared/opdSearchMatcher";
+import { formatDeskGuardian } from "@/lib/desk/guardian";
 import { formatDeskAgeSex } from "@/lib/desk/queue";
 import { buildCockpitAppointmentPathFromCurrentOrigin } from "@/lib/cockpit/back-target";
 import { formatOpdSessionDateLabel, todayLocalIso } from "@/lib/dates";
@@ -241,20 +242,30 @@ function SlotChip({ entry, slot, source, quiet = false }: SlotChipProps) {
 // ---------------------------------------------------------------------------
 
 /**
- * The pipeline entry carries no phone or MRN, so the shared OPD matcher works
- * on name and token here. Token search (`#7`) falls back to position exactly
- * like the OPD hub.
+ * Name, relative, phone, and token. Token search (`#7`) falls back to
+ * position exactly like the OPD hub. Digit queries of 3+ match the phone.
  */
 function pickerMatchable(entry: PipelineEntry) {
   return {
     patientName: entry.label ?? "",
     medicalRecordNumber: null,
-    patientPhone: "",
+    patientPhone: entry.patientPhone?.trim() ?? "",
+    guardianName: entry.guardianName,
     reasonForVisit: null,
     serviceLabel: null,
     position: entry.position,
     ...(entry.tokenNumber != null ? { tokenNumber: entry.tokenNumber } : {}),
   };
+}
+
+function pickerContactLine(entry: PipelineEntry): string {
+  const phone = entry.patientPhone?.trim() ?? "";
+  const relative = formatDeskGuardian(
+    entry.guardianName,
+    entry.guardianRelation,
+    entry.sex,
+  );
+  return [phone, relative].filter(Boolean).join(" · ");
 }
 
 interface QueuePickerProps {
@@ -317,7 +328,7 @@ function QueuePicker({
       </PopoverTrigger>
       <PopoverContent
         align="start"
-        className="w-80 p-0"
+        className="w-96 p-0"
         data-testid="cockpit-queue-picker"
       >
         <div className="border-b border-border p-2">
@@ -325,7 +336,7 @@ function QueuePicker({
             type="search"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search name or #token"
+            placeholder="Search name, phone, or #token"
             aria-label={`Search ${sessionLabel}`}
             className="w-full rounded border border-input bg-background px-2 py-1.5 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
           />
@@ -339,6 +350,7 @@ function QueuePicker({
             matches.map((entry) => {
               const isCurrent = entry.id === currentAppointmentId;
               const ageSex = formatDeskAgeSex(entry.ageYears, entry.sex);
+              const contact = pickerContactLine(entry);
               // Warm the chart on intent so the jump lands ready to type.
               const warm = () =>
                 prefetchNextConsult(queryClient, token, {
@@ -363,29 +375,36 @@ function QueuePicker({
                       isCurrent ? "cockpit-queue-picker-current" : undefined
                     }
                     className={cn(
-                      "flex items-center gap-2 px-3 py-2 text-sm hover:bg-muted focus-visible:outline-none focus-visible:bg-muted",
-                      isCurrent && "bg-muted/60 font-medium"
+                      "flex flex-col gap-0.5 px-3 py-2 text-sm hover:bg-muted focus-visible:outline-none focus-visible:bg-muted",
+                      isCurrent && "bg-primary/15 font-semibold hover:bg-primary/20"
                     )}
                   >
-                    <StatusDot status={entry.status} />
-                    <span className="w-9 shrink-0 tabular-nums text-xs text-muted-foreground">
-                      {tokenLabel(entry, source)}
-                    </span>
-                    <span className="min-w-0 flex-1 truncate">
-                      {entry.label || "Walk-in"}
-                    </span>
-                    {ageSex !== "—" ? (
-                      <span className="shrink-0 tabular-nums text-xs text-muted-foreground">
-                        {ageSex}
+                    <span className="flex items-center gap-2">
+                      <StatusDot status={entry.status} />
+                      <span className="w-9 shrink-0 tabular-nums text-xs text-muted-foreground">
+                        {tokenLabel(entry, source)}
                       </span>
-                    ) : null}
-                    {isCurrent ? (
-                      <span className="shrink-0 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                        Here
+                      <span className="min-w-0 flex-1 truncate">
+                        {entry.label || "Walk-in"}
                       </span>
-                    ) : entry.appointmentDate ? (
-                      <span className="shrink-0 text-xs text-muted-foreground">
-                        {formatTime(entry.appointmentDate)}
+                      {ageSex !== "—" ? (
+                        <span className="shrink-0 tabular-nums text-xs text-muted-foreground">
+                          {ageSex}
+                        </span>
+                      ) : null}
+                      {isCurrent ? (
+                        <span className="shrink-0 rounded bg-primary px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary-foreground">
+                          Here
+                        </span>
+                      ) : entry.appointmentDate ? (
+                        <span className="shrink-0 text-xs text-muted-foreground">
+                          {formatTime(entry.appointmentDate)}
+                        </span>
+                      ) : null}
+                    </span>
+                    {contact ? (
+                      <span className="truncate pl-14 text-xs font-normal text-muted-foreground">
+                        {contact}
                       </span>
                     ) : null}
                   </Link>

@@ -324,23 +324,6 @@ async function loadDocumentRow(
   return data as DocumentRow;
 }
 
-async function prescriptionExistsForAppointment(
-  appointmentId: string,
-  doctorId: string,
-  correlationId: string
-): Promise<boolean> {
-  const { data, error } = await admin()
-    .from('prescriptions')
-    .select('id')
-    .eq('appointment_id', appointmentId)
-    .eq('doctor_id', doctorId)
-    .limit(1)
-    .maybeSingle();
-
-  if (error) handleSupabaseError(error, correlationId);
-  return Boolean(data);
-}
-
 async function assembleDocuments(
   rows: DocumentRow[],
   doctorId: string,
@@ -637,23 +620,15 @@ export async function deleteVisitDocument(
   doctorId: string,
   correlationId: string,
   actorId: string,
-  actorIsStaff: boolean,
+  _actorIsStaff: boolean,
   actorCapabilities?: readonly string[]
 ): Promise<void> {
   await loadOwnedAppointment(appointmentId, doctorId, correlationId);
   const document = await loadDocumentRow(documentId, appointmentId, doctorId, correlationId);
   assertDocumentWrite(actorCapabilities, document.document_type, document.ordered_by);
 
-  if (actorIsStaff && (await prescriptionExistsForAppointment(appointmentId, doctorId, correlationId))) {
-    throw new ForbiddenError('The doctor has opened this visit. Ask them to remove the file.');
-  }
-
   const pages = await loadPages([documentId], doctorId, correlationId);
   const paths = pages.map((page) => page.file_path);
-  if (paths.length > 0) {
-    const { error: storageError } = await admin().storage.from(BUCKET).remove(paths);
-    if (storageError) handleSupabaseError(storageError, correlationId);
-  }
 
   const { error } = await admin()
     .from('visit_documents')
@@ -662,6 +637,9 @@ export async function deleteVisitDocument(
     .eq('doctor_id', doctorId);
 
   if (error) handleSupabaseError(error, correlationId);
+  if (paths.length > 0) {
+    void admin().storage.from(BUCKET).remove(paths);
+  }
 
   const onBehalf = actorId !== doctorId ? doctorId : undefined;
   await logDataModification(
@@ -682,23 +660,16 @@ export async function deleteVisitDocumentPage(
   doctorId: string,
   correlationId: string,
   actorId: string,
-  actorIsStaff: boolean,
+  _actorIsStaff: boolean,
   actorCapabilities?: readonly string[]
 ): Promise<VisitDocument | null> {
   await loadOwnedAppointment(appointmentId, doctorId, correlationId);
   const document = await loadDocumentRow(documentId, appointmentId, doctorId, correlationId);
   assertDocumentWrite(actorCapabilities, document.document_type, document.ordered_by);
 
-  if (actorIsStaff && (await prescriptionExistsForAppointment(appointmentId, doctorId, correlationId))) {
-    throw new ForbiddenError('The doctor has opened this visit. Ask them to remove the file.');
-  }
-
   const pages = await loadPages([documentId], doctorId, correlationId);
   const target = pages.find((page) => page.id === pageId);
   if (!target) throw new NotFoundError('Page not found');
-
-  const { error: storageError } = await admin().storage.from(BUCKET).remove([target.file_path]);
-  if (storageError) handleSupabaseError(storageError, correlationId);
 
   const { error } = await admin()
     .from('visit_document_pages')
@@ -708,6 +679,7 @@ export async function deleteVisitDocumentPage(
     .eq('doctor_id', doctorId);
 
   if (error) handleSupabaseError(error, correlationId);
+  void admin().storage.from(BUCKET).remove([target.file_path]);
 
   const remaining = pages.filter((page) => page.id !== pageId);
   const keptResults = parseExtractedResults(document.extracted_results).filter(

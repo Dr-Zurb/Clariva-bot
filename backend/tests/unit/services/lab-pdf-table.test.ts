@@ -205,6 +205,89 @@ describe('reconstructLabTable', () => {
     });
   });
 
+  it('reads other labs’ column titles as the same roles', () => {
+    const items = [
+      item('Investigation', 20, 20, 78),
+      item('Observed Value', 200, 20, 78),
+      item('Unit', 300, 20, 24),
+      item('Ref. Range', 360, 20, 54),
+      item('Haemoglobin', 20, 40, 72),
+      item('11.8', 200, 40, 24),
+      item('g/dL', 300, 40, 24),
+      item('12.0 - 15.0', 360, 40, 72),
+    ];
+
+    expect(reconstructLabTable(items).rows[0]).toMatchObject({
+      rawName: 'Haemoglobin',
+      rawValue: '11.8',
+      rawUnit: 'g/dL',
+      rawRange: '12.0 - 15.0',
+    });
+  });
+
+  it('treats Normal Values as the range column', () => {
+    const items = [
+      item('Parameter', 20, 20, 54),
+      item('Result', 200, 20, 36),
+      item('Normal Values', 360, 20, 78),
+      item('HbA1c', 20, 40, 36),
+      item('6.4', 200, 40, 18),
+      item('4.0 - 5.6', 360, 40, 54),
+    ];
+
+    expect(reconstructLabTable(items).rows[0]).toMatchObject({
+      rawName: 'HbA1c',
+      rawValue: '6.4',
+      rawRange: '4.0 - 5.6',
+    });
+  });
+
+  it('does not treat a disclaimer that mentions test and result as the header', () => {
+    const items = [
+      item(
+        'Note if the test results are alarming or unexpected contact the laboratory',
+        20,
+        20,
+        360
+      ),
+      item('Haemoglobin', 20, 40, 72),
+      item('11.8', 200, 40, 24),
+    ];
+
+    const result = reconstructLabTable(items);
+    expect(result.rows).toEqual([]);
+    expect(result.pages[0].skipReason).toBe('no_header');
+  });
+
+  it('extracts when the lab uses Obtained Value and Bio Ref Intervals', () => {
+    const items = [
+      item('Test Name', 20, 20, 54),
+      item('Obtained Value', 200, 20, 78),
+      item('Units', 300, 20, 30),
+      item('Bio. Ref. Intervals', 360, 20, 108),
+      item('Method', 500, 20, 36),
+      item('Haemoglobin', 20, 40, 72),
+      item('11.8', 200, 40, 24),
+      item('g/dL', 300, 40, 24),
+      item('12.0 - 15.0', 360, 40, 72),
+      item('Colorimetry', 500, 40, 66),
+    ];
+
+    const result = reconstructLabTable(items);
+    expect(result.skippedPageIndexes).toEqual([]);
+    expect(result.rows).toEqual([
+      {
+        rawName: 'Haemoglobin',
+        rawValue: '11.8',
+        rawUnit: 'g/dL',
+        rawRange: '12.0 - 15.0',
+        rawMethod: 'Colorimetry',
+        pageIndex: 0,
+        lineText: 'Haemoglobin 11.8 g/dL 12.0 - 15.0 Colorimetry',
+      },
+    ]);
+  });
+
   it('skips an image-only page and keeps the text-layer page', () => {
     const items = [
       ...cbcHeader(40, 0),

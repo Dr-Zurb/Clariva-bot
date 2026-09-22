@@ -84,7 +84,7 @@ export function rxMedicineFromCombo(combo: DoctorMedicineCombo): RxMedicine {
     drugMasterId: combo.drugMasterId,
     frequencyCode,
     durationValue: combo.durationValue,
-    durationUnit: (combo.durationUnit as DurationUnit | null) ?? null,
+    durationUnit: (combo.durationUnit as DurationUnit | null) ?? "days",
     routeCode: combo.routeCode ? coerceRouteCode(combo.routeCode) : null,
     doseQty: combo.doseQty,
     doseUnit: (combo.doseUnit as DoseUnit | null) ?? null,
@@ -108,7 +108,7 @@ export function rxMedicineFromParsed(parsed: ParsedMedicineLine): RxMedicine {
     frequency: doseSchedule ?? parsed.frequency,
     doseSchedule,
     durationValue: parsed.durationValue,
-    durationUnit: parsed.durationUnit,
+    durationUnit: parsed.durationUnit ?? "days",
     duration: parsed.duration,
     foodTiming: parsed.foodTiming,
     routeCode: parsed.routeCode,
@@ -158,7 +158,7 @@ export function rxMedicineFromAiMedicine(aiMed: AiParsedMedicine): RxMedicine {
       : getRouteLegacyLabel(routeCode)
     : "";
 
-  const durationUnit = (aiMed.durationUnit as DurationUnit | null) ?? null;
+  const durationUnit = (aiMed.durationUnit as DurationUnit | null) ?? "days";
   const durationValue =
     durationUnit &&
     (durationUnit === "until-finished" || durationUnit === "continue")

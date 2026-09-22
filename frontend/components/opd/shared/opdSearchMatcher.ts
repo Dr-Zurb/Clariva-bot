@@ -10,6 +10,8 @@ export interface OpdSearchMatchable {
   patientPhone: string;
   reasonForVisit: string | null;
   serviceLabel: string | null;
+  /** Relative / guardian name. Omitted on rows that do not carry it. */
+  guardianName?: string | null;
 }
 
 function hashMatchNumber(row: OpdSearchMatchable): number | undefined {
@@ -36,7 +38,8 @@ function hashMatchNumber(row: OpdSearchMatchable): number | undefined {
  *     (queue: `tokenNumber`, slot: `position` when `tokenNumber` absent).
  *  2. `q` is digits-only (≥3 chars) → match against `patientPhone` after stripping
  *     non-digits from both sides.
- *  3. Otherwise → case-insensitive substring match against name, MRN, reason, service.
+ *  3. Otherwise → case-insensitive substring match against name, relative,
+ *     MRN, reason, and service.
  *
  * Empty `q` returns `true` (no filter).
  */
@@ -61,6 +64,8 @@ export function matchesOpdSearch<T extends OpdSearchMatchable>(
 
   const haystack = (
     row.patientName +
+    " " +
+    (row.guardianName ?? "") +
     " " +
     (row.medicalRecordNumber ?? "") +
     " " +

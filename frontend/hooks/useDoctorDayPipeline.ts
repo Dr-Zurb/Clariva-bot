@@ -60,6 +60,12 @@ export interface PipelineEntry {
   ageYears?: number | null;
   /** Patient sex as stored on the chart; null when unset. */
   sex?: string | null;
+  /** Appointment phone. Empty when the visit has none. */
+  patientPhone?: string | null;
+  /** Relative name (patients.guardian_name). */
+  guardianName?: string | null;
+  /** Who that relative is to the patient. */
+  guardianRelation?: string | null;
   /** True when this entry matches `opts.currentAppointmentId` */
   isCurrent: boolean;
   /**
@@ -126,6 +132,9 @@ function mapQueueEntry(
     patientId: row.patientId,
     ageYears: row.age,
     sex: row.gender,
+    patientPhone: row.patientPhone,
+    guardianName: row.guardianName ?? null,
+    guardianRelation: row.guardianRelation ?? null,
     isCurrent: row.appointmentId === currentAppointmentId,
     appointmentDate: row.sessionDate ?? null,
     consultationType: "in_clinic",
@@ -147,6 +156,9 @@ function mapAppointment(
     patientId: appt.patient_id ?? null,
     ageYears: appt.patient_age,
     sex: appt.patient_sex,
+    patientPhone: appt.patient_phone,
+    guardianName: appt.patient_guardian_name ?? null,
+    guardianRelation: appt.patient_guardian_relation ?? null,
     isCurrent: appt.id === currentAppointmentId,
     appointmentDate: appt.appointment_date ?? null,
     consultationType: appt.consultation_type ?? null,

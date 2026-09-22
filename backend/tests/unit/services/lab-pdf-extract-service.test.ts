@@ -10,9 +10,11 @@ import PDFDocument from 'pdfkit';
 import { ValidationError } from '../../../src/utils/errors';
 import {
   boundRawExtractedRows,
+  extractLabFromBytes,
   extractLabPdfFromAttachment,
   extractLabRowsFromPdf,
   itemsFromPdfJsPage,
+  renderPdfPageJpeg,
   type PositionedTextItem,
 } from '../../../src/services/lab-pdf-extract-service';
 
@@ -31,8 +33,14 @@ beforeEach(() => {
   info.mockClear();
 });
 
-function item(text: string, x: number, y: number, width?: number): PositionedTextItem {
-  return { text, x, y, width: width ?? text.length * 6, pageIndex: 0 };
+function item(
+  text: string,
+  x: number,
+  y: number,
+  width?: number,
+  pageIndex = 0
+): PositionedTextItem {
+  return { text, x, y, width: width ?? text.length * 6, pageIndex };
 }
 
 function buildTablePdf(): Promise<Buffer> {
@@ -237,6 +245,132 @@ describe('extractLabPdfFromAttachment', () => {
       )
     ).rejects.toBeInstanceOf(ValidationError);
     expect(extractImage).not.toHaveBeenCalled();
+  });
+});
+
+function visionRow(pageIndex = 0) {
+  return {
+    rawName: 'Haemoglobin',
+    rawValue: '11.8',
+    rawUnit: 'g/dL',
+    rawRange: '12.0 - 15.0',
+    rawMethod: null,
+    pageIndex,
+    lineText: 'Haemoglobin 11.8 g/dL 12.0 - 15.0',
+  };
+}
+
+describe('extractLabFromBytes vision fallback', () => {
+  const pdf = Buffer.from('%PDF-1.4 owned');
+
+  it('does not render or call the model when the vision switch is off', async () => {
+    const renderSkippedPage = jest.fn(async () => Buffer.from('jpeg'));
+    const extractImage = jest.fn(async () => ({ rows: [visionRow()] }));
+
+    const result = await extractLabFromBytes(
+      { sourceId: 'page-1', bytes: pdf, fileType: 'application/pdf', correlationId: 'corr-1' },
+      {
+        readPageItems: async () => [item('scan page', 20, 20, 60)],
+        isVisionEnabled: () => false,
+        renderSkippedPage,
+        extractImage,
+      }
+    );
+
+    expect(renderSkippedPage).not.toHaveBeenCalled();
+    expect(extractImage).not.toHaveBeenCalled();
+    expect(result.source).toBe('pdf_text');
+    expect(result.rows).toEqual([]);
+    expect(result.skippedPageIndexes).toEqual([0]);
+  });
+
+  it('transcribes a skipped page and keeps a page the text reader already placed', async () => {
+    const renderSkippedPage = jest.fn(async () => Buffer.from('jpeg'));
+    const extractImage = jest.fn(async () => ({ rows: [visionRow(0)] }));
+
+    const result = await extractLabFromBytes(
+      { sourceId: 'page-1', bytes: pdf, fileType: 'application/pdf', correlationId: 'corr-1' },
+      {
+        readPageItems: async () => [
+          item('Test', 20, 20, 24, 0),
+          item('Result', 200, 20, 36, 0),
+          item('Unit', 280, 20, 24, 0),
+          item('Reference Range', 360, 20, 90, 0),
+          item('Haemoglobin', 20, 40, 72, 0),
+          item('11.8', 200, 40, 24, 0),
+          item('g/dL', 280, 40, 24, 0),
+          item('12.0 - 15.0', 360, 40, 72, 0),
+          item('scan page', 20, 20, 60, 1),
+        ],
+        isVisionEnabled: () => true,
+        renderSkippedPage,
+        extractImage,
+      }
+    );
+
+    expect(renderSkippedPage).toHaveBeenCalledTimes(1);
+    expect(renderSkippedPage).toHaveBeenCalledWith(pdf, 1);
+    expect(extractImage).toHaveBeenCalledWith(Buffer.from('jpeg'), 'image/jpeg', {
+      correlationId: 'corr-1',
+    });
+    expect(result.source).toBe('vision');
+    expect(result.skippedPageIndexes).toEqual([]);
+    expect(result.rows.map((row) => row.pageIndex)).toEqual([0, 1]);
+    expect(result.rows[1].rawValue).toBe('11.8');
+  });
+
+  it('keeps the text rows when the model call fails', async () => {
+    const result = await extractLabFromBytes(
+      { sourceId: 'page-1', bytes: pdf, fileType: 'application/pdf', correlationId: 'corr-1' },
+      {
+        readPageItems: async () => [
+          item('Test', 20, 20, 24, 0),
+          item('Result', 200, 20, 36, 0),
+          item('Haemoglobin', 20, 40, 72, 0),
+          item('11.8', 200, 40, 24, 0),
+          item('no table', 20, 20, 48, 1),
+        ],
+        isVisionEnabled: () => true,
+        renderSkippedPage: async () => Buffer.from('jpeg'),
+        extractImage: async () => {
+          throw new Error('model down');
+        },
+      }
+    );
+
+    expect(result.source).toBe('pdf_text');
+    expect(result.rows).toHaveLength(1);
+    expect(result.skippedPageIndexes).toEqual([1]);
+  });
+
+  it('treats a page with no text items as skipped and sends only that page', async () => {
+    const renderSkippedPage = jest.fn(async () => Buffer.from('jpeg'));
+    await extractLabFromBytes(
+      { sourceId: 'page-1', bytes: pdf, fileType: 'application/pdf', correlationId: 'corr-1' },
+      {
+        pageCount: 2,
+        readPageItems: async () => [
+          item('Test', 20, 20, 24, 0),
+          item('Result', 200, 20, 36, 0),
+          item('Haemoglobin', 20, 40, 72, 0),
+          item('11.8', 200, 40, 24, 0),
+        ],
+        isVisionEnabled: () => true,
+        renderSkippedPage,
+        extractImage: async () => ({ rows: [] }),
+      }
+    );
+
+    expect(renderSkippedPage).toHaveBeenCalledTimes(1);
+    expect(renderSkippedPage).toHaveBeenCalledWith(pdf, 1);
+  });
+});
+
+describe('renderPdfPageJpeg', () => {
+  it('returns a jpeg for a generated PDF page', async () => {
+    const jpeg = await renderPdfPageJpeg(await buildTablePdf(), 0);
+    expect(jpeg).not.toBeNull();
+    expect(jpeg?.subarray(0, 3).toString('hex')).toBe('ffd8ff');
   });
 });
 

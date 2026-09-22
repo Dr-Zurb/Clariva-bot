@@ -428,7 +428,7 @@ Shared fields on both variants:
 
 **Queue mode** (`mode: "queue"`):
 
-- `entries` — `QueueSessionRow[]` (`appointmentId`, `tokenNumber`, patient identity, status, …).
+- `entries` — `QueueSessionRow[]` (`appointmentId`, `tokenNumber`, patient identity including `patientPhone`, `guardianName`, `guardianRelation`, status, …).
 - `counts` — `{ all, active, done, missed }`.
 
 **Mode resolution (DL-9)** — first match wins:
@@ -515,7 +515,7 @@ Omitted on non-dated list reads and on single-appointment fetches. If the 233/23
 
 | Method | Path | Writes | Notes |
 |--------|------|--------|--------|
-| `POST` | `/api/v1/appointments/:id/documents/:documentId/pages/:pageId/extract-lab` | No | Suggestion rows only. Same MIME readers as prescription extract-lab. Rate-limited. |
+| `POST` | `/api/v1/appointments/:id/documents/:documentId/pages/:pageId/extract-lab` | No | Suggestion rows only. Same MIME readers as prescription extract-lab. A PDF page with no rows is rendered and sent to the gated vision reader only when that reader is enabled. Rate-limited. |
 | `PUT` | `/api/v1/appointments/:id/documents/:documentId/extracted-results` | Yes | Body `{ panels: […] }`. Merges by `pageId`; does not wipe other pages. |
 
 Desk does not create a prescription. The doctor hydrates confirmed panels into Objective Reports and may still edit.

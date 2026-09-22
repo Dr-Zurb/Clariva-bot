@@ -1,6 +1,7 @@
 import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import {
+  coverEveryPreviewBlock,
   LetterheadPagePreview,
   overflowingPreviewPages,
   packPreviewBlocks,
@@ -55,6 +56,13 @@ describe("packPreviewBlocks", () => {
     expect(
       packPreviewBlocks([700, 40], page1, later),
     ).toEqual([[0], [1]]);
+  });
+});
+
+describe("coverEveryPreviewBlock", () => {
+  it("puts a dropped medicine on its own sheet and removes duplicates", () => {
+    expect(coverEveryPreviewBlock([[0, 1]], 4)).toEqual([[0, 1], [2], [3]]);
+    expect(coverEveryPreviewBlock([[0, 0, 1], [1]], 2)).toEqual([[0, 1]]);
   });
 });
 
@@ -560,5 +568,152 @@ describe("LetterheadPagePreview", () => {
       "Referral",
       "Physio",
     ]);
+  });
+
+  it("keeps every shown medicine and the other sections on the preview pages", () => {
+    const offsetHeight = vi
+      .spyOn(HTMLElement.prototype, "offsetHeight", "get")
+      .mockReturnValue(80);
+    const scrollHeight = vi
+      .spyOn(HTMLElement.prototype, "scrollHeight", "get")
+      .mockReturnValue(80);
+    try {
+      render(
+        <LetterheadPagePreview
+          model={{
+            ...model,
+            rx: {
+              patientName: "Demo Patient",
+              patientAge: "31 y",
+              patientGender: "F",
+              visitDateLabel: "22 Sep 2026",
+              allergies: "Penicillin rash",
+              cc: "Knee pain for three days",
+              hopi: "Worse when walking downstairs",
+              vitals: "BP 128/82 HR 76",
+              examinationFindings: "Knee tender without swelling",
+              socialHistory: "Does not smoke",
+              diagnosis: "Osteoarthritis of the left knee",
+              investigations: "Left knee X-ray only",
+              advice: "Rest the knee and use ice",
+              followUp: "Review in seven days",
+              referral: "Refer to orthopaedics if it persists",
+              customSubsections: [
+                { title: "Range of motion", body: "Full extension", children: [] },
+              ],
+              medicines: [
+                {
+                  name: "Tablet telmisartan",
+                  dose: "0.5 tabs",
+                  route: "Oral",
+                  frequency: "Once daily",
+                  duration: "20 days",
+                },
+                {
+                  name: "Tablet amlodipine",
+                  dose: "1 tab",
+                  route: "Oral",
+                  frequency: "Once daily",
+                  duration: "20 days",
+                },
+                {
+                  name: "Syrup Aluminium Hydroxide + Magnesium Hydroxide + Simethicone",
+                  dose: "5 ml",
+                  route: "Oral",
+                  frequency: "",
+                  duration: "",
+                },
+                {
+                  name: "diclo para",
+                  dose: "",
+                  route: "Oral",
+                  frequency: "As needed",
+                  duration: "",
+                },
+                {
+                  name: "Tablet Calcium Carbonate + Vit D3",
+                  dose: "500 mg",
+                  route: "Oral",
+                  frequency: "",
+                  duration: "",
+                },
+                {
+                  name: "Lotion Calamine",
+                  dose: "8%",
+                  route: "Topical",
+                  frequency: "",
+                  duration: "",
+                },
+                {
+                  name: "Cream Betamethasone salicylate",
+                  dose: "0.1%",
+                  route: "Topical",
+                  frequency: "",
+                  duration: "",
+                },
+                {
+                  name: "Tablet levocetrizine",
+                  dose: "1 tab",
+                  route: "Oral",
+                  frequency: "0-0-1",
+                  duration: "10 days",
+                  instructions: "At night",
+                },
+              ],
+            },
+          }}
+        />,
+      );
+
+      const visible = screen
+        .getAllByTestId("letterhead-preview-page")
+        .map((page) => page.textContent ?? "")
+        .join("\n");
+      expect(screen.getAllByTestId("letterhead-preview-page").length).toBeGreaterThan(1);
+
+      for (const line of [
+        "Demo Patient",
+        "31 y",
+        "Penicillin rash",
+        "Knee pain for three days",
+        "Worse when walking downstairs",
+        "BP 128/82 HR 76",
+        "Knee tender without swelling",
+        "Does not smoke",
+        "Range of motion",
+        "Full extension",
+        "Osteoarthritis of the left knee",
+        "Left knee X-ray only",
+        "Tablet telmisartan",
+        "0.5 tabs",
+        "Tablet amlodipine",
+        "Syrup Aluminium Hydroxide + Magnesium Hydroxide + Simethicone",
+        "5 ml",
+        "diclo para",
+        "As needed",
+        "Tablet Calcium Carbonate + Vit D3",
+        "500 mg",
+        "Lotion Calamine",
+        "8%",
+        "Cream Betamethasone salicylate",
+        "0.1%",
+        "Tablet levocetrizine",
+        "0-0-1",
+        "10 days",
+        "At night",
+        "Rest the knee and use ice",
+        "Review in seven days",
+        "Refer to orthopaedics if it persists",
+      ]) {
+        expect(visible).toContain(line);
+      }
+      expect(visible).not.toMatch(/no medicines prescribed/i);
+      expect(visible.indexOf("Tablet levocetrizine")).toBeGreaterThan(
+        visible.indexOf("Tablet telmisartan"),
+      );
+    } finally {
+      offsetHeight.mockRestore();
+      scrollHeight.mockRestore();
+    }
   });
 });

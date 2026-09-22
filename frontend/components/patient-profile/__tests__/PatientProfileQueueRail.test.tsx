@@ -668,6 +668,49 @@ describe("CockpitQueueRail today's-OPD picker", () => {
     );
   });
 
+  it("filters by phone and relative, and shows both under the name", () => {
+    pipelineResult(
+      [
+        makeEntry({
+          id: "appt-1",
+          label: "Jasmin Kaur",
+          tokenNumber: 69,
+          position: 1,
+          ageYears: 13,
+          sex: "female",
+          patientPhone: "9876543210",
+          guardianName: "Charanjit Singh",
+          guardianRelation: "father",
+        }),
+        makeEntry({
+          id: "appt-2",
+          label: "Kabir Singh",
+          tokenNumber: 65,
+          position: 2,
+          isCurrent: true,
+          ageYears: 45,
+          sex: "male",
+          patientPhone: "9811122233",
+        }),
+      ],
+      1,
+    );
+    renderInline();
+
+    const picker = within(openPicker());
+    expect(picker.getByText("9876543210 · d/o Charanjit Singh")).toBeInTheDocument();
+    expect(picker.getByText("9811122233")).toBeInTheDocument();
+
+    const search = picker.getByLabelText(/search today's opd/i);
+    fireEvent.change(search, { target: { value: "98765" } });
+    expect(picker.getByRole("link", { name: /Jasmin Kaur/ })).toBeInTheDocument();
+    expect(picker.queryByRole("link", { name: /Kabir Singh/ })).toBeNull();
+
+    fireEvent.change(search, { target: { value: "charanjit" } });
+    expect(picker.getByRole("link", { name: /Jasmin Kaur/ })).toBeInTheDocument();
+    expect(picker.queryByRole("link", { name: /Kabir Singh/ })).toBeNull();
+  });
+
   it("filters by name and by #token", () => {
     seedDay(4);
     renderInline();

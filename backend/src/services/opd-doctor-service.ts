@@ -123,12 +123,16 @@ export async function listDoctorQueueSession(
     age: number | null;
     date_of_birth: string | null;
     gender: string | null;
+    guardian_name: string | null;
+    guardian_relation: string | null;
   };
   const patientMap = new Map<string, PatientRow>();
   if (patientIds.length > 0) {
     const { data: patients, error: patientsErr } = await admin
       .from('patients')
-      .select('id, medical_record_number, age, date_of_birth, gender')
+      .select(
+        'id, medical_record_number, age, date_of_birth, gender, guardian_name, guardian_relation'
+      )
       .in('id', patientIds);
     if (patientsErr) {
       handleSupabaseError(patientsErr, correlationId);
@@ -192,6 +196,8 @@ export async function listDoctorQueueSession(
       patientName: apt?.patient_name ?? '',
       medicalRecordNumber: patient?.medical_record_number ?? null,
       patientPhone: apt?.patient_phone ?? '',
+      guardianName: patient?.guardian_name?.trim() || null,
+      guardianRelation: patient?.guardian_relation?.trim() || null,
 
       age,
       gender: patient?.gender ?? null,

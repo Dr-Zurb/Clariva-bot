@@ -141,6 +141,8 @@ describe('listDoctorQueueSession (oq-01)', () => {
       age: 32,
       date_of_birth: null,
       gender: 'F',
+      guardian_name: 'Charanjit Singh',
+      guardian_relation: 'father',
     };
 
     const { from } = createMockAdmin({
@@ -163,6 +165,8 @@ describe('listDoctorQueueSession (oq-01)', () => {
     expect(row.patientName).toBe('Asha Mehta');
     expect(row.medicalRecordNumber).toBe('P-00042');
     expect(row.patientPhone).toBe('+91 98765 43210');
+    expect(row.guardianName).toBe('Charanjit Singh');
+    expect(row.guardianRelation).toBe('father');
 
     // Demographics
     expect(row.age).toBe(32);

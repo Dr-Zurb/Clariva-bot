@@ -3753,6 +3753,37 @@ export function validatePrescriptionParams(params: unknown): PrescriptionParams 
   return result.data;
 }
 
+const prescriptionPdfMedicineKeySchema = z
+  .string()
+  .regex(/^[A-Za-z0-9+/]*={0,2}$/, 'Invalid medicine key')
+  .max(24_000);
+
+/**
+ * Optional print fingerprint. Absent means the caller did not ask for a
+ * match check. Present (including empty) is base64 of the ordered names.
+ * Returns the decoded key, or undefined when the header was not sent.
+ */
+export function validatePrescriptionPdfMedicineKeyHeader(raw: unknown): string | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  const value = Array.isArray(raw) ? raw[0] : raw;
+  if (value === undefined || value === null) return undefined;
+  const parsed = prescriptionPdfMedicineKeySchema.safeParse(value);
+  if (!parsed.success) {
+    throw new ValidationError('Invalid medicine key');
+  }
+  const buf = Buffer.from(parsed.data, 'base64');
+  const roundTrip = buf.toString('base64').replace(/=+$/, '');
+  const given = parsed.data.replace(/=+$/, '');
+  if (roundTrip !== given) {
+    throw new ValidationError('Invalid medicine key');
+  }
+  const decoded = buf.toString('utf8');
+  if (decoded.length > 16_000) {
+    throw new ValidationError('Invalid medicine key');
+  }
+  return decoded;
+}
+
 export const reissuePrescriptionBodySchema = z
   .object({
     reason: z.enum(REVISION_REASONS),

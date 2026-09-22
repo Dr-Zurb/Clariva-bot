@@ -73,6 +73,19 @@ describe("rx-medicine-from-capture", () => {
     );
   });
 
+  it("preselects days when the captured line has no duration", () => {
+    expect(
+      rxMedicineFromParsed(
+        parsed({ durationValue: null, durationUnit: null, duration: "" }),
+      ),
+    ).toEqual(expect.objectContaining({ durationUnit: "days", duration: "" }));
+    expect(
+      rxMedicineFromDrugMaster(
+        drug({ id: "d2", generic_name: "ORS" }),
+      ).durationUnit,
+    ).toBe("days");
+  });
+
   it("maps a parsed sig line including Plan duration + route", () => {
     expect(rxMedicineFromParsed(parsed())).toEqual(
       expect.objectContaining({

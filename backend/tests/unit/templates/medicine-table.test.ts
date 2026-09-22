@@ -149,8 +149,8 @@ describe('MedicineTable', () => {
     expect(groupTexts).not.toContain('Gel antacid');
     expect(children).toHaveLength(5);
     for (const row of children.slice(1)) {
-      expect(propsOf(row)?.wrap).toBe(false);
-      expect(propsOf(row)?.minPresenceAhead).toBe(48);
+      expect(propsOf(row)?.wrap).not.toBe(false);
+      expect(propsOf(row)?.minPresenceAhead).toBe(64);
     }
   });
 });

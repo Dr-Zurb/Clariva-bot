@@ -136,6 +136,17 @@ export function rxPdfWarmMedicineKey(
     .join("\u0001");
 }
 
+const PRINT_MEDICINE_ATTEMPTS = 4;
+
+function isRxMedicineMismatch(err: unknown): boolean {
+  return (
+    typeof err === "object" &&
+    err !== null &&
+    "code" in err &&
+    (err as { code?: string }).code === "PrescriptionMedicinesMismatchError"
+  );
+}
+
 const PRINT_IFRAME_KEEPALIVE_MS = 120_000;
 /** Safari often never fires onload for a PDF iframe — print blind after this. */
 const PRINT_BLIND_FALLBACK_MS = 1_200;
@@ -416,7 +427,7 @@ export function useRxCommitActions({
   registerActions = true,
 }: UseRxCommitActionsArgs): UseRxCommitActionsResult {
   const shell = usePrescriptionFormShell();
-  const { state: rxState, autoSave, isDirty } = useRxForm();
+  const { state: rxState, autoSave, isDirty, buildPayload } = useRxForm();
   const {
     formAllergyMatches,
     unacceptedDeskAllergies,
@@ -877,52 +888,69 @@ export function useRxCommitActions({
   }, []);
 
   const loadPdfObjectUrl = useCallback(
-    (rxId: string): Promise<string> =>
-      fetchPrescriptionPdf(token, rxId).then(({ blob }) =>
+    (rxId: string, medicineKey: string): Promise<string> =>
+      fetchPrescriptionPdf(token, rxId, { medicineKey }).then(({ blob }) =>
         URL.createObjectURL(pdfBlobForObjectUrl(blob))
       ),
     [token]
   );
 
+  /**
+   * Save is the caller's job on the first try. A mismatch means the stored
+   * rows were not the list on screen (save still in the delete/insert
+   * window, or a stale snapshot). Save again and refetch. Never hand the
+   * printer a PDF that failed this check.
+   */
+  const fetchVerifiedPdf = useCallback(
+    async (rxId: string): Promise<{ blob: Blob; filename: string }> => {
+      let lastError: unknown;
+      for (let attempt = 0; attempt < PRINT_MEDICINE_ATTEMPTS; attempt += 1) {
+        if (attempt > 0) {
+          await autoSaveFlush({ force: true });
+        }
+        const medicineKey = rxPdfWarmMedicineKey(buildPayload().medicines);
+        try {
+          const result = await fetchPrescriptionPdf(token, rxId, {
+            medicineKey,
+          });
+          if (rxPdfWarmMedicineKey(buildPayload().medicines) !== medicineKey) {
+            lastError = new Error(
+              "Prescription medicines were not ready to print. Nothing was printed.",
+            );
+            continue;
+          }
+          dropPdfWarm(true);
+          return result;
+        } catch (err) {
+          lastError = err;
+          if (!isRxMedicineMismatch(err)) throw err;
+        }
+      }
+      dropPdfWarm(true);
+      if (lastError instanceof Error) throw lastError;
+      throw new Error(
+        "Prescription medicines were not ready to print. Nothing was printed.",
+      );
+    },
+    [autoSaveFlush, buildPayload, dropPdfWarm, token],
+  );
+
   const prewarmPdf = useCallback(
     (rxId: string): Promise<string> => {
-      const medicineKey = rxPdfWarmMedicineKey(fields.medicines);
+      const medicineKey = rxPdfWarmMedicineKey(buildPayload().medicines);
       const existing = pdfWarmRef.current;
       if (existing?.rxId === rxId && existing.medicineKey === medicineKey) {
         return existing.objectUrl;
       }
       dropPdfWarm(true);
-      const objectUrl = loadPdfObjectUrl(rxId).catch((err) => {
+      const objectUrl = loadPdfObjectUrl(rxId, medicineKey).catch((err) => {
         if (pdfWarmRef.current?.rxId === rxId) pdfWarmRef.current = null;
         throw err;
       });
       pdfWarmRef.current = { rxId, objectUrl, medicineKey };
       return objectUrl;
     },
-    [dropPdfWarm, fields.medicines, loadPdfObjectUrl]
-  );
-
-  /**
-   * Hand the PDF to a print job, which owns the object URL from here on. An
-   * unwarmed take must NOT park its fetch in the warm ref: the next patient
-   * unmounts this hook, the cleanup revokes the URL mid-flight, and the print
-   * dialog then never opens.
-   */
-  const takeWarmedPdf = useCallback(
-    async (rxId: string): Promise<string> => {
-      const medicineKey = rxPdfWarmMedicineKey(fields.medicines);
-      const existing = pdfWarmRef.current;
-      if (existing?.rxId === rxId && existing.medicineKey === medicineKey) {
-        pdfWarmRef.current = null;
-        return existing.objectUrl;
-      }
-      const staleWarm =
-        existing != null && existing.medicineKey !== medicineKey;
-      dropPdfWarm(true);
-      if (staleWarm) await persistDraftForCommit({ force: true });
-      return loadPdfObjectUrl(rxId);
-    },
-    [dropPdfWarm, fields.medicines, loadPdfObjectUrl, persistDraftForCommit]
+    [buildPayload, dropPdfWarm, loadPdfObjectUrl]
   );
 
   const openPreview = useCallback(() => {
@@ -966,13 +994,21 @@ export function useRxCommitActions({
     setPreviewOpen(false);
   }, []);
 
+  const previewMedicineKey = fields.medicines
+    .map((m) =>
+      [m.medicineName, m.dosage, m.frequency, m.duration, m.instructions].join(
+        "\u0002",
+      ),
+    )
+    .join("\u0001");
+
   useEffect(() => {
-    if (!previewOpen || !allergyQuery.isFetched) return;
+    if (!previewOpen) return;
     setPreviewVM(buildPreviewViewModel());
-    // Refresh once the chart allergies query lands — do not depend on
-    // buildPreviewViewModel (it changes with form fields and would loop).
+    // Refresh when allergies land or the medicine list changes. Do not
+    // depend on buildPreviewViewModel (it changes with every field).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [previewOpen, allergyQuery.isFetched, allergyQuery.data]);
+  }, [previewOpen, previewMedicineKey, allergyQuery.isFetched, allergyQuery.data]);
 
   const emitPreSendTelemetryFor = useCallback(
     (
@@ -1060,7 +1096,7 @@ export function useRxCommitActions({
     finishAfterSendRef.current = false;
     try {
       try {
-        await persistDraftForCommit();
+        await persistDraftForCommit({ force: true });
       } catch (saveErr) {
         setCommitError(
           saveErr instanceof Error
@@ -1081,9 +1117,15 @@ export function useRxCommitActions({
         setAdvanceCancelled(true);
       }
 
-      // Preview already flushed + warmed the slip. Reuse it unless the
-      // draft was dirty (persist dropped the warm and we fetch again).
-      const printJob = shouldPrint ? takeWarmedPdf(rxId) : null;
+      // Never reuse a preview-warmed blob. That fetch can finish against
+      // an older medicines row while the form (and HTML preview) already
+      // shows the current list.
+      if (shouldPrint) dropPdfWarm(true);
+      const printJob = shouldPrint
+        ? fetchVerifiedPdf(rxId).then(({ blob }) =>
+            URL.createObjectURL(pdfBlobForObjectUrl(blob)),
+          )
+        : null;
       printJob?.catch(() => undefined);
 
       setCommitSuccess("Sending to patient…");
@@ -1180,7 +1222,8 @@ export function useRxCommitActions({
     setAdvanceCancelled,
     releasePrintAdvanceHold,
     prescriptionIdRef,
-    takeWarmedPdf,
+    dropPdfWarm,
+    fetchVerifiedPdf,
     token,
     onSuccess,
     onSent,
@@ -1279,7 +1322,7 @@ export function useRxCommitActions({
         setCommitError("No prescription to download yet.");
         return;
       }
-      const { blob, filename } = await fetchPrescriptionPdf(token, rxId);
+      const { blob, filename } = await fetchVerifiedPdf(rxId);
       await downloadPdfBlob(blob, filename);
     } catch (err) {
       setCommitError(
@@ -1290,7 +1333,7 @@ export function useRxCommitActions({
     } finally {
       setPrintBusy(false);
     }
-  }, [persistDraftForCommit, prescriptionIdRef, shell?.prescription?.id, token]);
+  }, [fetchVerifiedPdf, persistDraftForCommit, prescriptionIdRef, shell?.prescription?.id]);
 
   const printPrescription = useCallback(async () => {
     if (requestRevisionIfNeeded("print")) return;
@@ -1298,7 +1341,7 @@ export function useRxCommitActions({
     setPrintBusy(true);
     try {
       try {
-        await persistDraftForCommit();
+        await persistDraftForCommit({ force: true });
       } catch (saveErr) {
         setCommitError(
           saveErr instanceof Error
@@ -1313,7 +1356,9 @@ export function useRxCommitActions({
         return;
       }
       setAdvanceCancelled(true);
-      await printPdfObjectUrl(await takeWarmedPdf(rxId));
+      dropPdfWarm(true);
+      const { blob } = await fetchVerifiedPdf(rxId);
+      await printPdfObjectUrl(URL.createObjectURL(pdfBlobForObjectUrl(blob)));
     } catch (err) {
       setCommitError(
         err instanceof Error ? err.message : "Could not open the print dialog"
@@ -1325,7 +1370,8 @@ export function useRxCommitActions({
     persistDraftForCommit,
     requestRevisionIfNeeded,
     setAdvanceCancelled,
-    takeWarmedPdf,
+    dropPdfWarm,
+    fetchVerifiedPdf,
     prescriptionIdRef,
     shell?.prescription?.id,
   ]);

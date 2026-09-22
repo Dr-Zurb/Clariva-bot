@@ -37,14 +37,9 @@ import {
 } from '../utils/errors';
 import { getDoctorTimezone } from './doctor-settings-service';
 import { invalidatePrescriptionPdfCache } from './prescription-pdf-cache';
+import { withPrescriptionMedicinesLock } from './prescription-medicine-lock';
+import { swapPrescriptionMedicineRows } from './prescription-medicine-rows';
 import { evaluatePrescriptionWriteGuard } from './prescription-write-guard';
-
-/**
- * Per-prescription mutex so overlapping PATCH delete+insert cannot
- * leave two copies of the same medicines on the printed parchi.
- * Mirrors `doctorAvailabilityLocks` in availability-service.
- */
-const prescriptionMedicineReplaceLocks = new Map<string, Promise<unknown>>();
 
 export interface AttestPrescriptionResult {
   attestedAt: string;
@@ -1251,62 +1246,16 @@ async function replacePrescriptionMedicinesExclusive(
   medicines: MedicineInput[],
   correlationId: string
 ): Promise<void> {
-  const prev = prescriptionMedicineReplaceLocks.get(id) ?? Promise.resolve();
-  const work = prev
-    .then(() => replacePrescriptionMedicines(id, medicines, correlationId))
-    .finally(() => {
-      if (prescriptionMedicineReplaceLocks.get(id) === work) {
-        prescriptionMedicineReplaceLocks.delete(id);
-      }
-    });
-  prescriptionMedicineReplaceLocks.set(id, work);
-  await work;
-}
-
-async function replacePrescriptionMedicines(
-  id: string,
-  medicines: MedicineInput[],
-  correlationId: string
-): Promise<void> {
   const admin = getSupabaseAdminClient();
   if (!admin) {
     throw new InternalError('Service role client not available');
   }
 
-  await admin.from('prescription_medicines').delete().eq('prescription_id', id);
-
-  if (medicines.length === 0) return;
-
-  const medicineRows = medicines.map((m, i) => ({
-    prescription_id: id,
-    medicine_name: m.medicineName,
-    dosage: m.dosage ?? null,
-    route: m.route ?? null,
-    frequency: m.frequency ?? null,
-    duration: m.duration ?? null,
-    instructions: m.instructions ?? null,
-    sort_order: m.sortOrder ?? i,
-    // EHR Sub-batch B1 / T2.9 — structured columns mirrored on
-    // update. The PATCH path replaces the whole medicines array
-    // (delete-then-insert above), so each row gets re-written
-    // with current structured values.
-    drug_master_id: m.drugMasterId ?? null,
-    frequency_code: m.frequencyCode ?? null,
-    duration_value: m.durationValue ?? null,
-    duration_unit: m.durationUnit ?? null,
-    route_code: m.routeCode ?? null,
-    // Migration 133 — dose details.
-    dose_qty: m.doseQty ?? null,
-    dose_unit: m.doseUnit ?? null,
-    form: m.form ?? null,
-    food_timing: m.foodTiming ?? null,
-  }));
-
-  const { error: medError } = await admin.from('prescription_medicines').insert(medicineRows);
-
-  if (medError) {
-    handleSupabaseError(medError, correlationId);
-  }
+  // Same lock the PDF snapshot waits on. Insert-then-delete (inside the
+  // swap) so a reader cannot observe zero rows mid-save.
+  await withPrescriptionMedicinesLock(id, () =>
+    swapPrescriptionMedicineRows(admin, id, medicines, correlationId)
+  );
 }
 
 // ============================================================================

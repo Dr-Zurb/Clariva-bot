@@ -34,6 +34,10 @@ export interface DoctorQueueSessionRow {
   patientName: string;
   medicalRecordNumber: string | null;
   patientPhone: string;
+  /** Relative name (`patients.guardian_name`). Absent on older payloads. */
+  guardianName?: string | null;
+  /** Who that relative is to the patient. Absent on older payloads. */
+  guardianRelation?: string | null;
 
   age: number | null;
   gender: string | null;

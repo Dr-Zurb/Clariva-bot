@@ -9,6 +9,11 @@
  * too close to tell apart, is skipped entirely. A row whose value vs range
  * assignment is ambiguous is dropped. Guessing a number into the wrong
  * column is the only unacceptable outcome.
+ *
+ * Column roles come from header words, not a fixed title list, so
+ * "Result", "Obtained Value", and "Observed Value" are the same column.
+ * A cell longer than a heading is ignored so a disclaimer that mentions
+ * "test" and "result" cannot become the table header.
  */
 
 export interface PositionedTextItem {
@@ -61,52 +66,48 @@ interface Column {
   xStart: number;
 }
 
-const NAME_HEADERS = new Set([
+/** A heading, not a sentence. Disclaimers that mention "test" stay out. */
+const MAX_HEADER_CHARS = 48;
+const MAX_HEADER_WORDS = 6;
+
+const NAME_WORDS = new Set([
   'test',
-  'test name',
-  'test description',
+  'tests',
   'investigation',
   'investigations',
   'parameter',
   'parameters',
   'analyte',
+  'analytes',
   'examination',
   'particulars',
   'description',
+  'component',
+  'components',
+  'assay',
+  'assays',
+  'name',
 ]);
 
-const VALUE_HEADERS = new Set([
+/** These mean the printed result even when the lab adds another word. */
+const STRONG_VALUE_WORDS = new Set([
   'result',
   'results',
-  'value',
   'observed',
-  'observed value',
-  'observed result',
+  'obtained',
   'finding',
   'findings',
+  'reading',
+  'readings',
 ]);
 
-const UNIT_HEADERS = new Set(['unit', 'units']);
+const WEAK_VALUE_WORDS = new Set(['value', 'values']);
 
-const RANGE_HEADERS = new Set([
-  'reference',
-  'reference range',
-  'reference interval',
-  'ref range',
-  'ref. range',
-  'ref interval',
-  'biological reference interval',
-  'biological ref interval',
-  'biological ref. interval',
-  'bio ref interval',
-  'bio. ref. interval',
-  'normal',
-  'normal range',
-  'range',
-  'biological reference range',
-]);
+const RANGE_WORDS = new Set(['reference', 'ref', 'range', 'ranges', 'interval', 'intervals']);
 
-const METHOD_HEADERS = new Set(['method', 'methodology', 'technique']);
+const UNIT_WORDS = new Set(['unit', 'units', 'uom']);
+
+const METHOD_WORDS = new Set(['method', 'methodology', 'technique']);
 
 const IGNORE_HEADERS = new Set([
   's. no',
@@ -123,6 +124,8 @@ const IGNORE_HEADERS = new Set([
   'remark',
   'remarks',
   'notes',
+  'specimen',
+  'sample',
 ]);
 
 /** Looks like "12.0 - 15.0" / "12.0–15.0" / "12.0 to 15.0". */
@@ -155,15 +158,39 @@ function normalizeHeader(raw: string): string {
     .trim();
 }
 
+function headerWords(normalized: string): string[] {
+  return normalized.split(' ').filter(Boolean);
+}
+
+function hasWord(words: readonly string[], set: Set<string>): boolean {
+  return words.some((word) => set.has(word));
+}
+
+/**
+ * Role from the words in a heading. "Obtained Value", "Observed Value",
+ * and "Result" are the value column; "Bio. Ref. Intervals" and
+ * "Biological Reference Range" are the range column.
+ */
 function headerRole(text: string): ColumnRole | null {
   const n = normalizeHeader(text);
-  if (!n) return null;
+  if (!n || n.length > MAX_HEADER_CHARS) return null;
   if (IGNORE_HEADERS.has(n)) return 'ignore';
-  if (NAME_HEADERS.has(n)) return 'name';
-  if (VALUE_HEADERS.has(n)) return 'value';
-  if (UNIT_HEADERS.has(n)) return 'unit';
-  if (RANGE_HEADERS.has(n)) return 'range';
-  if (METHOD_HEADERS.has(n)) return 'method';
+  const words = headerWords(n);
+  if (words.length === 0 || words.length > MAX_HEADER_WORDS) return null;
+
+  const strongValue = hasWord(words, STRONG_VALUE_WORDS);
+  const weakValue = hasWord(words, WEAK_VALUE_WORDS);
+  const rangeSignal =
+    hasWord(words, RANGE_WORDS) ||
+    (words.includes('normal') && (words.length === 1 || hasWord(words, RANGE_WORDS) || weakValue));
+
+  if (hasWord(words, UNIT_WORDS) && !strongValue && !rangeSignal && !hasWord(words, NAME_WORDS)) {
+    return 'unit';
+  }
+  if (hasWord(words, METHOD_WORDS) && !strongValue && !rangeSignal) return 'method';
+  if (rangeSignal && !strongValue) return 'range';
+  if (strongValue || weakValue) return 'value';
+  if (hasWord(words, NAME_WORDS)) return 'name';
   return null;
 }
 

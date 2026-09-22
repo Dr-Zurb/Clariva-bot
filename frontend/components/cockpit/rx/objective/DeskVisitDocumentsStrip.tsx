@@ -19,7 +19,10 @@ import {
   promoteVisitDocumentPageToPrescription,
 } from "@/lib/api";
 import { extractLabPdfFromAttachment } from "@/lib/api/lab-extract";
-import { buildExtractedLabApply, matchExtractedLabRows } from "@/lib/cockpit/lab-extract-match";
+import {
+  buildExtractedLabApply,
+  matchExtractedLabRows,
+} from "@/lib/cockpit/lab-extract-match";
 import {
   attachmentFilename,
   isImageAttachment,
@@ -47,7 +50,9 @@ function documentHeading(doc: VisitDocument): string {
   return `${type} · ${date} · ${ordered}`;
 }
 
-function isExtractablePage(page: Pick<VisitDocumentPage, "file_type">): boolean {
+function isExtractablePage(
+  page: Pick<VisitDocumentPage, "file_type">
+): boolean {
   return isExtractableVisitPage(page);
 }
 
@@ -59,7 +64,9 @@ export interface DeskVisitDocumentsStripProps {
   disabled?: boolean;
 }
 
-export function DeskVisitDocumentsStrip({ disabled = false }: DeskVisitDocumentsStripProps) {
+export function DeskVisitDocumentsStrip({
+  disabled = false,
+}: DeskVisitDocumentsStripProps) {
   const rxForm = useOptionalRxForm();
   const token = rxForm?.token ?? "";
   const appointmentId = rxForm?.appointmentId ?? "";
@@ -74,7 +81,9 @@ export function DeskVisitDocumentsStrip({ disabled = false }: DeskVisitDocuments
   const [verifyOpen, setVerifyOpen] = useState(false);
   const [reportDate, setReportDate] = useState(todayIsoDate);
   const [groups, setGroups] = useState<LabExtractVerifyGroup[]>([]);
-  const [promotedByPageId, setPromotedByPageId] = useState<Record<string, string>>({});
+  const [promotedByPageId, setPromotedByPageId] = useState<
+    Record<string, string>
+  >({});
 
   const query = useQuery({
     queryKey: queryKeys.consult(appointmentId).deskDocuments(),
@@ -150,20 +159,29 @@ export function DeskVisitDocumentsStrip({ disabled = false }: DeskVisitDocuments
   }, [appointmentId, patientId, rxForm, shell, token]);
 
   const promotePage = useCallback(
-    async (doc: VisitDocument, page: VisitDocumentPage): Promise<PrescriptionAttachment> => {
+    async (
+      doc: VisitDocument,
+      page: VisitDocumentPage
+    ): Promise<PrescriptionAttachment> => {
       const prescriptionId = await ensurePrescription();
       const alreadyId = promotedByPageId[page.id];
       const existing = shell?.attachments.find((att) => att.id === alreadyId);
       if (existing) return existing;
 
-      const res = await promoteVisitDocumentPageToPrescription(token, prescriptionId, {
-        appointmentId,
-        documentId: doc.id,
-        pageId: page.id,
-      });
+      const res = await promoteVisitDocumentPageToPrescription(
+        token,
+        prescriptionId,
+        {
+          appointmentId,
+          documentId: doc.id,
+          pageId: page.id,
+        }
+      );
       const attachment = res.data.attachment;
       shell?.setAttachments((prev) =>
-        prev.some((att) => att.id === attachment.id) ? prev : [...prev, attachment]
+        prev.some((att) => att.id === attachment.id)
+          ? prev
+          : [...prev, attachment]
       );
       setPromotedByPageId((prev) => ({ ...prev, [page.id]: attachment.id }));
       return attachment;
@@ -176,15 +194,21 @@ export function DeskVisitDocumentsStrip({ disabled = false }: DeskVisitDocuments
       const prescriptionId = shell?.prescriptionIdRef.current;
       if (!prescriptionId || !token) return { ok: false, message: null };
       try {
-        const res = await extractLabPdfFromAttachment(token, prescriptionId, att.id);
-        let previewUrl: string | null = null;
-        if (res.data.source === "vision" && isImageAttachment(att)) {
-          try {
-            const url = await getPrescriptionDownloadUrl(token, prescriptionId, att.id);
-            previewUrl = url.data.downloadUrl;
-          } catch {
-            previewUrl = null;
-          }
+        const res = await extractLabPdfFromAttachment(
+          token,
+          prescriptionId,
+          att.id
+        );
+        let fileUrl: string | null = null;
+        try {
+          const url = await getPrescriptionDownloadUrl(
+            token,
+            prescriptionId,
+            att.id
+          );
+          fileUrl = url.data.downloadUrl;
+        } catch {
+          fileUrl = null;
         }
         return {
           ok: true,
@@ -195,26 +219,33 @@ export function DeskVisitDocumentsStrip({ disabled = false }: DeskVisitDocuments
             skippedPageCount: res.data.skippedPageIndexes.length,
             candidates: matchExtractedLabRows(res.data.rows),
             source: res.data.source,
-            previewUrl,
+            previewUrl: isImageAttachment(att) ? fileUrl : null,
+            fileUrl,
+            fileType: att.file_type,
           },
         };
       } catch (err) {
-        const message = err instanceof Error && err.message ? err.message : null;
+        const message =
+          err instanceof Error && err.message ? err.message : null;
         return { ok: false, message };
       }
     },
     [shell?.prescriptionIdRef, token]
   );
 
-  const openGroups = useCallback((next: LabExtractVerifyGroup[], date: string) => {
-    setGroups(next);
-    setReportDate(date);
-    setVerifyOpen(true);
-  }, []);
+  const openGroups = useCallback(
+    (next: LabExtractVerifyGroup[], date: string) => {
+      setGroups(next);
+      setReportDate(date);
+      setVerifyOpen(true);
+    },
+    []
+  );
 
   const startExtractPages = useCallback(
     async (doc: VisitDocument, pages: VisitDocumentPage[]) => {
-      if (disabled || busy || verifyOpen || !shell || pages.length === 0) return;
+      if (disabled || busy || verifyOpen || !shell || pages.length === 0)
+        return;
       setExtractError(null);
       if (pages.length === 1) {
         setExtractingPageId(pages[0]!.id);
@@ -237,19 +268,24 @@ export function DeskVisitDocumentsStrip({ disabled = false }: DeskVisitDocuments
           }
         } catch (err) {
           failed += 1;
-          firstFailure = firstFailure ?? (err instanceof Error && err.message ? err.message : null);
+          firstFailure =
+            firstFailure ??
+            (err instanceof Error && err.message ? err.message : null);
         }
       }
       setExtractingPageId(null);
       setExtractingDocId(null);
       if (next.length === 0) {
         setExtractError(
-          firstFailure ?? "Could not extract this report. Enter the results manually."
+          firstFailure ??
+            "Could not extract this report. Enter the results manually."
         );
         return;
       }
       if (failed > 0) {
-        setExtractError("Could not extract every page. Review the ones that succeeded.");
+        setExtractError(
+          "Could not extract every page. Review the ones that succeeded."
+        );
       }
       openGroups(next, doc.report_date ?? todayIsoDate());
     },
@@ -330,7 +366,11 @@ export function DeskVisitDocumentsStrip({ disabled = false }: DeskVisitDocuments
                         className="flex h-12 w-12 items-center justify-center rounded-md border bg-background text-xs text-muted-foreground"
                         onClick={() => void openPage(doc.id, page.id)}
                       >
-                        {isImage ? `p${page.page_index + 1}` : <FileText className="h-4 w-4" />}
+                        {isImage ? (
+                          `p${page.page_index + 1}`
+                        ) : (
+                          <FileText className="h-4 w-4" />
+                        )}
                       </button>
                       {canExtract && isExtractablePage(page) ? (
                         <button
@@ -338,7 +378,11 @@ export function DeskVisitDocumentsStrip({ disabled = false }: DeskVisitDocuments
                           className="mt-0.5 w-12 border-t border-border px-0 py-0.5 text-[10px] font-medium hover:bg-muted/60 disabled:opacity-50"
                           onClick={() => void startExtractPages(doc, [page])}
                           disabled={busy || extracted || verifyOpen}
-                          data-testid={extracted ? "desk-lab-extract-done" : "desk-lab-extract"}
+                          data-testid={
+                            extracted
+                              ? "desk-lab-extract-done"
+                              : "desk-lab-extract"
+                          }
                         >
                           {active ? "…" : extracted ? "Done" : "Extract"}
                         </button>

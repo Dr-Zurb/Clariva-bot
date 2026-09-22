@@ -16,7 +16,7 @@
     "test:e2e:existing-server:headed": "node scripts/run-e2e-existing-server.js -- --headed",
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,css,md}\"",
     "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,css,md}\"",
-    "postinstall": "node scripts/copy-twilio-video-processors-assets.mjs"
+    "postinstall": "node scripts/copy-twilio-video-processors-assets.mjs && node scripts/copy-pdfjs-standard-fonts.mjs"
   },
   "engines": {
     "node": "18.x || 20.x || 22.x"
@@ -51,6 +51,7 @@
     "container-query-polyfill": "^1.0.2",
     "lucide-react": "^1.14.0",
     "next": "14.2.35",
+    "pdfjs-dist": "3.11.174",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-resizable-panels": "^4.11.0",

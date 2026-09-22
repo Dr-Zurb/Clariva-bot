@@ -663,7 +663,7 @@ export const EMPTY_RX_MEDICINE: RxMedicine = {
   drugMasterId: null,
   frequencyCode: null,
   durationValue: null,
-  durationUnit: null,
+  durationUnit: "days",
   routeCode: null,
   doseQty: null,
   doseUnit: null,

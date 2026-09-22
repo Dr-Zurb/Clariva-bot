@@ -27,6 +27,7 @@ import { getSupabaseAdminClient } from '../../../src/config/database';
 import {
   confirmVisitDocumentExtractedResults,
   createVisitDocument,
+  deleteVisitDocument,
   extractLabFromVisitPage,
   listVisitDocuments,
   parseExtractedResults,
@@ -57,6 +58,7 @@ function appointmentChain(row: Record<string, unknown> | null) {
   return {
     select: jest.fn().mockReturnThis(),
     eq: jest.fn().mockReturnThis(),
+    limit: jest.fn().mockReturnThis(),
     maybeSingle: jest.fn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue({
       data: row,
       error: null,
@@ -665,5 +667,79 @@ describe('confirmVisitDocumentExtractedResults', () => {
         ACTOR_ID
       )
     ).rejects.toBeInstanceOf(ValidationError);
+  });
+});
+
+function deleteClient(document: Record<string, unknown>) {
+  const pages = {
+    select: jest.fn().mockReturnThis(),
+    eq: jest.fn().mockReturnThis(),
+    in: jest.fn().mockReturnThis(),
+    order: jest.fn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue({
+      data: [PAGE_ROW],
+      error: null,
+    }),
+  };
+  const remove = jest.fn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue({
+    error: null,
+  });
+  return {
+    from: jest.fn((table: string) => {
+      if (table === 'appointments') return appointmentChain(CHECKED_IN);
+      if (table === 'visit_document_pages') return pages;
+      if (table === 'prescriptions') return appointmentChain(RX_ROW);
+      if (table === 'visit_documents') {
+        return {
+          select: jest.fn().mockReturnThis(),
+          eq: jest.fn().mockReturnThis(),
+          maybeSingle: jest
+            .fn<(...args: unknown[]) => Promise<unknown>>()
+            .mockResolvedValue({ data: document, error: null }),
+          delete: jest.fn().mockReturnThis(),
+        };
+      }
+      return appointmentChain(null);
+    }),
+    storage: { from: jest.fn(() => ({ remove })) },
+  };
+}
+
+describe('deleteVisitDocument', () => {
+  it('lets labs staff remove an in-visit report they uploaded', async () => {
+    const client = deleteClient({ ...DOCUMENT_ROW, ordered_by: 'us' });
+    (getSupabaseAdminClient as jest.Mock).mockReturnValue(client);
+
+    await deleteVisitDocument(APT_ID, DOC_ID, DOCTOR_ID, 'cid', ACTOR_ID, true, [
+      'internal_labs',
+    ]);
+
+    expect(client.storage.from).toHaveBeenCalledWith('prescription-attachments');
+    expect(logDataModification).toHaveBeenCalledWith(
+      'cid',
+      ACTOR_ID,
+      'delete',
+      'visit_document',
+      DOC_ID,
+      undefined,
+      DOCTOR_ID
+    );
+  });
+
+  it('lets papers staff remove a file after the doctor opened the visit', async () => {
+    const client = deleteClient(DOCUMENT_ROW);
+    (getSupabaseAdminClient as jest.Mock).mockReturnValue(client);
+
+    await deleteVisitDocument(APT_ID, DOC_ID, DOCTOR_ID, 'cid', ACTOR_ID, true, ['papers']);
+
+    expect(client.storage.from).toHaveBeenCalledWith('prescription-attachments');
+    expect(logDataModification).toHaveBeenCalledWith(
+      'cid',
+      ACTOR_ID,
+      'delete',
+      'visit_document',
+      DOC_ID,
+      undefined,
+      DOCTOR_ID
+    );
   });
 });

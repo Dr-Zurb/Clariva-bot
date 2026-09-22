@@ -77,10 +77,12 @@ jest.mock('../../../src/templates/prescription-pdf/PrescriptionDocument', () => 
 import { renderToBuffer } from '@react-pdf/renderer';
 import * as database from '../../../src/config/database';
 import { invalidatePrescriptionPdfCache } from '../../../src/services/prescription-pdf-cache';
+import { withPrescriptionMedicinesLock } from '../../../src/services/prescription-medicine-lock';
 import {
   getOrCreateSignedPdfUrl,
   getPrescriptionPdfBytes,
 } from '../../../src/services/prescription-pdf-service';
+import { PrescriptionMedicinesMismatchError } from '../../../src/utils/errors';
 
 const mockedRender = renderToBuffer as jest.MockedFunction<typeof renderToBuffer>;
 
@@ -260,6 +262,46 @@ describe('getPrescriptionPdfBytes', () => {
     expect(adm.download).toHaveBeenCalled();
   });
 
+  it('refuses a PDF whose stored medicines do not match the screen', async () => {
+    const adm = mockAdmin({ sentToPatientAt: null, signedUrl: FRESH_URL });
+    mockedDb.getSupabaseAdminClient.mockReturnValue(adm.client as never);
+
+    await expect(
+      getPrescriptionPdfBytes(RX_ID, 'corr-mismatch', {
+        medicineKey: 'Telmisartan\u0001Levocetirizine',
+      }),
+    ).rejects.toBeInstanceOf(PrescriptionMedicinesMismatchError);
+    expect(mockedRender).not.toHaveBeenCalled();
+  });
+
+  it('does not read medicines while a save still holds the list', async () => {
+    const adm = mockAdmin({ sentToPatientAt: null, signedUrl: FRESH_URL });
+    mockedDb.getSupabaseAdminClient.mockReturnValue(adm.client as never);
+
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const held = withPrescriptionMedicinesLock(RX_ID, () => gate);
+    const pending = getPrescriptionPdfBytes(RX_ID, 'corr-lock', { medicineKey: '' });
+
+    for (let i = 0; i < 20; i += 1) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    const medicineReads = adm.client.from.mock.calls.filter(
+      (call) => call[0] === 'prescription_medicines',
+    );
+    expect(medicineReads).toHaveLength(0);
+
+    release();
+    await held;
+    await pending;
+    expect(
+      adm.client.from.mock.calls.filter((call) => call[0] === 'prescription_medicines').length,
+    ).toBeGreaterThan(0);
+    expect(mockedRender).toHaveBeenCalledTimes(1);
+  });
+
   it('re-renders an unsent draft on each print so a newly saved medicine is not skipped', async () => {
     const adm = mockAdmin({ sentToPatientAt: null, signedUrl: FRESH_URL });
     mockedDb.getSupabaseAdminClient.mockReturnValue(adm.client as never);
@@ -268,6 +310,37 @@ describe('getPrescriptionPdfBytes', () => {
     await getPrescriptionPdfBytes(RX_ID, 'corr-2');
 
     expect(mockedRender).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not join an in-flight unsent render so print can see a later save', async () => {
+    const adm = mockAdmin({ sentToPatientAt: null, signedUrl: FRESH_URL });
+    mockedDb.getSupabaseAdminClient.mockReturnValue(adm.client as never);
+
+    let releaseFirst!: (value: Buffer) => void;
+    mockedRender
+      .mockImplementationOnce(
+        () =>
+          new Promise<Buffer>((resolve) => {
+            releaseFirst = resolve;
+          })
+      )
+      .mockImplementationOnce(async () => Buffer.from('%PDF-four-meds%'));
+
+    const first = getPrescriptionPdfBytes(RX_ID, 'corr-warm');
+    for (let i = 0; i < 40 && typeof releaseFirst !== 'function'; i += 1) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    const second = getPrescriptionPdfBytes(RX_ID, 'corr-print');
+    for (let i = 0; i < 40 && mockedRender.mock.calls.length < 2; i += 1) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    expect(typeof releaseFirst).toBe('function');
+    releaseFirst(Buffer.from('%PDF-three-meds%'));
+
+    const [warm, printed] = await Promise.all([first, second]);
+    expect(mockedRender).toHaveBeenCalledTimes(2);
+    expect(printed.bytes.equals(Buffer.from('%PDF-four-meds%'))).toBe(true);
+    expect(warm.bytes.equals(Buffer.from('%PDF-three-meds%'))).toBe(true);
   });
 
   it('serves cached bytes for a sent prescription without re-rendering', async () => {

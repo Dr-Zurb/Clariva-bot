@@ -55,6 +55,7 @@ import {
   validateLastInEpisodeQuery,
   validateLastSubjectiveQuery,
   validateReissuePrescriptionBody,
+  validatePrescriptionPdfMedicineKeyHeader,
 } from '../utils/validation';
 import { validatePromoteVisitDocumentPageBody } from '../utils/visit-document-promote-validation';
 import { InternalError, ServiceUnavailableError, UnauthorizedError } from '../utils/errors';
@@ -476,9 +477,10 @@ export const getPrescriptionPdfHandler = asyncHandler(async (req: Request, res: 
   if (!userId) throw new UnauthorizedError('Authentication required');
 
   const { id } = validatePrescriptionParams(req.params);
+  const medicineKey = validatePrescriptionPdfMedicineKeyHeader(req.headers['x-rx-medicine-key']);
   const prescription = await getPrescriptionById(id, correlationId, userId);
   const [{ bytes }, timezone] = await Promise.all([
-    getPrescriptionPdfBytes(prescription.id, correlationId),
+    getPrescriptionPdfBytes(prescription.id, correlationId, { medicineKey }),
     getDoctorTimezone(prescription.doctor_id),
   ]);
   const filename = prescriptionPdfFilenameFromRow(prescription, timezone);

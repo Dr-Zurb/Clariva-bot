@@ -12,7 +12,10 @@ import { useOptionalRxForm } from "@/components/cockpit/rx/RxFormContext";
 import { usePrescriptionFormShell } from "@/components/cockpit/rx/PrescriptionFormShellContext";
 import { getPrescriptionDownloadUrl } from "@/lib/api";
 import { extractLabPdfFromAttachment } from "@/lib/api/lab-extract";
-import { buildExtractedLabApply, matchExtractedLabRows } from "@/lib/cockpit/lab-extract-match";
+import {
+  buildExtractedLabApply,
+  matchExtractedLabRows,
+} from "@/lib/cockpit/lab-extract-match";
 import {
   OBJECTIVE_ATTACHMENT_CATEGORY,
   OBJECTIVE_MEDIA_ALLOWED_MIME,
@@ -28,13 +31,17 @@ export interface ObjectiveMediaStripProps {
   disabled?: boolean;
 }
 
-function isPdfAttachment(att: Pick<PrescriptionAttachment, "file_type">): boolean {
+function isPdfAttachment(
+  att: Pick<PrescriptionAttachment, "file_type">
+): boolean {
   const mime = (att.file_type ?? "").toLowerCase();
   return mime === "application/pdf" || mime === "application/x-pdf";
 }
 
 /** Both readers are behind one endpoint, so PDFs and photos are both offerable. */
-function isExtractableAttachment(att: Pick<PrescriptionAttachment, "file_type">): boolean {
+function isExtractableAttachment(
+  att: Pick<PrescriptionAttachment, "file_type">
+): boolean {
   return isPdfAttachment(att) || isImageAttachment(att);
 }
 
@@ -50,7 +57,9 @@ type ExtractOutcome =
  * bucket/column/RLS). Read-only (`disabled`) shows thumbnails with no add/remove.
  * PHI-safe: never logs file paths / signed URLs / patient context.
  */
-export function ObjectiveMediaStrip({ disabled = false }: ObjectiveMediaStripProps) {
+export function ObjectiveMediaStrip({
+  disabled = false,
+}: ObjectiveMediaStripProps) {
   const rxForm = useOptionalRxForm();
   const token = rxForm?.token ?? "";
   const dispatch = rxForm?.dispatch;
@@ -63,13 +72,17 @@ export function ObjectiveMediaStrip({ disabled = false }: ObjectiveMediaStripPro
   const [groups, setGroups] = useState<LabExtractVerifyGroup[]>([]);
 
   const filterAttachments = useCallback(
-    (attachments: readonly PrescriptionAttachment[]) => filterObjectiveAttachments(attachments),
-    [],
+    (attachments: readonly PrescriptionAttachment[]) =>
+      filterObjectiveAttachments(attachments),
+    []
   );
 
   const extractables = useMemo(
-    () => filterObjectiveAttachments(shell?.attachments ?? []).filter(isExtractableAttachment),
-    [shell?.attachments],
+    () =>
+      filterObjectiveAttachments(shell?.attachments ?? []).filter(
+        isExtractableAttachment
+      ),
+    [shell?.attachments]
   );
 
   const extractedIds = useMemo(() => {
@@ -82,7 +95,7 @@ export function ObjectiveMediaStrip({ disabled = false }: ObjectiveMediaStripPro
 
   const pending = useMemo(
     () => extractables.filter((att) => !extractedIds.has(att.id)),
-    [extractedIds, extractables],
+    [extractedIds, extractables]
   );
 
   const busy = extractingId !== null || extractingAll;
@@ -92,18 +105,24 @@ export function ObjectiveMediaStrip({ disabled = false }: ObjectiveMediaStripPro
       const prescriptionId = shell?.prescriptionIdRef.current;
       if (!prescriptionId || !token) return { ok: false, message: null };
       try {
-        const res = await extractLabPdfFromAttachment(token, prescriptionId, att.id);
+        const res = await extractLabPdfFromAttachment(
+          token,
+          prescriptionId,
+          att.id
+        );
         // Model-read rows have no verbatim line to check against, so the doctor
         // needs the photo itself in the dialog. Best-effort: a missing preview
         // must not block verification.
-        let previewUrl: string | null = null;
-        if (res.data.source === "vision" && isImageAttachment(att)) {
-          try {
-            const url = await getPrescriptionDownloadUrl(token, prescriptionId, att.id);
-            previewUrl = url.data.downloadUrl;
-          } catch {
-            previewUrl = null;
-          }
+        let fileUrl: string | null = null;
+        try {
+          const url = await getPrescriptionDownloadUrl(
+            token,
+            prescriptionId,
+            att.id
+          );
+          fileUrl = url.data.downloadUrl;
+        } catch {
+          fileUrl = null;
         }
         return {
           ok: true,
@@ -114,17 +133,20 @@ export function ObjectiveMediaStrip({ disabled = false }: ObjectiveMediaStripPro
             skippedPageCount: res.data.skippedPageIndexes.length,
             candidates: matchExtractedLabRows(res.data.rows),
             source: res.data.source,
-            previewUrl,
+            previewUrl: isImageAttachment(att) ? fileUrl : null,
+            fileUrl,
+            fileType: att.file_type,
           },
         };
       } catch (err) {
         // Surface the server's reason when there is one — "photo extraction is
         // not enabled" is otherwise indistinguishable from an unreadable file.
-        const message = err instanceof Error && err.message ? err.message : null;
+        const message =
+          err instanceof Error && err.message ? err.message : null;
         return { ok: false, message };
       }
     },
-    [shell?.prescriptionIdRef, token],
+    [shell?.prescriptionIdRef, token]
   );
 
   const openGroups = useCallback((next: LabExtractVerifyGroup[]) => {
@@ -142,13 +164,14 @@ export function ObjectiveMediaStrip({ disabled = false }: ObjectiveMediaStripPro
       setExtractingId(null);
       if (!outcome.ok) {
         setExtractError(
-          outcome.message ?? "Could not extract this report. Enter the results manually.",
+          outcome.message ??
+            "Could not extract this report. Enter the results manually."
         );
         return;
       }
       openGroups([outcome.group]);
     },
-    [busy, disabled, extractGroup, openGroups, verifyOpen],
+    [busy, disabled, extractGroup, openGroups, verifyOpen]
   );
 
   const startExtractAll = useCallback(
@@ -173,16 +196,19 @@ export function ObjectiveMediaStrip({ disabled = false }: ObjectiveMediaStripPro
       setExtractingAll(false);
       if (next.length === 0) {
         setExtractError(
-          firstFailure ?? "Could not extract these reports. Enter the results manually.",
+          firstFailure ??
+            "Could not extract these reports. Enter the results manually."
         );
         return;
       }
       if (failed > 0) {
-        setExtractError("Could not extract every report. Review the ones that succeeded.");
+        setExtractError(
+          "Could not extract every report. Review the ones that succeeded."
+        );
       }
       openGroups(next);
     },
-    [busy, disabled, extractGroup, openGroups, verifyOpen],
+    [busy, disabled, extractGroup, openGroups, verifyOpen]
   );
 
   const handleConfirm = useCallback(
@@ -207,7 +233,7 @@ export function ObjectiveMediaStrip({ disabled = false }: ObjectiveMediaStripPro
       setVerifyOpen(false);
       setGroups([]);
     },
-    [dispatch, reportDate],
+    [dispatch, reportDate]
   );
 
   const renderItemFooter = useCallback(
@@ -227,7 +253,7 @@ export function ObjectiveMediaStrip({ disabled = false }: ObjectiveMediaStripPro
         </button>
       );
     },
-    [busy, disabled, extractedIds, extractingAll, extractingId, startExtractOne],
+    [busy, disabled, extractedIds, extractingAll, extractingId, startExtractOne]
   );
 
   return (

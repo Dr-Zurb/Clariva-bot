@@ -3978,20 +3978,35 @@ export function filenameFromContentDisposition(header: string | null): string {
   return PRESCRIPTION_PDF_FILENAME_FALLBACK;
 }
 
+/** Base64 of the ordered medicine-name fingerprint. ASCII-safe as a header. */
+export function encodeRxMedicineKeyHeader(key: string): string {
+  const bytes = new TextEncoder().encode(key);
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
 /**
  * Doctor print / download — stream PDF bytes from the API (no storage hop).
+ * `medicineKey` is the ordered names on screen. The server refuses the PDF
+ * when the stored rows do not match, so a half-saved list is never printed.
  */
 export async function fetchPrescriptionPdf(
   token: string,
   prescriptionId: string,
+  opts?: { medicineKey?: string },
 ): Promise<{ blob: Blob; filename: string }> {
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${token}`,
+  };
+  if (opts?.medicineKey !== undefined) {
+    headers["X-Rx-Medicine-Key"] = encodeRxMedicineKeyHeader(opts.medicineKey);
+  }
   const res = await fetch(
     `${requireApiBaseUrl()}/api/v1/prescriptions/${prescriptionId}/pdf`,
     {
       method: "GET",
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
+      headers,
       cache: "no-store",
     },
   );
@@ -4000,8 +4015,9 @@ export async function fetchPrescriptionPdf(
     const message = isApiError(json)
       ? json.error.message
       : "Could not load prescription PDF";
-    const err = new Error(message) as Error & { status?: number };
+    const err = new Error(message) as Error & { status?: number; code?: string };
     err.status = res.status;
+    if (isApiError(json)) err.code = json.error.code;
     throw err;
   }
   return {

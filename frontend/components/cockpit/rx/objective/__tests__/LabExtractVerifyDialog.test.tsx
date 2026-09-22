@@ -7,7 +7,9 @@ import {
 import { matchExtractedLabRow } from "@/lib/cockpit/lab-extract-match";
 import type { RawExtractedLabRow } from "@/lib/api/lab-extract";
 
-function raw(partial: Partial<RawExtractedLabRow> & Pick<RawExtractedLabRow, "rawName">): RawExtractedLabRow {
+function raw(
+  partial: Partial<RawExtractedLabRow> & Pick<RawExtractedLabRow, "rawName">
+): RawExtractedLabRow {
   return {
     rawValue: null,
     rawUnit: null,
@@ -21,7 +23,7 @@ function raw(partial: Partial<RawExtractedLabRow> & Pick<RawExtractedLabRow, "ra
 
 function group(
   candidates: ReturnType<typeof matchExtractedLabRow>[],
-  overrides: Partial<Omit<LabExtractVerifyGroup, "candidates">> = {},
+  overrides: Partial<Omit<LabExtractVerifyGroup, "candidates">> = {}
 ): LabExtractVerifyGroup {
   return {
     attachmentId: "att-1",
@@ -40,9 +42,16 @@ describe("LabExtractVerifyDialog", () => {
     const onConfirm = vi.fn();
     const onOpenChange = vi.fn();
     const green = matchExtractedLabRow(
-      raw({ rawName: "Hb", rawValue: "11.8", rawUnit: "g/dL", rawRange: "12.0 - 15.0" }),
+      raw({
+        rawName: "Hb",
+        rawValue: "11.8",
+        rawUnit: "g/dL",
+        rawRange: "12.0 - 15.0",
+      })
     );
-    const unmatched = matchExtractedLabRow(raw({ rawName: "Mystery analyte", rawValue: "1" }));
+    const unmatched = matchExtractedLabRow(
+      raw({ rawName: "Mystery analyte", rawValue: "1" })
+    );
 
     render(
       <LabExtractVerifyDialog
@@ -51,10 +60,12 @@ describe("LabExtractVerifyDialog", () => {
         groups={[group([green, unmatched])]}
         reportDate="2026-09-06"
         onConfirm={onConfirm}
-      />,
+      />
     );
 
-    const checks = screen.getAllByTestId("lab-extract-row-check") as HTMLInputElement[];
+    const checks = screen.getAllByTestId(
+      "lab-extract-row-check"
+    ) as HTMLInputElement[];
     expect(checks).toHaveLength(2);
     expect(checks.every((box) => box.checked)).toBe(true);
     expect(screen.getByTestId("lab-extract-select-all")).toBeDisabled();
@@ -73,9 +84,16 @@ describe("LabExtractVerifyDialog", () => {
 
   it("selects and deselects every row", () => {
     const green = matchExtractedLabRow(
-      raw({ rawName: "Hb", rawValue: "11.8", rawUnit: "g/dL", rawRange: "12.0 - 15.0" }),
+      raw({
+        rawName: "Hb",
+        rawValue: "11.8",
+        rawUnit: "g/dL",
+        rawRange: "12.0 - 15.0",
+      })
     );
-    const unmatched = matchExtractedLabRow(raw({ rawName: "Mystery analyte", rawValue: "1" }));
+    const unmatched = matchExtractedLabRow(
+      raw({ rawName: "Mystery analyte", rawValue: "1" })
+    );
 
     render(
       <LabExtractVerifyDialog
@@ -84,20 +102,22 @@ describe("LabExtractVerifyDialog", () => {
         groups={[group([green, unmatched])]}
         reportDate="2026-09-06"
         onConfirm={() => {}}
-      />,
+      />
     );
 
     fireEvent.click(screen.getByTestId("lab-extract-deselect-all"));
-    const checks = screen.getAllByTestId("lab-extract-row-check") as HTMLInputElement[];
+    const checks = screen.getAllByTestId(
+      "lab-extract-row-check"
+    ) as HTMLInputElement[];
     expect(checks.every((box) => !box.checked)).toBe(true);
     expect(screen.getByTestId("lab-extract-confirm")).toBeDisabled();
     expect(screen.getByTestId("lab-extract-deselect-all")).toBeDisabled();
 
     fireEvent.click(screen.getByTestId("lab-extract-select-all"));
     expect(
-      (screen.getAllByTestId("lab-extract-row-check") as HTMLInputElement[]).every(
-        (box) => box.checked,
-      ),
+      (
+        screen.getAllByTestId("lab-extract-row-check") as HTMLInputElement[]
+      ).every((box) => box.checked)
     ).toBe(true);
     expect(screen.getByTestId("lab-extract-confirm")).toBeEnabled();
   });
@@ -111,7 +131,7 @@ describe("LabExtractVerifyDialog", () => {
         groups={[]}
         reportDate="2026-09-06"
         onConfirm={onConfirm}
-      />,
+      />
     );
 
     expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument();
@@ -124,22 +144,33 @@ describe("LabExtractVerifyDialog", () => {
   it("tabs multiple reports and keeps per-file dates on confirm", () => {
     const onConfirm = vi.fn();
     const hb = matchExtractedLabRow(
-      raw({ rawName: "Hb", rawValue: "11.8", rawUnit: "g/dL", rawRange: "12.0 - 15.0" }),
+      raw({
+        rawName: "Hb",
+        rawValue: "11.8",
+        rawUnit: "g/dL",
+        rawRange: "12.0 - 15.0",
+      })
     );
     const cr = matchExtractedLabRow(
-      raw({ rawName: "Creatinine", rawValue: "1.1", rawUnit: "mg/dL" }),
+      raw({ rawName: "Creatinine", rawValue: "1.1", rawUnit: "mg/dL" })
     );
     render(
       <LabExtractVerifyDialog
         open
         onOpenChange={() => {}}
         groups={[
-          group([hb], { attachmentId: "pdf-1", sourceLabel: "02_LFT_Test_Report.pdf" }),
-          group([cr], { attachmentId: "pdf-2", sourceLabel: "03_KFT_Test_Report.pdf" }),
+          group([hb], {
+            attachmentId: "pdf-1",
+            sourceLabel: "02_LFT_Test_Report.pdf",
+          }),
+          group([cr], {
+            attachmentId: "pdf-2",
+            sourceLabel: "03_KFT_Test_Report.pdf",
+          }),
         ]}
         reportDate="2026-09-06"
         onConfirm={onConfirm}
-      />,
+      />
     );
 
     expect(screen.getByText("Verify · 2 reports")).toBeInTheDocument();
@@ -157,7 +188,7 @@ describe("LabExtractVerifyDialog", () => {
       target: { value: "2026-08-01" },
     });
     expect(screen.getByTestId("lab-extract-selection-hint")).toHaveTextContent(
-      "1 selected across 1 report",
+      "1 selected across 1 report"
     );
 
     fireEvent.click(screen.getByTestId("lab-extract-confirm"));
@@ -171,29 +202,36 @@ describe("LabExtractVerifyDialog", () => {
 
   it("shows the source photo for model-read rows and not for PDF rows", () => {
     const hb = matchExtractedLabRow(
-      raw({ rawName: "Hb", rawValue: "11.8", rawUnit: "g/dL", rawRange: "12.0 - 15.0" }),
+      raw({
+        rawName: "Hb",
+        rawValue: "11.8",
+        rawUnit: "g/dL",
+        rawRange: "12.0 - 15.0",
+      })
     );
     const { rerender } = render(
       <LabExtractVerifyDialog
         open
         onOpenChange={() => {}}
         groups={[
-          group([hb], { source: "vision", previewUrl: "https://signed.example/report.jpg" }),
+          group([hb], {
+            source: "vision",
+            previewUrl: "https://signed.example/report.jpg",
+          }),
         ]}
         reportDate="2026-09-06"
         onConfirm={() => {}}
-      />,
+      />
     );
 
     expect(screen.getByTestId("lab-extract-vision-notice")).toBeInTheDocument();
     expect(screen.getByAltText("Source report photo")).toHaveAttribute(
       "src",
-      "https://signed.example/report.jpg",
+      "https://signed.example/report.jpg"
     );
-    expect(screen.getByRole("link", { name: "Open full size" })).toHaveAttribute(
-      "target",
-      "_blank",
-    );
+    expect(
+      screen.getByRole("link", { name: "Open full size" })
+    ).toHaveAttribute("target", "_blank");
 
     rerender(
       <LabExtractVerifyDialog
@@ -202,14 +240,18 @@ describe("LabExtractVerifyDialog", () => {
         groups={[group([hb])]}
         reportDate="2026-09-06"
         onConfirm={() => {}}
-      />,
+      />
     );
-    expect(screen.queryByTestId("lab-extract-vision-notice")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("lab-extract-vision-notice")
+    ).not.toBeInTheDocument();
   });
 
   it("still verifies a photo extract when the preview URL could not be signed", () => {
     const onConfirm = vi.fn();
-    const hb = matchExtractedLabRow(raw({ rawName: "Hb", rawValue: "11.8", rawUnit: "g/dL" }));
+    const hb = matchExtractedLabRow(
+      raw({ rawName: "Hb", rawValue: "11.8", rawUnit: "g/dL" })
+    );
     render(
       <LabExtractVerifyDialog
         open
@@ -217,18 +259,20 @@ describe("LabExtractVerifyDialog", () => {
         groups={[group([hb], { source: "vision", previewUrl: null })]}
         reportDate="2026-09-06"
         onConfirm={onConfirm}
-      />,
+      />
     );
 
     expect(screen.getByTestId("lab-extract-vision-notice")).toBeInTheDocument();
-    expect(screen.queryByAltText("Source report photo")).not.toBeInTheDocument();
+    expect(
+      screen.queryByAltText("Source report photo")
+    ).not.toBeInTheDocument();
     fireEvent.click(screen.getByTestId("lab-extract-confirm"));
     expect(onConfirm).toHaveBeenCalledTimes(1);
   });
 
   it("badges a merged value cell so the doctor re-reads that row", () => {
     const merged = matchExtractedLabRow(
-      raw({ rawName: "Hb", rawValue: "11.8 15.0", rawUnit: "g/dL" }),
+      raw({ rawName: "Hb", rawValue: "11.8 15.0", rawUnit: "g/dL" })
     );
     render(
       <LabExtractVerifyDialog
@@ -237,11 +281,57 @@ describe("LabExtractVerifyDialog", () => {
         groups={[group([merged], { source: "vision", previewUrl: null })]}
         reportDate="2026-09-06"
         onConfirm={() => {}}
-      />,
+      />
     );
 
     const row = screen.getByTestId("lab-extract-row");
     expect(row).toHaveAttribute("data-confidence", "flagged");
     expect(row).toHaveTextContent("Format");
+  });
+
+  it("shows one PDF page of rows at a time and keeps the other page selected", () => {
+    const onConfirm = vi.fn();
+    const pageOne = matchExtractedLabRow(
+      raw({
+        rawName: "Hb",
+        rawValue: "11.8",
+        rawUnit: "g/dL",
+        rawRange: "12.0 - 15.0",
+        pageIndex: 0,
+      })
+    );
+    const pageTwo = matchExtractedLabRow(
+      raw({
+        rawName: "Creatinine",
+        rawValue: "1.1",
+        rawUnit: "mg/dL",
+        pageIndex: 1,
+      })
+    );
+    render(
+      <LabExtractVerifyDialog
+        open
+        onOpenChange={() => {}}
+        groups={[
+          group([pageOne, pageTwo], { pageCount: 2, sourceLabel: "Page 1" }),
+        ]}
+        reportDate="2026-09-06"
+        onConfirm={onConfirm}
+      />
+    );
+
+    expect(screen.getByText("Verify · Page 1 of 2")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("Haemoglobin")).toBeInTheDocument();
+    expect(screen.queryByDisplayValue("Creatinine")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("lab-extract-page-next"));
+    expect(screen.getByText("Verify · Page 2 of 2")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("Creatinine")).toBeInTheDocument();
+    expect(screen.queryByDisplayValue("Haemoglobin")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("lab-extract-deselect-all"));
+    fireEvent.click(screen.getByTestId("lab-extract-confirm"));
+    const selected = onConfirm.mock.calls[0]![0] as { name: string }[];
+    expect(selected.map((row) => row.name)).toEqual(["Haemoglobin"]);
   });
 });

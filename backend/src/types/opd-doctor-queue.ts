@@ -17,6 +17,10 @@ export interface DoctorQueueSessionRow {
   patientName: string;
   medicalRecordNumber: string | null;
   patientPhone: string;
+  /** patients.guardian_name — relative shown on the slip. Null when unset. */
+  guardianName: string | null;
+  /** patients.guardian_relation. Null when unset. */
+  guardianRelation: string | null;
 
   age: number | null;
   gender: string | null;
