@@ -128,11 +128,14 @@ export function applyLeadPlusBookingLink(
   };
 }
 
-/** Same `/book` URL without “get an appointment.” */
+/**
+ * Same `/book` URL without “get an appointment.”
+ * Answers a question whose details live on the page. Does not start a booking,
+ * so the next message is not told to open the link.
+ */
 export function applyLeadPlusPageLink(
   input: ApplyReadyPatientBookingPathInput & { lead: string }
 ): { state: ConversationState; replyText: string } {
-  const ready = applyReadyPatientBookingPath(input);
   const slotLink = buildBookingPageUrl(input.conversationId, input.doctorId);
   const page = formatClinicPageLinkDm({
     language: input.language,
@@ -141,7 +144,12 @@ export function applyLeadPlusPageLink(
   });
   const lead = input.lead.trim();
   return {
-    state: ready.state,
+    state: {
+      ...input.state,
+      lastIntent: input.intent,
+      step: 'responded',
+      updatedAt: new Date().toISOString(),
+    },
     replyText: lead ? `${lead}\n\n${page}` : page,
   };
 }

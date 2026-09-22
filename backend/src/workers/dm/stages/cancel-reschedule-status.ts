@@ -39,7 +39,24 @@ import type { ConversationState } from '../../../types/conversation';
 import type { DmHandlerBranch } from '../../../types/dm-instrumentation';
 import type { DmStageHandler, DmTurnContext, DmTurnResult } from '../stage-router';
 import { isCancelRescheduleStatusTurn } from './cancel-reschedule-status-predicate';
-import { applyLeadPlusBookingLink } from '../booking-entry-ready-path';
+import type { ConversationLanguage } from '../../../utils/conversation-language';
+
+/** No visit on this Instagram sender. Do not offer a booking link or start a booking. */
+function replyNoUpcomingAppointments(
+  state: ConversationState,
+  intent: ConversationState['lastIntent'],
+  language: ConversationLanguage
+): { replyText: string; state: ConversationState } {
+  return {
+    replyText: resolveNoUpcomingAppointmentsMessage(language),
+    state: {
+      ...state,
+      lastIntent: intent,
+      step: 'responded',
+      updatedAt: new Date().toISOString(),
+    },
+  };
+}
 
 export const cancelRescheduleStatusStage: DmStageHandler = {
   stage: 'cancel_reschedule_status',
@@ -237,16 +254,7 @@ export const cancelRescheduleStatusStage: DmStageHandler = {
       };
       const hasSelfAppointment = upcoming.some((a) => a.patient_id === conversation.patient_id);
       if (upcoming.length === 0) {
-        const empty = applyLeadPlusBookingLink({
-          state,
-          intent: intentResult.intent,
-          conversationId: conversation.id,
-          doctorId,
-          doctorSettings,
-          patient: null,
-          language: turnLanguage,
-          lead: resolveNoUpcomingAppointmentsMessage(turnLanguage),
-        });
+        const empty = replyNoUpcomingAppointments(state, intentResult.intent, turnLanguage);
         replyText = empty.replyText;
         state = empty.state;
       } else if (askingForSelfOnly && !hasSelfAppointment) {
@@ -300,16 +308,7 @@ export const cancelRescheduleStatusStage: DmStageHandler = {
         correlationId
       );
       if (upcoming.length === 0) {
-        const empty = applyLeadPlusBookingLink({
-          state,
-          intent: intentResult.intent,
-          conversationId: conversation.id,
-          doctorId,
-          doctorSettings,
-          patient: null,
-          language: turnLanguage,
-          lead: resolveNoUpcomingAppointmentsMessage(turnLanguage),
-        });
+        const empty = replyNoUpcomingAppointments(state, intentResult.intent, turnLanguage);
         replyText = empty.replyText;
         state = empty.state;
       } else if (upcoming.length === 1) {
@@ -366,16 +365,7 @@ export const cancelRescheduleStatusStage: DmStageHandler = {
         correlationId
       );
       if (upcoming.length === 0) {
-        const empty = applyLeadPlusBookingLink({
-          state,
-          intent: intentResult.intent,
-          conversationId: conversation.id,
-          doctorId,
-          doctorSettings,
-          patient: null,
-          language: turnLanguage,
-          lead: resolveNoUpcomingAppointmentsMessage(turnLanguage),
-        });
+        const empty = replyNoUpcomingAppointments(state, intentResult.intent, turnLanguage);
         replyText = empty.replyText;
         state = empty.state;
       } else if (upcoming.length === 1) {

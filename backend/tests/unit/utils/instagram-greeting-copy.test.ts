@@ -16,7 +16,7 @@ describe('instagram-greeting-copy', () => {
 
   it('single_fee adds fee to the menu, not a rupee amount', () => {
     const line = buildReceptionistGreetingMessage('en', { catalogMode: 'single_fee' });
-    expect(line).toMatch(/consult fee/i);
+    expect(line).toMatch(/appointment fee/i);
     expect(line).not.toMatch(/₹/);
   });
 

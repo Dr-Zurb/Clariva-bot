@@ -209,6 +209,27 @@ describe('cancelRescheduleStatusStage', () => {
     expect(result.nextState.step).toBe('responded');
   });
 
+  it('cancel, reschedule, and status with no visit do not send a booking link', async () => {
+    jest.mocked(getMergedUpcomingAppointmentsForRelatedPatients).mockResolvedValue([]);
+    const empty = "You don't have any upcoming appointments.";
+
+    for (const intent of [
+      'cancel_appointment',
+      'reschedule_appointment',
+      'check_appointment_status',
+    ] as const) {
+      const result = await cancelRescheduleStatusStage.handle(
+        minimalTurnCtx({
+          intentResult: { intent, confidence: 1 },
+          text: 'i want to cancel',
+        })
+      );
+      expect(result.reply).toBe(empty);
+      expect(result.reply).not.toMatch(/https?:\/\/|get an appointment/i);
+      expect(result.nextState.step).toBe('responded');
+    }
+  });
+
   it('post-redirect "thanks" → post_booking_ack', async () => {
     const ctx = minimalTurnCtx({
       state: { step: 'responded', collectedFields: [], updatedAt: new Date().toISOString() },

@@ -43,11 +43,13 @@ import {
 import { isIdleFeeTriageTurn } from './idle-fee-triage-predicate';
 import { buildReceptionistGreetingMessage } from '../../../utils/instagram-greeting-copy';
 import { getConnectedInstagramDisplayName } from '../../../services/instagram-connect-service';
+import { isTeleconsultCatalogAuthoritative } from '../../../utils/consultation-fees';
 import {
   buildHoursMissingLead,
   buildHoursQuoteLead,
   buildLocationOnBookingPageLead,
   buildLocationQuoteLead,
+  buildOnlineOnlyNoAddressLead,
   buildPaymentOnBookingPageLead,
   buildReceptionistThanksMessage,
   isClinicalAdviceUserMessage,
@@ -356,25 +358,42 @@ export const idleFeeTriageStage: DmStageHandler = {
         replyText = buildLocationQuoteLead(ctx.turnLanguage, address);
       } else {
         dmRoutingBranch = 'booking_start_link_first';
-        const readyLoc = applyLeadPlusPageLink({
-          state: mergeTriage(
+        const onlineOnly = isTeleconsultCatalogAuthoritative({
+          service_offerings_json: doctorSettings?.service_offerings_json,
+          appointment_fee_currency: doctorSettings?.appointment_fee_currency,
+        });
+        if (onlineOnly) {
+          state = mergeTriage(
             {
               ...state,
               lastIntent: intentResult.intent,
+              step: 'responded',
               updatedAt: new Date().toISOString(),
             },
             { activeFlow: undefined }
-          ),
-          intent: intentResult.intent,
-          conversationId: conversation.id,
-          doctorId: ctx.doctorId,
-          doctorSettings,
-          patient: null,
-          language: ctx.turnLanguage,
-          lead: buildLocationOnBookingPageLead(ctx.turnLanguage),
-        });
-        state = readyLoc.state;
-        replyText = readyLoc.replyText;
+          );
+          replyText = buildOnlineOnlyNoAddressLead(ctx.turnLanguage);
+        } else {
+          const readyLoc = applyLeadPlusPageLink({
+            state: mergeTriage(
+              {
+                ...state,
+                lastIntent: intentResult.intent,
+                updatedAt: new Date().toISOString(),
+              },
+              { activeFlow: undefined }
+            ),
+            intent: intentResult.intent,
+            conversationId: conversation.id,
+            doctorId: ctx.doctorId,
+            doctorSettings,
+            patient: null,
+            language: ctx.turnLanguage,
+            lead: buildLocationOnBookingPageLead(ctx.turnLanguage),
+          });
+          state = readyLoc.state;
+          replyText = readyLoc.replyText;
+        }
       }
     } else if (
       !inCollection &&

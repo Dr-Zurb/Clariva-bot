@@ -41,7 +41,7 @@ function joinHelpTopics(topics: string[]): string {
 function greetingHelpTopics(opts?: ReceptionistGreetingOpts): string[] {
   const topics = ['availability'];
   if (opts?.hasAddress) topics.push('address');
-  if (opts?.catalogMode === 'single_fee') topics.push('the consult fee');
+  if (opts?.catalogMode === 'single_fee') topics.push('the appointment fee');
   topics.push('cancel/reschedule', 'a booking link');
   return topics;
 }

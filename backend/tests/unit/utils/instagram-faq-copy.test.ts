@@ -2,6 +2,7 @@ import { describe, expect, it } from '@jest/globals';
 import {
   buildHoursMissingLead,
   buildLocationOnBookingPageLead,
+  buildOnlineOnlyNoAddressLead,
   buildPaymentOnBookingPageLead,
   buildPricesOnBookingPageLead,
   buildReceptionistThanksMessage,
@@ -20,6 +21,7 @@ describe('instagram-faq-copy', () => {
     expect(isOpsPaymentFaqUserMessage('cash or UPI')).toBe(true);
     expect(isOpsPaymentFaqUserMessage('how much is a consultation?')).toBe(false);
     expect(isLocationFaqUserMessage('where is the clinic')).toBe(true);
+    expect(isLocationFaqUserMessage('adress ?')).toBe(true);
     expect(isLocationFaqUserMessage('when is my appointment')).toBe(false);
     expect(isThanksOnlyUserMessage('thanks')).toBe(true);
     expect(isThanksOnlyUserMessage('thanks for the link, also fever')).toBe(false);
@@ -49,6 +51,10 @@ describe('instagram-faq-copy', () => {
     expect(buildPricesOnBookingPageLead('en')).toBe('Visit prices are on this page:');
     expect(buildHoursMissingLead('en')).toBe("I don't have timings saved. They're on this page:");
     expect(buildLocationOnBookingPageLead('en')).toBe('The clinic details are on this page:');
+    expect(buildOnlineOnlyNoAddressLead('en')).toBe(
+      "Appointments are online, so there isn't a street address. I can help with timings or a booking link."
+    );
+    expect(buildOnlineOnlyNoAddressLead('en')).not.toMatch(/teleconsult/i);
     expect(buildPaymentOnBookingPageLead('en')).toBe(
       "I don't have payment details saved. They're on this page:"
     );

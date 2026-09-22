@@ -16,7 +16,7 @@ const HOURS_FAQ =
   /\b(hours|timings?|opening hours|closing hours|what time (do you|are you) open|kab (kholt|open)|kitne baje|(?:your\s+)?availability)\b/i;
 
 const LOCATION_FAQ =
-  /\b(where (is|are) (the )?(clinic|hospital|practice|office)|clinic (address|location)|your address|clinic (kahan|kidhar))\b/i;
+  /\b(where (is|are) (the )?(clinic|hospital|practice|office|you)|clinic (address|adress|location)|your address|address|adress|location|clinic (kahan|kidhar))\b/i;
 
 /** Insurance / cash-or-UPI — page link, not a consult-fee quote. */
 const OPS_PAYMENT_FAQ =
@@ -107,6 +107,15 @@ export function buildLocationOnBookingPageLead(language: ConversationLanguage): 
     en: 'The clinic details are on this page:',
     hi: 'Clinic details is page par hain:',
     pa: 'Clinic details is page te han:',
+  });
+}
+
+/** Online-only practice, no street address. No "teleconsult" in the patient line. */
+export function buildOnlineOnlyNoAddressLead(language: ConversationLanguage): string {
+  return pickLocale(language, {
+    en: "Appointments are online, so there isn't a street address. I can help with timings or a booking link.",
+    hi: 'Appointments online hain, isliye koi street address nahi hai. Main timings ya booking link mein madad kar sakta hoon.',
+    pa: 'Appointments online han, is layi koi street address nahi. Main timings ja booking link vich madad kar sakda haan.',
   });
 }
 

@@ -253,6 +253,38 @@ describe('idleFeeTriageStage', () => {
     expect(composeDmReplySegments).not.toHaveBeenCalled();
   });
 
+  it('online-only address ask does not say teleconsult', async () => {
+    const ctx = minimalTurnCtx({
+      intentResult: { intent: 'ask_question', confidence: 1 },
+      text: 'adress ?',
+      doctorSettings: {
+        timezone: 'Asia/Kolkata',
+        instagram_receptionist_paused: false,
+        appointment_fee_currency: 'INR',
+        service_offerings_json: {
+          version: 1,
+          services: [
+            {
+              service_id: '00000000-0000-4000-8000-000000000001',
+              service_key: 'visit',
+              label: 'Visit',
+              modalities: {
+                video: { enabled: true, price_minor: 50000 },
+              },
+            },
+          ],
+        },
+      } as never,
+    });
+
+    const result = await idleFeeTriageStage.handle(ctx);
+    expect(result.reply).toBe(
+      "Appointments are online, so there isn't a street address. I can help with timings or a booking link."
+    );
+    expect(result.reply).not.toMatch(/teleconsult|https?:\/\//i);
+    expect(result.nextState.step).toBe('responded');
+  });
+
   it('greeting names the connected Instagram account', async () => {
     jest.mocked(getConnectedInstagramDisplayName).mockResolvedValueOnce('Halo Aid');
     const ctx = minimalTurnCtx({
@@ -277,7 +309,7 @@ describe('idleFeeTriageStage', () => {
     });
 
     const result = await idleFeeTriageStage.handle(ctx);
-    expect(result.reply).toMatch(/consult fee/i);
+    expect(result.reply).toMatch(/appointment fee/i);
     expect(result.reply).toMatch(/address/i);
     expect(result.reply).not.toMatch(/₹/);
   });
@@ -308,6 +340,7 @@ describe('idleFeeTriageStage', () => {
     expect(result.reply).toContain("I don't have timings saved. They're on this page:");
     expect(result.reply).toContain('https://example.com/book');
     expect(result.reply).not.toMatch(/get an appointment/i);
+    expect(result.nextState.step).toBe('responded');
   });
 
   it('single_fee price ask quotes ₹ without a booking CTA', async () => {
