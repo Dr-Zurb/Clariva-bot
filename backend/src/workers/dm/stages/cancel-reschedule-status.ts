@@ -2,34 +2,20 @@
  * rcp-04: Cancel / reschedule / status stage — extracted from legacy decide-chain.
  */
 
-import { getAppointmentByIdForWorker } from '../../../services/appointment-service';
-import { executeAction, parseToolCallToAction } from '../../../services/action-executor-service';
 import { hasCapturedPaymentForAppointment } from '../../../services/payment-service';
 import {
   buildRelatedPatientIdsForWebhook,
   getMergedUpcomingAppointmentsForRelatedPatients,
 } from '../../../services/webhook-appointment-helpers';
-import { buildReschedulePageUrl } from '../../../services/slot-selection-service';
+import { buildBookingPageUrl } from '../../../services/slot-selection-service';
 import {
-  appointmentConsultationTypeToLabel,
-  buildAppointmentPickNotFoundMessage,
-  buildCancelChoiceListMessage,
-  buildCancelConfirmFallbackMessage,
-  buildCancelConfirmPromptMessage,
-  buildNumericPickInvalidMessage,
   buildPostBookingAckMessage,
-  buildRescheduleChoiceListMessage,
   buildStatusAppointmentLineForPatient,
   buildStatusSelfOnlyOtherPatientMessage,
   buildStatusSingleNextAppointmentMessage,
   buildStatusUpcomingListMessage,
-  formatAppointmentChoiceDate,
-  type CancelChoiceItem,
 } from '../../../utils/dm-copy';
-import {
-  formatRescheduleChoiceLinkDm,
-  formatRescheduleLinkDm,
-} from '../../../utils/booking-link-copy';
+import { formatCancelOnPageDm, formatRescheduleOnPageDm } from '../../../utils/booking-link-copy';
 import {
   formatAppointmentStatusLine,
   isPostBookingAcknowledgment,
@@ -58,6 +44,33 @@ function replyNoUpcomingAppointments(
   };
 }
 
+/** Hand cancel or reschedule to the owned page. Do not name a visit or cancel in the chat. */
+function replyContinueOnOwnedPage(
+  state: ConversationState,
+  intent: ConversationState['lastIntent'],
+  language: ConversationLanguage,
+  conversationId: string,
+  doctorId: string,
+  kind: 'cancel' | 'reschedule'
+): { replyText: string; state: ConversationState } {
+  const slotLink = buildBookingPageUrl(conversationId, doctorId);
+  const replyText =
+    kind === 'cancel'
+      ? formatCancelOnPageDm({ language, slotLink, doctorSettings: null })
+      : formatRescheduleOnPageDm({ language, slotLink, doctorSettings: null });
+  return {
+    replyText,
+    state: {
+      ...state,
+      lastIntent: intent,
+      step: 'responded',
+      cancel: undefined,
+      reschedule: undefined,
+      updatedAt: new Date().toISOString(),
+    },
+  };
+}
+
 export const cancelRescheduleStatusStage: DmStageHandler = {
   stage: 'cancel_reschedule_status',
   async handle(ctx: DmTurnContext): Promise<DmTurnResult> {
@@ -72,8 +85,6 @@ export const cancelRescheduleStatusStage: DmStageHandler = {
       recentMessages,
       intentResult,
       doctorSettings,
-      doctorContext,
-      runGenerateResponseWithActions,
       fallbackReply,
       turnLanguage,
     } = ctx;
@@ -81,145 +92,37 @@ export const cancelRescheduleStatusStage: DmStageHandler = {
     let dmRoutingBranch: DmHandlerBranch = 'unknown';
     let replyText: string = fallbackReply;
 
-    const actionCtxBase = {
-      conversationId: conversation.id,
-      doctorId,
-      conversation,
-      state,
-      correlationId,
-      timezone: doctorSettings?.timezone ?? undefined,
-      language: turnLanguage,
-      doctorSettings,
-    };
-
-    if (state.step === 'awaiting_cancel_choice') {
-      dmRoutingBranch = 'cancel_flow_numeric';
-      // Cancel flow: user picks which appointment (1, 2, 3...)
-      const ids = state.cancel?.pendingAppointmentIds ?? [];
-      const trimmed = text.trim();
-      const num = parseInt(trimmed, 10);
-      if (num >= 1 && num <= ids.length) {
-        const chosenId = ids[num - 1]!;
-        const appointment = await getAppointmentByIdForWorker(chosenId, correlationId);
-        if (!appointment || appointment.doctor_id !== doctorId) {
-          replyText = buildAppointmentPickNotFoundMessage({
-            language: turnLanguage,
-            flow: 'cancel',
-          });
-          state = { ...state, step: 'responded', updatedAt: new Date().toISOString() };
-        } else {
-          const tz = doctorSettings?.timezone ?? 'Asia/Kolkata';
-          const iso =
-            typeof appointment.appointment_date === 'string'
-              ? appointment.appointment_date
-              : (appointment.appointment_date as Date).toISOString();
-          const dateStr = formatAppointmentStatusLine(iso, '', tz).replace(' ()', '');
-          replyText = buildCancelConfirmPromptMessage({
-            language: turnLanguage,
-            dateDisplay: dateStr,
-          });
-          state = {
-            ...state,
-            step: 'awaiting_cancel_confirmation',
-            cancel: { appointmentId: chosenId },
-            updatedAt: new Date().toISOString(),
-          };
-        }
-      } else {
-        replyText = buildNumericPickInvalidMessage({
-          language: turnLanguage,
-          count: ids.length,
-        });
-      }
-    } else if (state.step === 'awaiting_cancel_confirmation') {
-      dmRoutingBranch = 'cancel_flow_confirm';
-      // Fast-path: clear yes/no executes immediately (no AI). Prevents AI returning text without tool call.
-      const lower = text.trim().toLowerCase();
-      const isYes = /^(yes|yeah|yep|ok|okay|cancel|confirm)$/.test(lower);
-      const isNo = /^(no|nope|keep|don't|dont)$/.test(lower);
-      let executedReply: string | undefined;
-      let executedStateUpdate: Partial<ConversationState> | undefined;
-
-      if (state.cancel?.appointmentId && (isYes || isNo)) {
-        const action = { type: 'confirm_cancel' as const, confirm: isYes };
-        const result = await executeAction(action, {
-          ...actionCtxBase,
-          state,
-        });
-        if (result.success && result.replyOverride) {
-          executedReply = result.replyOverride;
-          executedStateUpdate = result.stateUpdate;
-        }
-      }
-
-      if (!executedReply) {
-        // AI path: natural language (2737, go ahead, etc.)
-        const aiResult = await runGenerateResponseWithActions({
-          conversationId: conversation.id,
-          currentIntent: intentResult.intent,
-          state,
-          recentMessages,
-          currentUserMessage: text,
-          correlationId,
-          doctorContext,
-          availableTools: ['confirm_cancel'],
-        });
-        if (aiResult.toolCalls?.length) {
-          for (const tc of aiResult.toolCalls) {
-            if (tc.name !== 'confirm_cancel') continue;
-            const action = parseToolCallToAction(tc);
-            if (!action || action.type !== 'confirm_cancel') continue;
-            const result = await executeAction(action, {
-              ...actionCtxBase,
-              state,
-            });
-            if (result.success && result.replyOverride) {
-              executedReply = result.replyOverride;
-              executedStateUpdate = result.stateUpdate;
-              break;
-            }
-          }
-        }
-        if (!executedReply) {
-          executedReply = aiResult.reply;
-        }
-      }
-
-      replyText = executedReply || buildCancelConfirmFallbackMessage({ language: turnLanguage });
-      if (executedStateUpdate) {
-        state = { ...state, ...executedStateUpdate };
-      }
-    } else if (state.step === 'awaiting_reschedule_choice') {
-      dmRoutingBranch = 'reschedule_flow_numeric';
-      // Reschedule flow: user picks which appointment (1, 2, 3...)
-      const ids = state.reschedule?.pendingAppointmentIds ?? [];
-      const trimmed = text.trim();
-      const num = parseInt(trimmed, 10);
-      if (num >= 1 && num <= ids.length) {
-        const chosenId = ids[num - 1]!;
-        const appointment = await getAppointmentByIdForWorker(chosenId, correlationId);
-        if (!appointment || appointment.doctor_id !== doctorId) {
-          replyText = buildAppointmentPickNotFoundMessage({
-            language: turnLanguage,
-            flow: 'reschedule',
-          });
-          state = { ...state, step: 'responded', updatedAt: new Date().toISOString() };
-        } else {
-          const url = buildReschedulePageUrl(conversation.id, doctorId, chosenId);
-          replyText = formatRescheduleChoiceLinkDm({ language: turnLanguage, url, doctorSettings });
-          state = {
-            ...state,
-            step: 'awaiting_reschedule_slot',
-            reschedule: { appointmentId: chosenId },
-            updatedAt: new Date().toISOString(),
-          };
-        }
-      } else {
-        replyText = buildNumericPickInvalidMessage({
-          language: turnLanguage,
-          count: ids.length,
-        });
-      }
+    if (state.step === 'awaiting_cancel_choice' || state.step === 'awaiting_cancel_confirmation') {
+      dmRoutingBranch =
+        state.step === 'awaiting_cancel_choice' ? 'cancel_flow_numeric' : 'cancel_flow_confirm';
+      const handed = replyContinueOnOwnedPage(
+        state,
+        intentResult.intent,
+        turnLanguage,
+        conversation.id,
+        doctorId,
+        'cancel'
+      );
+      replyText = handed.replyText;
+      state = handed.state;
+    } else if (
+      state.step === 'awaiting_reschedule_choice' ||
+      state.step === 'awaiting_reschedule_slot'
+    ) {
+      dmRoutingBranch =
+        state.step === 'awaiting_reschedule_choice'
+          ? 'reschedule_flow_numeric'
+          : 'reschedule_appointment_intent';
+      const handed = replyContinueOnOwnedPage(
+        state,
+        intentResult.intent,
+        turnLanguage,
+        conversation.id,
+        doctorId,
+        'reschedule'
+      );
+      replyText = handed.replyText;
+      state = handed.state;
     } else if (intentResult.intent === 'check_appointment_status') {
       dmRoutingBranch = 'check_appointment_status';
       const tz = doctorSettings?.timezone ?? 'Asia/Kolkata';
@@ -300,7 +203,6 @@ export const cancelRescheduleStatusStage: DmStageHandler = {
       };
     } else if (intentResult.intent === 'cancel_appointment') {
       dmRoutingBranch = 'cancel_appointment_intent';
-      const tz = doctorSettings?.timezone ?? 'Asia/Kolkata';
       const patientIdsList = buildRelatedPatientIdsForWebhook(conversation.patient_id, state);
       const upcoming = await getMergedUpcomingAppointmentsForRelatedPatients(
         patientIdsList,
@@ -311,53 +213,20 @@ export const cancelRescheduleStatusStage: DmStageHandler = {
         const empty = replyNoUpcomingAppointments(state, intentResult.intent, turnLanguage);
         replyText = empty.replyText;
         state = empty.state;
-      } else if (upcoming.length === 1) {
-        const a = upcoming[0]!;
-        const iso =
-          typeof a.appointment_date === 'string'
-            ? a.appointment_date
-            : (a.appointment_date as Date).toISOString();
-        const item: CancelChoiceItem = {
-          dateDisplay: formatAppointmentChoiceDate(iso, tz),
-          modalityLabel: appointmentConsultationTypeToLabel(
-            a.consultation_type ?? undefined,
-            turnLanguage
-          ),
-        };
-        replyText = buildCancelChoiceListMessage({ language: turnLanguage, items: [item] });
-        state = {
-          ...state,
-          lastIntent: intentResult.intent,
-          step: 'awaiting_cancel_confirmation',
-          cancel: { appointmentId: a.id },
-          updatedAt: new Date().toISOString(),
-        };
       } else {
-        const items: CancelChoiceItem[] = upcoming.map((a) => {
-          const iso =
-            typeof a.appointment_date === 'string'
-              ? a.appointment_date
-              : (a.appointment_date as Date).toISOString();
-          return {
-            dateDisplay: formatAppointmentChoiceDate(iso, tz),
-            modalityLabel: appointmentConsultationTypeToLabel(
-              a.consultation_type ?? undefined,
-              turnLanguage
-            ),
-          };
-        });
-        replyText = buildCancelChoiceListMessage({ language: turnLanguage, items });
-        state = {
-          ...state,
-          lastIntent: intentResult.intent,
-          step: 'awaiting_cancel_choice',
-          cancel: { pendingAppointmentIds: upcoming.map((a) => a.id) },
-          updatedAt: new Date().toISOString(),
-        };
+        const handed = replyContinueOnOwnedPage(
+          state,
+          intentResult.intent,
+          turnLanguage,
+          conversation.id,
+          doctorId,
+          'cancel'
+        );
+        replyText = handed.replyText;
+        state = handed.state;
       }
     } else if (intentResult.intent === 'reschedule_appointment') {
       dmRoutingBranch = 'reschedule_appointment_intent';
-      const tz = doctorSettings?.timezone ?? 'Asia/Kolkata';
       const patientIdsList = buildRelatedPatientIdsForWebhook(conversation.patient_id, state);
       const upcoming = await getMergedUpcomingAppointmentsForRelatedPatients(
         patientIdsList,
@@ -368,37 +237,17 @@ export const cancelRescheduleStatusStage: DmStageHandler = {
         const empty = replyNoUpcomingAppointments(state, intentResult.intent, turnLanguage);
         replyText = empty.replyText;
         state = empty.state;
-      } else if (upcoming.length === 1) {
-        const a = upcoming[0]!;
-        const url = buildReschedulePageUrl(conversation.id, doctorId, a.id);
-        replyText = formatRescheduleLinkDm({ language: turnLanguage, url, doctorSettings });
-        state = {
-          ...state,
-          lastIntent: intentResult.intent,
-          step: 'awaiting_reschedule_slot',
-          reschedule: { appointmentId: a.id },
-          updatedAt: new Date().toISOString(),
-        };
       } else {
-        const lines = upcoming.map((a, i) => {
-          const iso =
-            typeof a.appointment_date === 'string'
-              ? a.appointment_date
-              : (a.appointment_date as Date).toISOString();
-          return `${i + 1}) ${formatAppointmentStatusLine(iso, '', tz).replace(' ()', '')}`;
-        });
-        replyText = buildRescheduleChoiceListMessage({
-          language: turnLanguage,
-          lines,
-          count: upcoming.length,
-        });
-        state = {
-          ...state,
-          lastIntent: intentResult.intent,
-          step: 'awaiting_reschedule_choice',
-          reschedule: { pendingAppointmentIds: upcoming.map((a) => a.id) },
-          updatedAt: new Date().toISOString(),
-        };
+        const handed = replyContinueOnOwnedPage(
+          state,
+          intentResult.intent,
+          turnLanguage,
+          conversation.id,
+          doctorId,
+          'reschedule'
+        );
+        replyText = handed.replyText;
+        state = handed.state;
       }
     } else if (state.step === 'responded' && isPostBookingAcknowledgment(text, recentMessages)) {
       dmRoutingBranch = 'post_booking_ack';

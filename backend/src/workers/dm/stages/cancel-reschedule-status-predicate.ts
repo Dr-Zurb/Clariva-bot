@@ -241,7 +241,8 @@ export function isCancelRescheduleStatusTurn(ctx: DmTurnContext): boolean {
   if (
     stageOf(state) === 'awaiting_cancel_choice' ||
     stageOf(state) === 'awaiting_cancel_confirmation' ||
-    stageOf(state) === 'awaiting_reschedule_choice'
+    stageOf(state) === 'awaiting_reschedule_choice' ||
+    stageOf(state) === 'awaiting_reschedule_slot'
   ) {
     return true;
   }

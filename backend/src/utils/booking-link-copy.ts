@@ -56,6 +56,44 @@ export function formatBookingLinkDm(input: BookingLinkDmInput): string {
   return link;
 }
 
+/**
+ * Cancel / reschedule handoff. The page owns who the visit is for.
+ * The chat does not name a person, a time, or ask for yes.
+ */
+const CONTINUE_ON_PAGE_COPY: Readonly<
+  Record<
+    StaticMessageLocale,
+    { cancel: (url: string) => string; reschedule: (url: string) => string }
+  >
+> = {
+  en: {
+    cancel: (url) =>
+      `Continue cancellation on this page:\n${url}\n\nYou'll be redirected back to this chat when done.`,
+    reschedule: (url) =>
+      `Continue rescheduling on this page:\n${url}\n\nYou'll be redirected back to this chat when done.`,
+  },
+  hi: {
+    cancel: (url) =>
+      `Cancellation is page par continue karein:\n${url}\n\nDone hone par aap wapas is chat par aa jayenge.`,
+    reschedule: (url) =>
+      `Rescheduling is page par continue karein:\n${url}\n\nDone hone par aap wapas is chat par aa jayenge.`,
+  },
+  pa: {
+    cancel: (url) =>
+      `Cancellation is page te continue karo:\n${url}\n\nDone hon to tusi wapas is chat te aa jaoge.`,
+    reschedule: (url) =>
+      `Rescheduling is page te continue karo:\n${url}\n\nDone hon to tusi wapas is chat te aa jaoge.`,
+  },
+};
+
+export function formatCancelOnPageDm(input: BookingLinkDmInput): string {
+  return CONTINUE_ON_PAGE_COPY[toStaticLocale(input.language)].cancel(input.slotLink);
+}
+
+export function formatRescheduleOnPageDm(input: BookingLinkDmInput): string {
+  return CONTINUE_ON_PAGE_COPY[toStaticLocale(input.language)].reschedule(input.slotLink);
+}
+
 /** Same `/book` URL, no “get an appointment” — fee / hours-missing / address-missing. */
 export function formatClinicPageLinkDm(input: BookingLinkDmInput): string {
   const locale = toStaticLocale(input.language);

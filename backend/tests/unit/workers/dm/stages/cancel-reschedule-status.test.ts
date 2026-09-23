@@ -29,12 +29,14 @@ jest.mock('../../../../../src/services/action-executor-service', () => ({
 }));
 
 jest.mock('../../../../../src/services/slot-selection-service', () => ({
+  buildBookingPageUrl: jest.fn(() => 'https://example.com/book'),
   buildReschedulePageUrl: jest.fn(() => 'https://example.com/reschedule'),
 }));
 
 import { getAppointmentByIdForWorker } from '../../../../../src/services/appointment-service';
 import { getMergedUpcomingAppointmentsForRelatedPatients } from '../../../../../src/services/webhook-appointment-helpers';
 import { executeAction } from '../../../../../src/services/action-executor-service';
+import { buildBookingPageUrl } from '../../../../../src/services/slot-selection-service';
 
 function minimalTurnCtx(overrides: Partial<DmTurnContext> = {}): DmTurnContext {
   return {
@@ -98,14 +100,7 @@ describe('cancelRescheduleStatusStage', () => {
     jest.clearAllMocks();
   });
 
-  it('awaiting_cancel_choice + "2" → picks 2nd appt, transitions to awaiting_cancel_confirmation', async () => {
-    jest.mocked(getAppointmentByIdForWorker).mockResolvedValue({
-      id: appt2,
-      doctor_id: 'doctor-1',
-      appointment_date: future,
-      status: 'confirmed',
-    } as never);
-
+  it('awaiting_cancel_choice sends the page link and does not pick a visit', async () => {
     const ctx = minimalTurnCtx({
       state: readConversationState({
         step: 'awaiting_cancel_choice',
@@ -118,13 +113,17 @@ describe('cancelRescheduleStatusStage', () => {
 
     const result = await cancelRescheduleStatusStage.handle(ctx);
     expect(result.branch).toBe('cancel_flow_numeric');
-    expect(getAppointmentByIdForWorker).toHaveBeenCalledWith(appt2, 'corr-1');
-    expect(result.nextState.step).toBe('awaiting_cancel_confirmation');
-    expect(result.nextState.cancel?.appointmentId).toBe(appt2);
-    expect(result.reply).toMatch(/cancel/i);
+    expect(getAppointmentByIdForWorker).not.toHaveBeenCalled();
+    expect(executeAction).not.toHaveBeenCalled();
+    expect(buildBookingPageUrl).toHaveBeenCalledWith('conv-1', 'doctor-1');
+    expect(result.nextState.step).toBe('responded');
+    expect(result.nextState.cancel).toBeUndefined();
+    expect(result.reply).toContain('Continue cancellation on this page:');
+    expect(result.reply).toContain('https://example.com/book');
+    expect(result.reply).not.toMatch(/yes/i);
   });
 
-  it('awaiting_cancel_confirmation + "yes" → confirm_cancel tool → cancels, branch cancel_flow_confirm', async () => {
+  it('awaiting_cancel_confirmation + "yes" does not cancel in the chat', async () => {
     const ctx = minimalTurnCtx({
       state: readConversationState({
         step: 'awaiting_cancel_confirmation',
@@ -137,14 +136,14 @@ describe('cancelRescheduleStatusStage', () => {
 
     const result = await cancelRescheduleStatusStage.handle(ctx);
     expect(result.branch).toBe('cancel_flow_confirm');
-    expect(executeAction).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'confirm_cancel', confirm: true }),
-      expect.any(Object)
-    );
-    expect(result.reply).toBe('Cancelled.');
+    expect(executeAction).not.toHaveBeenCalled();
+    expect(result.nextState.step).toBe('responded');
+    expect(result.nextState.cancel).toBeUndefined();
+    expect(result.reply).toContain('Continue cancellation on this page:');
+    expect(result.reply).toContain('https://example.com/book');
   });
 
-  it('intent cancel_appointment with one upcoming → lists / confirms', async () => {
+  it('intent cancel_appointment with one upcoming sends the page link', async () => {
     jest.mocked(getMergedUpcomingAppointmentsForRelatedPatients).mockResolvedValue([
       {
         id: appt1,
@@ -161,12 +160,14 @@ describe('cancelRescheduleStatusStage', () => {
 
     const result = await cancelRescheduleStatusStage.handle(ctx);
     expect(result.branch).toBe('cancel_appointment_intent');
-    expect(result.nextState.step).toBe('awaiting_cancel_confirmation');
-    expect(result.nextState.cancel?.appointmentId).toBe(appt1);
-    expect(result.reply).toMatch(/cancel/i);
+    expect(result.nextState.step).toBe('responded');
+    expect(result.nextState.cancel).toBeUndefined();
+    expect(result.reply).toContain('Continue cancellation on this page:');
+    expect(result.reply).toContain('https://example.com/book');
+    expect(result.reply).not.toMatch(/yes/i);
   });
 
-  it('intent reschedule_appointment → reschedule link/choice', async () => {
+  it('intent reschedule_appointment sends the booking page link', async () => {
     jest.mocked(getMergedUpcomingAppointmentsForRelatedPatients).mockResolvedValue([
       {
         id: appt1,
@@ -183,8 +184,11 @@ describe('cancelRescheduleStatusStage', () => {
 
     const result = await cancelRescheduleStatusStage.handle(ctx);
     expect(result.branch).toBe('reschedule_appointment_intent');
-    expect(result.nextState.step).toBe('awaiting_reschedule_slot');
-    expect(result.reply).toMatch(/reschedule|example\.com/i);
+    expect(result.nextState.step).toBe('responded');
+    expect(result.nextState.reschedule).toBeUndefined();
+    expect(result.reply).toContain('Continue rescheduling on this page:');
+    expect(result.reply).toContain('https://example.com/book');
+    expect(buildBookingPageUrl).toHaveBeenCalledWith('conv-1', 'doctor-1');
   });
 
   it('check_appointment_status → merged upcoming summary', async () => {

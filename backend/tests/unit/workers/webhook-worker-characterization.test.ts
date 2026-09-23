@@ -54,6 +54,11 @@ jest.mock('../../../src/config/queue', () => ({
 }));
 jest.mock('../../../src/services/webhook-metrics', () => ({
   classifyInstagramDmFailureReason: jest.fn().mockReturnValue('unknown'),
+  logDmLanguageDecision: jest.fn(),
+  logDmEmergencySafetyDecision: jest.fn(),
+  logDmEmergencyIntentDowngraded: jest.fn(),
+  logDmEmergencyNumberFloorApplied: jest.fn(),
+  logWebhookMessageEditDropped: jest.fn(),
   logWebhookCommentPipeline: jest.fn(),
   logWebhookConflictRecovery: jest.fn(),
   logWebhookDmThrottleSkip: jest.fn(),
@@ -563,12 +568,11 @@ describe('RBH-02 webhook worker characterization', () => {
     });
   });
 
-  describe('DM: cancel / reschedule multi-appointment', () => {
-    const future = new Date(Date.now() + 86400000 * 3).toISOString();
+  describe('DM: cancel / reschedule hands off to the booking page', () => {
     const appt1 = '11111111-1111-1111-1111-111111111111';
     const appt2 = '22222222-2222-2222-2222-222222222222';
 
-    it('awaiting_cancel_choice: user picks 1 → confirmation prompt with cancelAppointmentId', async () => {
+    it('awaiting_cancel_choice sends the page link and does not confirm in chat', async () => {
       jest.mocked(conversationService.getConversationState).mockResolvedValue(
         readConversationState({
           step: 'awaiting_cancel_choice',
@@ -576,13 +580,6 @@ describe('RBH-02 webhook worker characterization', () => {
           updatedAt: new Date().toISOString(),
         }) as never
       );
-      jest.mocked(appointmentService.getAppointmentByIdForWorker).mockResolvedValue({
-        id: appt1,
-        doctor_id: TEST_DOCTOR_ID,
-        appointment_date: future,
-        status: 'confirmed',
-        patient_id: TEST_PATIENT_ID,
-      } as never);
       jest.mocked(aiService.classifyIntent).mockResolvedValue({ intent: 'other', confidence: 0 } as never);
 
       await processWebhookJob(
@@ -594,24 +591,27 @@ describe('RBH-02 webhook worker characterization', () => {
         })
       );
 
-      expect(appointmentService.getAppointmentByIdForWorker).toHaveBeenCalledWith(appt1, 'corr-cancel');
+      expect(appointmentService.getAppointmentByIdForWorker).not.toHaveBeenCalled();
       expect(mockSendMessage).toHaveBeenCalledWith(
         '987654321012345',
-        expect.stringMatching(/cancel/i),
+        expect.stringContaining('Continue cancellation on this page:'),
         'corr-cancel',
-        'doctor-token'
+        'doctor-token',
+        TEST_DOCTOR_ID
       );
-      expect(conversationService.updateConversationState).toHaveBeenCalledWith(
+      expect(slotSelectionService.buildBookingPageUrl).toHaveBeenCalledWith(
         TEST_CONV_ID,
-        expect.objectContaining({
-          step: 'awaiting_cancel_confirmation',
-          cancel: { appointmentId: appt1 },
-        }),
-        'corr-cancel'
+        TEST_DOCTOR_ID
       );
+      expect(lastPersistedState()).toEqual(
+        expect.objectContaining({
+          step: 'responded',
+        })
+      );
+      expect(lastPersistedState().cancel).toBeUndefined();
     });
 
-    it('awaiting_reschedule_choice: user picks 2 → awaiting_reschedule_slot with chosen id', async () => {
+    it('awaiting_reschedule_choice sends the booking page link', async () => {
       jest.mocked(conversationService.getConversationState).mockResolvedValue(
         readConversationState({
           step: 'awaiting_reschedule_choice',
@@ -619,13 +619,6 @@ describe('RBH-02 webhook worker characterization', () => {
           updatedAt: new Date().toISOString(),
         }) as never
       );
-      jest.mocked(appointmentService.getAppointmentByIdForWorker).mockResolvedValue({
-        id: appt2,
-        doctor_id: TEST_DOCTOR_ID,
-        appointment_date: future,
-        status: 'confirmed',
-        patient_id: TEST_PATIENT_ID,
-      } as never);
       jest.mocked(aiService.classifyIntent).mockResolvedValue({ intent: 'other', confidence: 0 } as never);
 
       await processWebhookJob(
@@ -637,20 +630,25 @@ describe('RBH-02 webhook worker characterization', () => {
         })
       );
 
-      expect(appointmentService.getAppointmentByIdForWorker).toHaveBeenCalledWith(appt2, 'corr-resched');
-      expect(slotSelectionService.buildReschedulePageUrl).toHaveBeenCalledWith(
+      expect(appointmentService.getAppointmentByIdForWorker).not.toHaveBeenCalled();
+      expect(slotSelectionService.buildReschedulePageUrl).not.toHaveBeenCalled();
+      expect(slotSelectionService.buildBookingPageUrl).toHaveBeenCalledWith(
         TEST_CONV_ID,
-        TEST_DOCTOR_ID,
-        appt2
+        TEST_DOCTOR_ID
       );
-      expect(conversationService.updateConversationState).toHaveBeenCalledWith(
-        TEST_CONV_ID,
+      expect(mockSendMessage).toHaveBeenCalledWith(
+        '987654321012345',
+        expect.stringContaining('Continue rescheduling on this page:'),
+        'corr-resched',
+        'doctor-token',
+        TEST_DOCTOR_ID
+      );
+      expect(lastPersistedState()).toEqual(
         expect.objectContaining({
-          step: 'awaiting_reschedule_slot',
-          reschedule: { appointmentId: appt2 },
-        }),
-        'corr-resched'
+          step: 'responded',
+        })
       );
+      expect(lastPersistedState().reschedule).toBeUndefined();
     });
   });
 
