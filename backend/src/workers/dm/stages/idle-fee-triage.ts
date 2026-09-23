@@ -47,9 +47,10 @@ import { isTeleconsultCatalogAuthoritative } from '../../../utils/consultation-f
 import {
   buildHoursMissingLead,
   buildHoursQuoteLead,
-  buildLocationOnBookingPageLead,
+  buildAddressNotSharedLead,
   buildLocationQuoteLead,
   buildOnlineOnlyNoAddressLead,
+  instagramAddressToShare,
   buildPaymentOnBookingPageLead,
   buildReceptionistThanksMessage,
   isClinicalAdviceUserMessage,
@@ -346,8 +347,8 @@ export const idleFeeTriageStage: DmStageHandler = {
       (!state.step || state.step === 'responded') &&
       isLocationFaqUserMessage(text)
     ) {
-      const address = doctorSettings?.address_summary?.trim();
-      if (address) {
+      const sharedAddress = instagramAddressToShare(doctorSettings);
+      if (sharedAddress) {
         dmRoutingBranch = 'booking_start_link_first';
         state = {
           ...state,
@@ -355,45 +356,25 @@ export const idleFeeTriageStage: DmStageHandler = {
           step: 'responded',
           updatedAt: new Date().toISOString(),
         };
-        replyText = buildLocationQuoteLead(ctx.turnLanguage, address);
+        replyText = buildLocationQuoteLead(ctx.turnLanguage, sharedAddress);
       } else {
         dmRoutingBranch = 'booking_start_link_first';
         const onlineOnly = isTeleconsultCatalogAuthoritative({
           service_offerings_json: doctorSettings?.service_offerings_json,
           appointment_fee_currency: doctorSettings?.appointment_fee_currency,
         });
-        if (onlineOnly) {
-          state = mergeTriage(
-            {
-              ...state,
-              lastIntent: intentResult.intent,
-              step: 'responded',
-              updatedAt: new Date().toISOString(),
-            },
-            { activeFlow: undefined }
-          );
-          replyText = buildOnlineOnlyNoAddressLead(ctx.turnLanguage);
-        } else {
-          const readyLoc = applyLeadPlusPageLink({
-            state: mergeTriage(
-              {
-                ...state,
-                lastIntent: intentResult.intent,
-                updatedAt: new Date().toISOString(),
-              },
-              { activeFlow: undefined }
-            ),
-            intent: intentResult.intent,
-            conversationId: conversation.id,
-            doctorId: ctx.doctorId,
-            doctorSettings,
-            patient: null,
-            language: ctx.turnLanguage,
-            lead: buildLocationOnBookingPageLead(ctx.turnLanguage),
-          });
-          state = readyLoc.state;
-          replyText = readyLoc.replyText;
-        }
+        state = mergeTriage(
+          {
+            ...state,
+            lastIntent: intentResult.intent,
+            step: 'responded',
+            updatedAt: new Date().toISOString(),
+          },
+          { activeFlow: undefined }
+        );
+        replyText = onlineOnly
+          ? buildOnlineOnlyNoAddressLead(ctx.turnLanguage)
+          : buildAddressNotSharedLead(ctx.turnLanguage);
       }
     } else if (
       !inCollection &&
@@ -481,7 +462,7 @@ export const idleFeeTriageStage: DmStageHandler = {
         ? buildReceptionistThanksMessage(ctx.turnLanguage)
         : buildReceptionistGreetingMessage(ctx.turnLanguage, {
             catalogMode: doctorSettings?.catalog_mode,
-            hasAddress: Boolean(doctorSettings?.address_summary?.trim()),
+            hasAddress: Boolean(instagramAddressToShare(doctorSettings)),
             accountName,
           });
       replyText =

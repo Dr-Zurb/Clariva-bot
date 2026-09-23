@@ -64,6 +64,7 @@ import {
 import { getCollectedData } from '../../services/collection-service';
 import { REQUIRED_COLLECTION_FIELDS } from '../../utils/validation';
 import { getDoctorSettings } from '../../services/doctor-settings-service';
+import { instagramAddressToShare } from '../../utils/instagram-faq-copy';
 import {
   feeThreadHasCompetingVisitTypeBuckets,
   formatAppointmentFeeForAiContext,
@@ -255,12 +256,13 @@ function getDoctorContextFromSettings(
     settings.appointment_fee_minor != null &&
     settings.appointment_fee_minor > 0;
   const hasTeleconsultCatalogPricing = Boolean(catalogAi?.trim());
+  const sharedAddress = catalogAuthority ? null : instagramAddressToShare(settings);
   const hasAny =
     settings.practice_name ||
     settings.business_hours_summary ||
     settings.welcome_message ||
     settings.specialty ||
-    (!catalogAuthority && settings.address_summary) ||
+    sharedAddress ||
     (!catalogAuthority && settings.consultation_types) ||
     hasFeeOnFile ||
     hasTeleconsultCatalogPricing ||
@@ -271,7 +273,7 @@ function getDoctorContextFromSettings(
     business_hours_summary: settings.business_hours_summary,
     welcome_message: settings.welcome_message,
     specialty: settings.specialty,
-    address_summary: catalogAuthority ? null : settings.address_summary,
+    address_summary: sharedAddress,
     cancellation_policy_hours: settings.cancellation_policy_hours,
     consultation_types: catalogAuthority ? null : settings.consultation_types,
     appointment_fee_currency: settings.appointment_fee_currency ?? null,

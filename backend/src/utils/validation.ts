@@ -47,10 +47,7 @@ import {
   PATIENT_SEGMENT_IDS,
   PRESCRIPTION_FOLLOW_UP_VALUE_SUPPORTED,
 } from '../services/patient-list-segment-sql';
-import {
-  PAST_SURGICAL_CATALOG_PROCEDURE_SLUGS,
-  REVISION_REASONS,
-} from '../types/prescription';
+import { PAST_SURGICAL_CATALOG_PROCEDURE_SLUGS, REVISION_REASONS } from '../types/prescription';
 import { RX_TEMPLATE_SCOPE_VALUES } from '../types/rx-template';
 import {
   SUBJECTIVE_SECTION_ORDER_MAX,
@@ -1644,6 +1641,7 @@ export const patchDoctorSettingsSchema = z
     specialty: z.string().max(200).trim().nullable().optional(),
     social_enquiries: z.enum(SOCIAL_ENQUIRIES_VALUES).optional(),
     address_summary: z.string().max(500).trim().nullable().optional(),
+    share_address_on_instagram: z.boolean().nullable().optional(),
     consultation_types: z.string().max(200).trim().nullable().optional(),
     /** SFU-01 / SFU-11: catalog v1; service_id optional until merge */
     service_offerings_json: z.union([serviceCatalogIncomingSchema, z.null()]).optional(),
@@ -3940,9 +3938,7 @@ export function validatePatientChartParentParams(params: unknown): PatientChartP
   return result.data;
 }
 
-function firstQueryString(
-  query: unknown
-): Record<string, string | undefined> {
+function firstQueryString(query: unknown): Record<string, string | undefined> {
   if (!query || typeof query !== 'object') return {};
   const out: Record<string, string | undefined> = {};
   for (const [key, value] of Object.entries(query as Record<string, unknown>)) {
@@ -4586,7 +4582,12 @@ export function validateUpsertHistorySubmissionBody(body: unknown): UpsertHistor
 export const acceptHistorySubmissionBodySchema = z
   .object({
     field: z.enum(['why_today', 'allergies', 'medicines', 'conditions']),
-    index: z.number().int().min(0).max(HISTORY_LIST_MAX - 1).optional(),
+    index: z
+      .number()
+      .int()
+      .min(0)
+      .max(HISTORY_LIST_MAX - 1)
+      .optional(),
   })
   .strict()
   .superRefine((data, ctx) => {

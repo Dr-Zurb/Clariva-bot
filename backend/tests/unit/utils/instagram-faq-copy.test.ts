@@ -1,5 +1,6 @@
 import { describe, expect, it } from '@jest/globals';
 import {
+  buildAddressNotSharedLead,
   buildHoursMissingLead,
   buildLocationOnBookingPageLead,
   buildOnlineOnlyNoAddressLead,
@@ -51,6 +52,9 @@ describe('instagram-faq-copy', () => {
     expect(buildPricesOnBookingPageLead('en')).toBe('Visit prices are on this page:');
     expect(buildHoursMissingLead('en')).toBe("I don't have timings saved. They're on this page:");
     expect(buildLocationOnBookingPageLead('en')).toBe('The clinic details are on this page:');
+    expect(buildAddressNotSharedLead('en')).toBe(
+      "I don't share a street address here. I can help with timings or a booking link."
+    );
     expect(buildOnlineOnlyNoAddressLead('en')).toBe(
       "Appointments are online, so there isn't a street address. I can help with timings or a booking link."
     );

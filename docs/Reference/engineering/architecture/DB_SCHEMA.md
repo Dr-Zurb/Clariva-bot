@@ -342,6 +342,7 @@ welcome_message         TEXT NULL
 specialty               TEXT NULL
 social_enquiries        TEXT NOT NULL DEFAULT 'yes'  -- migration 232; CHECK (yes | not_yet); Instagram required when yes
 address_summary         TEXT NULL
+share_address_on_instagram BOOLEAN NULL  -- migration 240; NULL = share when address_summary is set; false = letterhead only
 consultation_types      TEXT NULL
 service_offerings_json  JSONB NULL  -- migration 035; Zod shape `serviceCatalogV1` in backend (version, services[], modalities, optional followup_policy)
 default_notes           TEXT NULL

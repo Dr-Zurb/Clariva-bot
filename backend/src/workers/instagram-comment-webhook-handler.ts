@@ -24,10 +24,8 @@ import { shouldSkipCommentPrivateReply } from '../services/automated-messaging-o
 import { resolveCommentOutreachLanguage } from '../services/comment-outreach-language';
 import { sendCommentLeadToDoctor } from '../services/notification-service';
 import { logWebhookCommentPipeline } from '../services/webhook-metrics';
-import {
-  buildCommentProactiveDmMessage,
-  buildCommentPublicReplyText,
-} from '../utils/dm-copy';
+import { buildCommentProactiveDmMessage, buildCommentPublicReplyText } from '../utils/dm-copy';
+import { instagramAddressToShare } from '../utils/instagram-faq-copy';
 import type { CommentIntent } from '../types/ai';
 import type { WebhookProvider } from '../types/webhook';
 
@@ -226,11 +224,17 @@ export async function processInstagramCommentWebhook(
         intent,
         practiceName: settings?.practice_name ?? undefined,
         specialty: settings?.specialty ?? undefined,
-        addressSummary: settings?.address_summary ?? undefined,
+        addressSummary: instagramAddressToShare(settings) ?? undefined,
       });
       try {
         if (!skipPrivate) {
-          await sendInstagramPrivateReply(commentId, dmMessage, correlationId, doctorToken, doctorId);
+          await sendInstagramPrivateReply(
+            commentId,
+            dmMessage,
+            correlationId,
+            doctorToken,
+            doctorId
+          );
           dmSent = true;
         }
       } catch (dmErr) {

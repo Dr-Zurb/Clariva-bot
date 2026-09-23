@@ -11,10 +11,7 @@
  */
 
 import type { CustomSubsection } from './prescription';
-import type {
-  LetterheadPageSize,
-  LetterheadPreset,
-} from './letterhead';
+import type { LetterheadPageSize, LetterheadPreset } from './letterhead';
 import type {
   ServiceCatalogTemplatesJsonV1,
   ServiceCatalogV1,
@@ -281,6 +278,11 @@ export interface DoctorSettingsRow {
    */
   social_enquiries: SocialEnquiries;
   address_summary: string | null;
+  /**
+   * migration 240. NULL shares address_summary on Instagram when it is set.
+   * false keeps the letterhead and withholds the street from Instagram.
+   */
+  share_address_on_instagram?: boolean | null;
   consultation_types: string | null;
   /**
    * SFU-01: Structured service × modality pricing + optional follow-up policy.

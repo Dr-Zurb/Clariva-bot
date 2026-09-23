@@ -285,6 +285,56 @@ describe('idleFeeTriageStage', () => {
     expect(result.nextState.step).toBe('responded');
   });
 
+  it('saved address is quoted when Instagram sharing stays on', async () => {
+    const ctx = minimalTurnCtx({
+      intentResult: { intent: 'ask_question', confidence: 1 },
+      text: 'where is the clinic',
+      doctorSettings: {
+        timezone: 'Asia/Kolkata',
+        address_summary: '12 Test Lane',
+      } as never,
+    });
+
+    const result = await idleFeeTriageStage.handle(ctx);
+    expect(result.reply).toBe('Address: 12 Test Lane');
+    expect(result.reply).not.toMatch(/https?:\/\//i);
+    expect(result.nextState.step).toBe('responded');
+  });
+
+  it('saved address stays off Instagram when the doctor turns sharing off', async () => {
+    const ctx = minimalTurnCtx({
+      intentResult: { intent: 'ask_question', confidence: 1 },
+      text: 'where is the clinic',
+      doctorSettings: {
+        timezone: 'Asia/Kolkata',
+        address_summary: '12 Test Lane',
+        share_address_on_instagram: false,
+      } as never,
+    });
+
+    const result = await idleFeeTriageStage.handle(ctx);
+    expect(result.reply).toBe(
+      "I don't share a street address here. I can help with timings or a booking link."
+    );
+    expect(result.reply).not.toContain('12 Test Lane');
+    expect(result.reply).not.toMatch(/https?:\/\//i);
+    expect(result.nextState.step).toBe('responded');
+  });
+
+  it('missing address does not send a booking link', async () => {
+    const ctx = minimalTurnCtx({
+      intentResult: { intent: 'ask_question', confidence: 1 },
+      text: 'where is the clinic',
+    });
+
+    const result = await idleFeeTriageStage.handle(ctx);
+    expect(result.reply).toBe(
+      "I don't share a street address here. I can help with timings or a booking link."
+    );
+    expect(result.reply).not.toMatch(/https?:\/\//i);
+    expect(result.nextState.step).toBe('responded');
+  });
+
   it('greeting names the connected Instagram account', async () => {
     jest.mocked(getConnectedInstagramDisplayName).mockResolvedValueOnce('Halo Aid');
     const ctx = minimalTurnCtx({
@@ -294,6 +344,22 @@ describe('idleFeeTriageStage', () => {
 
     const result = await idleFeeTriageStage.handle(ctx);
     expect(result.reply).toContain("I'm Halo Aid's receptionist");
+  });
+
+  it('greeting omits address when the doctor does not share it', async () => {
+    const ctx = minimalTurnCtx({
+      intentResult: { intent: 'greeting', confidence: 1 },
+      text: 'hi',
+      doctorSettings: {
+        timezone: 'Asia/Kolkata',
+        address_summary: '12 Test Lane',
+        share_address_on_instagram: false,
+      } as never,
+    });
+
+    const result = await idleFeeTriageStage.handle(ctx);
+    expect(result.reply).not.toMatch(/\baddress\b/i);
+    expect(result.reply).not.toContain('12 Test Lane');
   });
 
   it('single_fee greeting mentions fee, not a rupee amount', async () => {

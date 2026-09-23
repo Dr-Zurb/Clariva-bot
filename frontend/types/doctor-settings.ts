@@ -16,10 +16,17 @@ import type { CustomVitalDef } from "@/lib/cockpit/vitals-custom";
 import type { DoctorInvestigationCustomOrder } from "@/lib/cockpit/investigations-custom-orders";
 
 /** OPD scheduling: fixed slots vs token queue (migration 028). */
-export type OpdMode = 'slot' | 'queue';
+export type OpdMode = "slot" | "queue";
 
 /** DL-9: day-of-week keys for mode_schedule.weekly_overrides (doctor TZ). */
-export type ModeScheduleWeekday = 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun';
+export type ModeScheduleWeekday =
+  | "mon"
+  | "tue"
+  | "wed"
+  | "thu"
+  | "fri"
+  | "sat"
+  | "sun";
 
 export interface ModeScheduleWeeklyOverrides {
   mon?: OpdMode;
@@ -58,7 +65,11 @@ export interface OpdPoliciesShape {
   [key: string]: unknown;
 }
 
-export type OpdSessionDayModeSource = 'fact' | 'policy' | 'doctor_settings' | 'default';
+export type OpdSessionDayModeSource =
+  | "fact"
+  | "policy"
+  | "doctor_settings"
+  | "default";
 
 /**
  * pf-09 (migration 098) — what happens after the doctor taps "Done with patient":
@@ -69,7 +80,11 @@ export type OpdSessionDayModeSource = 'fact' | 'policy' | 'doctor_settings' | 'd
  * Mirror the DB CHECK constraint in `backend/migrations/098_doctor_patient_flow_advance.sql`
  * and the backend twin in `backend/src/types/doctor-settings.ts`.
  */
-export const PATIENT_FLOW_ADVANCE_VALUES = ['countdown', 'instant', 'manual'] as const;
+export const PATIENT_FLOW_ADVANCE_VALUES = [
+  "countdown",
+  "instant",
+  "manual",
+] as const;
 export type PatientFlowAdvance = (typeof PATIENT_FLOW_ADVANCE_VALUES)[number];
 
 /** pf-09 — auto-no-show timer bounds (minutes). */
@@ -84,7 +99,7 @@ export const AUTO_NO_SHOW_AFTER_MIN_MAX = 240;
  *
  * Keep literals in sync with the backend mirror in `backend/src/types/doctor-settings.ts`.
  */
-export const CATALOG_MODES = ['single_fee', 'multi_service'] as const;
+export const CATALOG_MODES = ["single_fee", "multi_service"] as const;
 export type CatalogMode = (typeof CATALOG_MODES)[number];
 
 /** SFU-14: one user-named snapshot (same `catalog` shape as live `service_offerings_json`). */
@@ -130,6 +145,8 @@ export interface DoctorSettings {
   specialty: string | null;
   social_enquiries?: "yes" | "not_yet";
   address_summary: string | null;
+  /** NULL shares a saved address on Instagram. false keeps it on the letterhead only. */
+  share_address_on_instagram?: boolean | null;
   consultation_types: string | null;
   /** SFU-01/06: structured teleconsult pricing; null/omitted = legacy flat fee only. */
   service_offerings_json?: ServiceCatalogV1 | null;
@@ -164,10 +181,10 @@ export interface DoctorSettings {
    * per modality + state via `mapStateToTemplate`.
    */
   cockpit_template_override?:
-    | 'telemed-video'
-    | 'telemed-voice'
-    | 'telemed-text'
-    | 'review'
+    | "telemed-video"
+    | "telemed-voice"
+    | "telemed-text"
+    | "review"
     | null;
   /** subj-21: per-doctor default custom subjective subsections template. */
   subjective_custom_subsections?: CustomSubsection[];
@@ -316,6 +333,7 @@ export type PatchDoctorSettingsPayload = Partial<{
   specialty: string | null;
   social_enquiries: "yes" | "not_yet";
   address_summary: string | null;
+  share_address_on_instagram?: boolean | null;
   consultation_types: string | null;
   qualifications?: string | null;
   letterhead_preset?: "classic" | "centred" | "preprinted" | "banner";
@@ -373,10 +391,10 @@ export type PatchDoctorSettingsPayload = Partial<{
   auto_no_show_after_min?: number | null;
   /** R-MOD: global cockpit template pin. `null` clears = auto-select. */
   cockpit_template_override?:
-    | 'telemed-video'
-    | 'telemed-voice'
-    | 'telemed-text'
-    | 'review'
+    | "telemed-video"
+    | "telemed-voice"
+    | "telemed-text"
+    | "review"
     | null;
   /** subj-21: replace per-doctor default custom subjective subsections template. */
   subjective_custom_subsections?: CustomSubsection[];

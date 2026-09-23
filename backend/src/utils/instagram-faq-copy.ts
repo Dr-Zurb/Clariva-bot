@@ -93,6 +93,24 @@ export function buildHoursMissingLead(language: ConversationLanguage): string {
   });
 }
 
+/**
+ * Street to speak on Instagram. NULL flag keeps today's rule: share a saved address.
+ * false withholds it. The letterhead still uses address_summary either way.
+ */
+export function instagramAddressToShare(
+  settings:
+    | {
+        address_summary?: string | null;
+        share_address_on_instagram?: boolean | null;
+      }
+    | null
+    | undefined
+): string | null {
+  const address = settings?.address_summary?.trim() || '';
+  if (!address || settings?.share_address_on_instagram === false) return null;
+  return address;
+}
+
 export function buildLocationQuoteLead(language: ConversationLanguage, address: string): string {
   const trimmed = address.trim();
   return pickLocale(language, {
@@ -107,6 +125,15 @@ export function buildLocationOnBookingPageLead(language: ConversationLanguage): 
     en: 'The clinic details are on this page:',
     hi: 'Clinic details is page par hain:',
     pa: 'Clinic details is page te han:',
+  });
+}
+
+/** Address exists for the letterhead, or none is saved, and Instagram must not say a street. */
+export function buildAddressNotSharedLead(language: ConversationLanguage): string {
+  return pickLocale(language, {
+    en: "I don't share a street address here. I can help with timings or a booking link.",
+    hi: 'Main yahan street address share nahi karta. Main timings ya booking link mein madad kar sakta hoon.',
+    pa: 'Main ethe street address share nahi karda. Main timings ja booking link vich madad kar sakda haan.',
   });
 }
 

@@ -9,7 +9,10 @@ import {
   settingsFieldClassName,
 } from "@/components/settings/SettingsPageShell";
 import { useDoctorSettingsForm } from "@/hooks/useDoctorSettingsForm";
-import type { DoctorSettings, PatchDoctorSettingsPayload } from "@/types/doctor-settings";
+import type {
+  DoctorSettings,
+  PatchDoctorSettingsPayload,
+} from "@/types/doctor-settings";
 
 const COMMON_TIMEZONES = [
   "America/New_York",
@@ -32,7 +35,14 @@ type PracticeInfoForm = {
   specialty: string;
   qualifications: string;
   address_summary: string;
+  share_address_on_instagram: boolean;
 };
+
+function shareAddressOnInstagram(s: DoctorSettings): boolean {
+  if (s.share_address_on_instagram === false) return false;
+  if (s.share_address_on_instagram === true) return true;
+  return Boolean(s.address_summary?.trim());
+}
 
 function toForm(s: DoctorSettings): PracticeInfoForm {
   return {
@@ -41,6 +51,7 @@ function toForm(s: DoctorSettings): PracticeInfoForm {
     specialty: s.specialty ?? "",
     qualifications: s.qualifications ?? "",
     address_summary: s.address_summary ?? "",
+    share_address_on_instagram: shareAddressOnInstagram(s),
   };
 }
 
@@ -74,6 +85,7 @@ export function PracticeInfoClient({ token }: PracticeInfoClientProps) {
       specialty: form.specialty.trim() || null,
       qualifications: form.qualifications.trim() || null,
       address_summary: form.address_summary.trim() || null,
+      share_address_on_instagram: form.share_address_on_instagram,
     };
     await save(payload);
   }
@@ -166,7 +178,7 @@ export function PracticeInfoClient({ token }: PracticeInfoClientProps) {
           <div>
             <FieldLabel
               htmlFor="address_summary"
-              tooltip="Short address or location description for patients."
+              tooltip="Printed on the prescription. Instagram says it only when the box below is on."
             >
               Address summary
             </FieldLabel>
@@ -181,6 +193,28 @@ export function PracticeInfoClient({ token }: PracticeInfoClientProps) {
               placeholder="e.g. 123 Main St, City"
               className="mt-1"
             />
+            <label className="mt-3 flex items-start gap-2 text-sm text-foreground">
+              <input
+                type="checkbox"
+                checked={form.share_address_on_instagram}
+                onChange={(e) =>
+                  setForm((p) => ({
+                    ...p,
+                    share_address_on_instagram: e.target.checked,
+                  }))
+                }
+                className="mt-0.5 h-4 w-4 rounded border-input text-primary focus:ring-ring"
+              />
+              <span>
+                <span className="font-medium">
+                  Show this address when someone asks on Instagram
+                </span>
+                <span className="mt-1 block text-muted-foreground">
+                  The prescription still prints this address. Instagram says it
+                  only when this is on.
+                </span>
+              </span>
+            </label>
           </div>
           <SaveButton
             isDirty={isDirty}

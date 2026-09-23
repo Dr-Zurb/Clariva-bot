@@ -104,7 +104,7 @@ const SELECT_COLUMNS =
   'doctor_id, appointment_fee_minor, appointment_fee_currency, country, ' +
   'practice_name, timezone, slot_interval_minutes, max_advance_booking_days, min_advance_hours, business_hours_summary, ' +
   'cancellation_policy_hours, max_appointments_per_day, booking_buffer_minutes, ' +
-  'welcome_message, specialty, social_enquiries, address_summary, consultation_types, service_offerings_json, service_catalog_templates_json, default_notes, ' +
+  'welcome_message, specialty, social_enquiries, address_summary, share_address_on_instagram, consultation_types, service_offerings_json, service_catalog_templates_json, default_notes, ' +
   'payment_collection_mode, ' +
   'payout_schedule, payout_minor, razorpay_linked_account_id, ' +
   'opd_mode, opd_policies, ' +
@@ -176,6 +176,7 @@ const DEFAULT_SETTINGS: DoctorSettingsRow = {
   specialty: null,
   social_enquiries: 'yes',
   address_summary: null,
+  share_address_on_instagram: null,
   consultation_types: null,
   service_offerings_json: null,
   service_catalog_templates_json: { templates: [] },
@@ -1016,6 +1017,8 @@ export interface UpdateDoctorSettingsPayload {
   specialty?: string | null;
   social_enquiries?: SocialEnquiries;
   address_summary?: string | null;
+  /** migration 240. false withholds the street from Instagram. NULL keeps share-if-set. */
+  share_address_on_instagram?: boolean | null;
   consultation_types?: string | null;
   /** SFU-01 / SFU-11: structured catalog; merged + normalized before persist. */
   service_offerings_json?: ServiceCatalogV1 | null;
@@ -1497,6 +1500,7 @@ export async function updateDoctorSettings(
     'specialty',
     'social_enquiries',
     'address_summary',
+    'share_address_on_instagram',
     'consultation_types',
     'default_notes',
     'appointment_fee_minor',
