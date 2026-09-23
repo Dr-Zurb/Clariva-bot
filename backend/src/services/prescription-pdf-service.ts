@@ -66,6 +66,8 @@ import { getDoctorSettings } from './doctor-settings-service';
 import { withPrescriptionMedicinesLock } from './prescription-medicine-lock';
 import { prescriptionMedicinePrintKey } from '../utils/prescription-medicine-print-key';
 import { resolveLetterhead } from './letterhead-service';
+import { stampPrescriptionPageNumbers } from '../templates/prescription-pdf/page-numbers';
+import { stampPrescriptionPageNumbers } from '../templates/prescription-pdf/page-numbers';
 import { PrescriptionDocument } from '../templates/prescription-pdf/PrescriptionDocument';
 import type { PrescriptionPdfData } from '../templates/prescription-pdf/types';
 import { resolvePatientAgeLabel } from '../templates/prescription-pdf/patient-identity';
@@ -476,7 +478,7 @@ async function renderPdfBuffer(data: PrescriptionPdfData): Promise<Buffer> {
   if (!buffer || buffer.length === 0) {
     throw new InternalError('PDF render produced empty buffer');
   }
-  return buffer;
+  return stampPrescriptionPageNumbers(buffer);
 }
 
 async function uploadPdfAndSign(

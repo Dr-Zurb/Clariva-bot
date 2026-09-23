@@ -51,7 +51,14 @@ function collectText(node: React.ReactNode): string[] {
       return;
     }
     if (!React.isValidElement(n)) return;
-    walk((n.props as { children?: React.ReactNode }).children);
+    const props = n.props as {
+      children?: React.ReactNode;
+      render?: (page: { pageNumber: number; totalPages: number }) => React.ReactNode;
+    };
+    if (typeof props.render === 'function') {
+      walk(props.render({ pageNumber: 1, totalPages: 2 }));
+    }
+    walk(props.children);
   };
   walk(node);
   return out;

@@ -35,7 +35,7 @@ export const styles = StyleSheet.create({
   // Page chrome ----------------------------------------------------------
   page: {
     paddingTop: 36,
-    paddingBottom: 56, // leave room for repeating footer
+    paddingBottom: 72, // leave room for repeating footer + page count
     paddingHorizontal: 36,
     fontFamily: 'Helvetica',
     fontSize: 10,
@@ -301,9 +301,4 @@ export const styles = StyleSheet.create({
     color: COLORS.ink,
   },
 
-  // Page number ----------------------------------------------------------
-  pageNumber: {
-    fontSize: 8,
-    color: COLORS.muted,
-  },
 });

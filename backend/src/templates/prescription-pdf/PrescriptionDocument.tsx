@@ -119,14 +119,14 @@ export const PrescriptionDocument: React.FC<PrescriptionDocumentProps> = ({ data
             paddingTop: mt,
             paddingRight: mr,
             paddingLeft: ml,
-            paddingBottom: 24 + mmToPt(layout.footerHeightMm ?? 20) + 40,
+            paddingBottom: 24 + mmToPt(layout.footerHeightMm ?? 20) + 56,
           }
         : layout
           ? {
               ...styles.page,
               paddingTop: mt,
               paddingRight: mr,
-              paddingBottom: Math.max(mb, 56),
+              paddingBottom: Math.max(mb, 72),
               paddingLeft: ml,
             }
           : styles.page;
@@ -259,7 +259,8 @@ export const PrescriptionDocument: React.FC<PrescriptionDocumentProps> = ({ data
         {/* assessment-plan-custom-sections — custom Plan sections (plan-side block). */}
         {renderCustomSubsections(body.planCustomSections, accentColor, bodyTextSize)}
 
-        {/* Footer — repeats per page (see Footer.tsx `fixed`). */}
+        {/* Footer — repeats per page (see Footer.tsx `fixed`).
+            Page count is stamped after render. */}
         <Footer data={footer} layout={layout} />
       </Page>
     </Document>
