@@ -155,6 +155,59 @@ export async function readAutomatedMessagingOptedOutAt(
   }
 }
 
+export type LatestPatientMessageRead = { ok: true; createdAt: string | null } | { ok: false };
+
+/**
+ * Newest patient message time for Meta's standard messaging window.
+ * Fail-closed callers treat `{ ok: false }` as "do not send".
+ * No message body in the query or the logs.
+ */
+export async function readLatestPatientMessageAt(
+  conversationId: string,
+  correlationId: string
+): Promise<LatestPatientMessageRead> {
+  try {
+    const supabaseAdmin = getSupabaseAdminClient();
+    if (!supabaseAdmin) {
+      logger.warn(
+        { correlationId, conversationId },
+        'readLatestPatientMessageAt: admin client unavailable'
+      );
+      return { ok: false };
+    }
+
+    const { data, error } = await supabaseAdmin
+      .from('messages')
+      .select('created_at')
+      .eq('conversation_id', conversationId)
+      .eq('sender_type', 'patient')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (error) {
+      logger.warn(
+        { correlationId, conversationId },
+        'readLatestPatientMessageAt: query failed'
+      );
+      return { ok: false };
+    }
+    if (!data) return { ok: true, createdAt: null };
+    const raw = (data as { created_at?: unknown }).created_at;
+    if (typeof raw === 'string' && raw.trim()) return { ok: true, createdAt: raw };
+    if (raw instanceof Date && !Number.isNaN(raw.getTime())) {
+      return { ok: true, createdAt: raw.toISOString() };
+    }
+    return { ok: true, createdAt: null };
+  } catch {
+    logger.warn(
+      { correlationId, conversationId },
+      'readLatestPatientMessageAt: unexpected failure'
+    );
+    return { ok: false };
+  }
+}
+
 /**
  * Set or clear the automated-messaging opt-out stamp (mca-06 / mca-07).
  * Pass an ISO timestamp to opt out; null to re-opt-in.

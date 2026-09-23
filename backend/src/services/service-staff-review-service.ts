@@ -8,10 +8,6 @@
 import { getSupabaseAdminClient } from '../config/database';
 import { logger } from '../config/logger';
 import {
-  formatStaffReviewResolvedContinueBookingDm,
-  formatStaffServiceReviewSlaTimeoutDm,
-} from '../utils/staff-service-review-dm';
-import {
   applyFinalCatalogServiceSelection,
   applyStaffReviewGateCancellationToConversationState,
   ConversationState,
@@ -19,16 +15,10 @@ import {
   ServiceCatalogMatchConfidence,
 } from '../types/conversation';
 import { readConversationState } from '../types/conversation-state-io';
-import { shouldSkipAutomatedMetaSend } from './automated-messaging-opt-out';
 import {
-  findConversationById,
-  getConversationLanguage,
   getConversationState,
   updateConversationState,
 } from './conversation-service';
-import { getInstagramAccessTokenForDoctor } from './instagram-connect-service';
-import { sendInstagramMessage } from './instagram-service';
-import { createMessage } from './message-service';
 import {
   appendMatcherHintsOnDoctorCatalogOffering,
   getDoctorSettings,
@@ -39,7 +29,6 @@ import { isSingleFeeMode, logSingleFeeSkip } from '../utils/catalog-mode-guard';
 import { handleSupabaseError } from '../utils/db-helpers';
 import type { CatalogMode } from '../types/doctor-settings';
 import { ConflictError, InternalError, NotFoundError, ValidationError } from '../utils/errors';
-import { buildBookingPageUrl } from './slot-selection-service';
 import { ingestServiceMatchLearningExample } from './service-match-learning-ingest';
 import { recordShadowEvaluationForNewPendingReview } from './service-match-learning-shadow';
 import { fetchAssistHintForReviewRow, type ServiceMatchAssistHint } from './service-match-learning-assist';
@@ -397,7 +386,8 @@ export async function listEnrichedServiceStaffReviewsForDoctor(
 }
 
 /**
- * Instagram: booking link DM after staff confirms or reassigns visit type (best-effort; DB update already succeeded).
+ * Visit-type confirmation stays off Instagram. The next message in the thread
+ * can send the booking page. The database update has already succeeded.
  */
 export async function sendInstagramBookingLinkAfterStaffReviewResolution(params: {
   doctorId: string;
@@ -406,79 +396,13 @@ export async function sendInstagramBookingLinkAfterStaffReviewResolution(params:
   finalCatalogServiceKey: string;
   kind: 'confirmed' | 'reassigned' | 'learning_policy_autobook';
 }): Promise<void> {
-  const conv = await findConversationById(params.conversationId, params.correlationId);
-  if (!conv || conv.platform !== 'instagram') {
-    logger.info(
-      { correlationId: params.correlationId, conversationId: params.conversationId },
-      'staff_review_resolution_skip_dm_non_ig'
-    );
-    return;
-  }
-  const recipientId = conv.platform_conversation_id?.trim();
-  if (!recipientId) {
-    logger.warn(
-      { correlationId: params.correlationId, conversationId: params.conversationId },
-      'staff_review_resolution_skip_dm_no_recipient'
-    );
-    return;
-  }
-
-  const igToken = await getInstagramAccessTokenForDoctor(params.doctorId, params.correlationId);
-  if (!igToken?.trim()) {
-    logger.warn(
-      { correlationId: params.correlationId, doctorId: params.doctorId },
-      'staff_review_resolution_dm_no_ig_token'
-    );
-    return;
-  }
-
-  const settings = await getDoctorSettings(params.doctorId);
-  const catalog = settings ? getActiveServiceCatalog(settings) : null;
-  const offering = catalog ? findServiceOfferingByKey(catalog, params.finalCatalogServiceKey) : null;
-  const visitLabel = offering?.label?.trim() || params.finalCatalogServiceKey;
-  const bookingUrl = buildBookingPageUrl(params.conversationId, params.doctorId);
-  const language = await getConversationLanguage(params.conversationId, params.correlationId);
-  const text = formatStaffReviewResolvedContinueBookingDm(
-    language,
-    settings,
-    visitLabel,
-    bookingUrl,
-    params.kind
+  void params.doctorId;
+  void params.finalCatalogServiceKey;
+  void params.kind;
+  logger.info(
+    { correlationId: params.correlationId, conversationId: params.conversationId },
+    'staff_review_resolution_dm_skipped_meta'
   );
-
-  const optOut = await shouldSkipAutomatedMetaSend({
-    conversationId: params.conversationId,
-    correlationId: params.correlationId,
-    ifMissing: 'skip',
-  });
-  if (optOut.skip) {
-    logger.info(
-      { correlationId: params.correlationId, conversationId: params.conversationId },
-      'staff_review_resolution_skip_dm_opted_out'
-    );
-    return;
-  }
-
-  try {
-    const res = await sendInstagramMessage(recipientId, text, params.correlationId, igToken.trim());
-    await createMessage(
-      {
-        conversation_id: params.conversationId,
-        platform_message_id: res.message_id,
-        sender_type: 'system',
-        content: text,
-      },
-      params.correlationId
-    );
-  } catch (e) {
-    logger.warn(
-      {
-        correlationId: params.correlationId,
-        err: e instanceof Error ? e.message : String(e),
-      },
-      'staff_review_resolution_dm_failed'
-    );
-  }
 }
 
 export async function getServiceStaffReviewRequestForDoctor(
@@ -801,11 +725,11 @@ export async function runStaffReviewTimeoutJob(correlationId: string): Promise<S
     return { closed: 0, notifySent: 0, notifySkippedNonIg: 0, notifySkippedNoConversation: 0, notifyFailedNoToken: 0, notifyFailedSend: 0, phase2NotifyAttempts: 0 };
   }
 
-  let notifySent = 0;
-  let notifySkippedNonIg = 0;
-  let notifySkippedNoConversation = 0;
-  let notifyFailedNoToken = 0;
-  let notifyFailedSend = 0;
+  const notifySent = 0;
+  const notifySkippedNonIg = 0;
+  const notifySkippedNoConversation = 0;
+  const notifyFailedNoToken = 0;
+  const notifyFailedSend = 0;
 
   for (const row of rows) {
     const r = row as { id: string; doctor_id: string; conversation_id: string; proposed_catalog_service_key: string | null };
@@ -815,29 +739,10 @@ export async function runStaffReviewTimeoutJob(correlationId: string): Promise<S
       .update({ sla_breached_at: new Date().toISOString() })
       .eq('id', r.id);
 
-    if (!r.conversation_id) { notifySkippedNoConversation++; continue; }
-    const conv = await findConversationById(r.conversation_id, correlationId);
-    if (!conv) { notifySkippedNoConversation++; continue; }
-    if (conv.platform !== 'instagram') { notifySkippedNonIg++; continue; }
-
-    const token = await getInstagramAccessTokenForDoctor(r.doctor_id, correlationId);
-    if (!token) { notifyFailedNoToken++; continue; }
-
-    try {
-      const optOut = await shouldSkipAutomatedMetaSend({
-        conversationId: r.conversation_id,
-        correlationId,
-        ifMissing: 'skip',
-      });
-      if (optOut.skip) continue;
-      const language = await getConversationLanguage(r.conversation_id, correlationId);
-      const ack = formatStaffServiceReviewSlaTimeoutDm(language);
-      await sendInstagramMessage(conv.platform_conversation_id, ack, correlationId, token);
-      notifySent++;
-    } catch (e) {
-      logger.warn({ err: e, correlationId, reviewId: r.id }, 'Staff review timeout DM failed');
-      notifyFailedSend++;
-    }
+    logger.info(
+      { correlationId, reviewId: r.id },
+      'staff_review_sla_dm_skipped_meta'
+    );
   }
 
   return { closed: rows.length, notifySent, notifySkippedNonIg, notifySkippedNoConversation, notifyFailedNoToken, notifyFailedSend, phase2NotifyAttempts: 0 };

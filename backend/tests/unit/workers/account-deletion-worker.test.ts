@@ -475,7 +475,7 @@ describe('finalizeAccountDeletion', () => {
     expect(typeof auditUpdate.finalized_at).toBe('string');
     expect(auditUpdate.artifact_prefix_count).toBe(1);
 
-    expect(mockedIg.sendInstagramMessage).toHaveBeenCalledTimes(1);
+    expect(mockedIg.sendInstagramMessage).not.toHaveBeenCalled();
   });
 
   it('is a no-op when the audit row is already finalized', async () => {

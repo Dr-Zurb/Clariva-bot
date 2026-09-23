@@ -208,7 +208,7 @@ export async function processFacebookCommentWebhook(
     );
   }
 
-  if (isHighIntent && !receptionistPaused && underDailyCap) {
+  if (isHighIntent && intent !== 'medical_query' && !receptionistPaused && underDailyCap) {
     const pageToken =
       pageTokenEarly ?? (await getFacebookPageAccessTokenForDoctor(doctorId, correlationId));
     commentDoctorTokenPresent = !!pageToken;

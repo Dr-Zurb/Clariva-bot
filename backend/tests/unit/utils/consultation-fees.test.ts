@@ -16,6 +16,9 @@ import {
   pickCatalogServicesForFeeDm,
   pickCatalogServicesMatchingUserText,
   formatSingleConsultFeeDm,
+  formatFeeQuoteAcknowledgement,
+  isBareFeeQuoteAcknowledgement,
+  lastBotQuotedSingleFee,
   userExplicitlyWantsToBookNow,
 } from '../../../src/utils/consultation-fees';
 import {
@@ -76,7 +79,15 @@ describe('consultation-fees (RBH-13)', () => {
         },
         'en'
       )
-    ).toBe('Consult fee is ₹500.');
+    ).toBe('Appointment fee is ₹500.');
+  });
+
+  it('ok after a fee quote is an acknowledgement, not another quote', () => {
+    expect(isBareFeeQuoteAcknowledgement('ok')).toBe(true);
+    expect(isBareFeeQuoteAcknowledgement("whats the fee")).toBe(false);
+    expect(lastBotQuotedSingleFee('Consult fee is ₹10.')).toBe(true);
+    expect(lastBotQuotedSingleFee('Appointment fee is ₹10.')).toBe(true);
+    expect(formatFeeQuoteAcknowledgement('en')).toBe('Sure.');
   });
 
   it('userExplicitlyWantsToBookNow detects real booking intent', () => {

@@ -43,7 +43,7 @@ export type FanOutChannelOutcome =
   | {
       channel: FanOutChannel;
       status:  'skipped';
-      reason:  'no_recipient' | 'channel_disabled' | 'patient_opted_out';
+      reason:  'no_recipient' | 'channel_disabled' | 'patient_opted_out' | 'messaging_window_closed';
     }
   | { channel: FanOutChannel; status: 'failed';  error: string };
 

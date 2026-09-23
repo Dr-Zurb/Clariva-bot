@@ -505,15 +505,15 @@ exports[`dm-copy snapshots lang-22 / book-for-other dual intro 1`] = `"I'll help
 exports[`dm-copy snapshots lang-22 / book-for-other next intro 1`] = `"Got it. I'll help you book for your **wife** next. Please share their details:"`;
 
 exports[`dm-copy snapshots lang-22 / booking link queue 1`] = `
-"Join the queue for your visit here: https://book.example/q
+"Open this page to join the queue: https://book.example/q
 
-Choose a day, then confirm - you'll get a token number. Wait times are approximate."
+Finish on this page."
 `;
 
 exports[`dm-copy snapshots lang-22 / booking link slot 1`] = `
 "Open this link to get an appointment: https://book.example/s
 
-You'll be redirected back to this chat when done."
+Finish on this page."
 `;
 
 exports[`dm-copy snapshots lang-22 / consent persist failure 1`] = `"I had trouble saving your details — please reply **Yes** again to retry, or say 'book appointment' to re-share them."`;
@@ -524,7 +524,7 @@ exports[`dm-copy snapshots lang-22 / patient match confirm self (phi) 1`] = `"We
 
 exports[`dm-copy snapshots lang-22 / reschedule choice queue 1`] = `"Pick a new day for your visit: [Choose new day](https://book.example/r)"`;
 
-exports[`dm-copy snapshots lang-22 / returning follow-up confirm 1`] = `"Is this a **follow-up** for **Follow-up Consultation**? Reply **Yes** or **No**."`;
+exports[`dm-copy snapshots lang-22 / returning follow-up confirm 1`] = `"Say book if you want the booking page."`;
 
 exports[`dm-copy snapshots lang-22 / self-book nudge 1`] = `"Would you like to book one for yourself now?"`;
 
@@ -550,7 +550,7 @@ exports[`dm-copy snapshots lang-24 / LLM empty fallback 1`] = `"I didn't quite g
 
 exports[`dm-copy snapshots mca-07 / automated messaging start ack 1`] = `"Automated messages are on again. How can I help?"`;
 
-exports[`dm-copy snapshots mca-07 / automated messaging stop ack 1`] = `"I'll stop sending automated messages here. Your doctor can still reply. Send START if you want them again."`;
+exports[`dm-copy snapshots mca-07 / automated messaging stop ack 1`] = `"I'll stop sending automated messages here. Send START if you want them again."`;
 
 exports[`dm-copy snapshots nonTextAck / default 1`] = `"I can't read images or voice notes yet — could you type your message instead? I'll take it from there."`;
 
@@ -564,8 +564,6 @@ Your appointment is confirmed for **Tue, Apr 29 · 4:30 PM**.
 🆔 **Patient ID:** CLR-00123
 _Save this for future bookings._
 
-If your symptoms get worse or feel like an emergency before your visit, don't wait — call **112** or **108**, or go to the nearest hospital right away.
-
 We'll send a reminder before your visit. Reply here anytime if you need to reschedule or have questions."
 `;
 
@@ -576,8 +574,6 @@ Tuhadi appointment **Tue, Apr 29 · 4:30 PM** layi confirm ho gayi hai.
 
 🆔 **Patient ID:** CLR-00123
 _Future bookings layi save kar lo._
-
-Je visit ton pehlan tuhade symptoms vadh jaan ya emergency varga lage, ta intezaar na karo — **112** ya **108** te call karo, ya nazdeeki hospital jao.
 
 Visit ton pehlan asi reminder bhejange. Reschedule ya koi sawaal hove ta ithe reply karo."
 `;
@@ -590,8 +586,6 @@ Your appointment is confirmed for **Tue, Apr 29 · 4:30 PM**.
 🆔 **Patient ID:** CLR-00123
 _Save this for future bookings._
 
-If your symptoms get worse or feel like an emergency before your visit, don't wait — call **112** or **108**, or go to the nearest hospital right away.
-
 We'll send a reminder before your visit. Reply here anytime if you need to reschedule or have questions."
 `;
 
@@ -599,8 +593,6 @@ exports[`dm-copy snapshots payment / without MRN (shorter variant) 1`] = `
 "✅ **Payment received.**
 
 Your appointment is confirmed for **Tue, Apr 29 · 4:30 PM**.
-
-If your symptoms get worse or feel like an emergency before your visit, don't wait — call **112** or **108**, or go to the nearest hospital right away.
 
 We'll send a reminder before your visit. Reply here anytime if you need to reschedule or have questions."
 `;

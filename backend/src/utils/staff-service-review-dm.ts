@@ -31,27 +31,21 @@ export function resolveVisitTypeLabelForDm(
 }
 
 type AwaitingStaffCopy = {
-  readonly body: (practice: string, visitClause: string) => string;
+  readonly body: (practice: string) => string;
 };
 
 const AWAITING_STAFF_COPY: Readonly<Record<StaticMessageLocale, AwaitingStaffCopy>> = {
   en: {
-    body: (practice, visitClause) =>
-      `Thanks — **${practice}** will confirm your visit type before we open scheduling.${visitClause} ` +
-      `Our team will reply here **soon**. ` +
-      `You do **not** need to pay yet. We'll message you when you can pick a time.`,
+    body: (practice) =>
+      `Thanks. **${practice}** is confirming this booking. Message here when you want the booking page. You do not need to pay in this chat.`,
   },
   hi: {
-    body: (practice, visitClause) =>
-      `Dhanyavaad — scheduling shuru karne se pehle **${practice}** aapki visit type confirm karega.${visitClause} ` +
-      `Hamari team yahan **jald** reply karegi. ` +
-      `Abhi aapko **payment** nahi karni. Jab aap time pick kar sakte hain tab hum message karenge.`,
+    body: (practice) =>
+      `Dhanyavaad. **${practice}** is booking ko confirm kar raha hai. Booking page chahiye ho to yahan message karein. Is chat mein payment nahi karni.`,
   },
   pa: {
-    body: (practice, visitClause) =>
-      `Dhanyavaad — scheduling shuru karn ton pehlan **${practice}** tuhadi visit type confirm karega.${visitClause} ` +
-      `Sadi team ithe **jald** reply karegi. ` +
-      `Hun tenu **payment** nahi karni. Jadon tusi time pick kar sakde ho tab asi message karange.`,
+    body: (practice) =>
+      `Dhanyavaad. **${practice}** is booking nu confirm kar reha hai. Booking page chahidi hove ta ithe message karo. Is chat vich payment nahi karni.`,
   },
 };
 
@@ -61,16 +55,10 @@ export function formatAwaitingStaffServiceConfirmationDm(
   settings: DoctorSettingsRow | null,
   state: ConversationState
 ): string {
+  void state;
   const locale = toStaticLocale(language);
   const practice = settings?.practice_name?.trim() || 'the clinic';
-  const visit = resolveVisitTypeLabelForDm(settings, state);
-  const visitClauseByLocale: Record<StaticMessageLocale, (label: string) => string> = {
-    en: (label) => ` We've noted your request as **${label}**.`,
-    hi: (label) => ` Humne aapki request **${label}** ke roop mein note kar li hai.`,
-    pa: (label) => ` Asi tuhadi request **${label}** vajon note kar li hai.`,
-  };
-  const visitClause = visit ? visitClauseByLocale[locale](visit) : '';
-  return AWAITING_STAFF_COPY[locale].body(practice, visitClause);
+  return AWAITING_STAFF_COPY[locale].body(practice);
 }
 
 type StillPendingCopy = {
@@ -80,18 +68,15 @@ type StillPendingCopy = {
 const STILL_PENDING_COPY: Readonly<Record<StaticMessageLocale, StillPendingCopy>> = {
   en: {
     body: (practice) =>
-      `We're still confirming with **${practice}**. You'll get a message here when you can choose a time. ` +
-      `Thanks for your patience.`,
+      `**${practice}** is still confirming this booking. Message here when you want the booking page.`,
   },
   hi: {
     body: (practice) =>
-      `Hum ab bhi **${practice}** ke saath confirm kar rahe hain. Jab aap time choose kar sakte hain tab aapko yahan message milega. ` +
-      `Aapke sabr ke liye dhanyavaad.`,
+      `**${practice}** ab bhi is booking ko confirm kar raha hai. Booking page chahiye ho to yahan message karein.`,
   },
   pa: {
     body: (practice) =>
-      `Asi hun vi **${practice}** naal confirm kar rahe haan. Jadon tusi time choose kar sakde ho tab tenu ithe message milega. ` +
-      `Tuhade sabr layi dhanyavaad.`,
+      `**${practice}** hun vi is booking nu confirm kar reha hai. Booking page chahidi hove ta ithe message karo.`,
   },
 };
 

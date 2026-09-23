@@ -184,6 +184,7 @@ function buildSupabaseMock(opts: BuildSupabaseOpts) {
     const chain: Record<string, unknown> = {
       select: jest.fn(() => chain),
       eq:     jest.fn(() => chain),
+      order:  jest.fn(() => chain),
       limit:  jest.fn(() => chain),
       maybeSingle: jest.fn().mockImplementation(() => {
         if (table === 'consultation_sessions') {
@@ -191,6 +192,12 @@ function buildSupabaseMock(opts: BuildSupabaseOpts) {
         }
         if (table === 'conversations') {
           return Promise.resolve({ data: conversationRow, error: null });
+        }
+        if (table === 'messages') {
+          return Promise.resolve({
+            data: { created_at: new Date().toISOString() },
+            error: null,
+          });
         }
         return Promise.resolve({ data: null, error: null });
       }),
@@ -344,10 +351,17 @@ describe('Notification fan-out helpers (Plan 01 · Task 16)', () => {
       const channelMap = Object.fromEntries(result.channels.map((c) => [c.channel, c]));
       expect(channelMap.sms.status).toBe('sent');
       expect(channelMap.email.status).toBe('sent');
-      expect(channelMap.instagram_dm.status).toBe('sent');
-      expect(channelMap.facebook_dm.status).toBe('skipped');
+      expect(channelMap.instagram_dm).toEqual({
+        channel: 'instagram_dm',
+        status: 'skipped',
+        reason: 'channel_disabled',
+      });
+      expect(channelMap.facebook_dm).toEqual({
+        channel: 'facebook_dm',
+        status: 'skipped',
+        reason: 'channel_disabled',
+      });
 
-      // All three providers were called with the same body.
       expect(smsService.sendSms).toHaveBeenCalledWith(
         '+919876500001',
         'CONSULT_READY_BODY',
@@ -359,12 +373,7 @@ describe('Notification fan-out helpers (Plan 01 · Task 16)', () => {
         'CONSULT_READY_BODY',
         correlationId
       );
-      expect(instagramService.sendInstagramMessage).toHaveBeenCalledWith(
-        'ig-psid-12345',
-        'CONSULT_READY_BODY',
-        correlationId,
-        'doctor-ig-token'
-      );
+      expect(instagramService.sendInstagramMessage).not.toHaveBeenCalled();
 
       // Dedup column was stamped.
       expect(captured.length).toBeGreaterThan(0);
@@ -395,7 +404,7 @@ describe('Notification fan-out helpers (Plan 01 · Task 16)', () => {
       expect(channelMap.instagram_dm).toEqual({
         channel: 'instagram_dm',
         status: 'skipped',
-        reason: 'patient_opted_out',
+        reason: 'channel_disabled',
       });
       expect(instagramService.sendInstagramMessage).not.toHaveBeenCalled();
     });
@@ -441,12 +450,21 @@ describe('Notification fan-out helpers (Plan 01 · Task 16)', () => {
       expect((map.sms as { reason: string }).reason).toBe('no_recipient');
       expect(map.email.status).toBe('skipped');
       expect((map.email as { reason: string }).reason).toBe('no_recipient');
-      expect(map.instagram_dm.status).toBe('sent');
-      expect(map.facebook_dm.status).toBe('skipped');
+      expect(map.instagram_dm).toEqual({
+        channel: 'instagram_dm',
+        status: 'skipped',
+        reason: 'channel_disabled',
+      });
+      expect(map.facebook_dm).toEqual({
+        channel: 'facebook_dm',
+        status: 'skipped',
+        reason: 'channel_disabled',
+      });
 
-      expect(result.anySent).toBe(true);
+      expect(result.anySent).toBe(false);
       expect(smsService.sendSms).not.toHaveBeenCalled();
       expect(emailConfig.sendEmail).not.toHaveBeenCalled();
+      expect(instagramService.sendInstagramMessage).not.toHaveBeenCalled();
     });
 
     it('SMS provider throws: SMS marked failed, email + IG still ship', async () => {
@@ -464,8 +482,16 @@ describe('Notification fan-out helpers (Plan 01 · Task 16)', () => {
       expect(map.sms.status).toBe('failed');
       expect((map.sms as { error: string }).error).toContain('twilio 21408');
       expect(map.email.status).toBe('sent');
-      expect(map.instagram_dm.status).toBe('sent');
-      expect(map.facebook_dm.status).toBe('skipped');
+      expect(map.instagram_dm).toEqual({
+        channel: 'instagram_dm',
+        status: 'skipped',
+        reason: 'channel_disabled',
+      });
+      expect(map.facebook_dm).toEqual({
+        channel: 'facebook_dm',
+        status: 'skipped',
+        reason: 'channel_disabled',
+      });
       expect(result.anySent).toBe(true);
     });
 
@@ -548,15 +574,18 @@ describe('Notification fan-out helpers (Plan 01 · Task 16)', () => {
       const map = Object.fromEntries(result.channels.map((c) => [c.channel, c]));
       expect(map.sms.status).toBe('skipped');
       expect(map.email.status).toBe('skipped');
-      expect(map.instagram_dm.status).toBe('skipped');
-      expect(map.facebook_dm.status).toBe('sent');
-      expect(result.anySent).toBe(true);
-      expect(instagramService.sendInstagramMessage).toHaveBeenCalledWith(
-        'fb-psid-999',
-        'CONSULT_READY_BODY',
-        correlationId,
-        'doctor-fb-token'
-      );
+      expect(map.instagram_dm).toEqual({
+        channel: 'instagram_dm',
+        status: 'skipped',
+        reason: 'channel_disabled',
+      });
+      expect(map.facebook_dm).toEqual({
+        channel: 'facebook_dm',
+        status: 'skipped',
+        reason: 'channel_disabled',
+      });
+      expect(result.anySent).toBe(false);
+      expect(instagramService.sendInstagramMessage).not.toHaveBeenCalled();
     });
 
     it('Facebook send throws: facebook_dm failed, other channels still ship', async () => {
@@ -586,9 +615,16 @@ describe('Notification fan-out helpers (Plan 01 · Task 16)', () => {
       const map = Object.fromEntries(result.channels.map((c) => [c.channel, c]));
       expect(map.sms.status).toBe('sent');
       expect(map.email.status).toBe('sent');
-      expect(map.instagram_dm.status).toBe('skipped');
-      expect(map.facebook_dm.status).toBe('failed');
-      expect((map.facebook_dm as { error: string }).error).toContain('meta 10');
+      expect(map.instagram_dm).toEqual({
+        channel: 'instagram_dm',
+        status: 'skipped',
+        reason: 'channel_disabled',
+      });
+      expect(map.facebook_dm).toEqual({
+        channel: 'facebook_dm',
+        status: 'skipped',
+        reason: 'channel_disabled',
+      });
       expect(result.anySent).toBe(true);
     });
 
@@ -603,8 +639,11 @@ describe('Notification fan-out helpers (Plan 01 · Task 16)', () => {
       const result = await sendConsultationReadyToPatient({ sessionId, correlationId });
 
       const map = Object.fromEntries(result.channels.map((c) => [c.channel, c]));
-      expect(map.facebook_dm.status).toBe('skipped');
-      expect((map.facebook_dm as { reason: string }).reason).toBe('no_recipient');
+      expect(map.facebook_dm).toEqual({
+        channel: 'facebook_dm',
+        status: 'skipped',
+        reason: 'channel_disabled',
+      });
     });
 
     it('all four channels are attempted in parallel', async () => {
@@ -622,22 +661,19 @@ describe('Notification fan-out helpers (Plan 01 · Task 16)', () => {
       const map = Object.fromEntries(result.channels.map((c) => [c.channel, c]));
       expect(map.sms.status).toBe('sent');
       expect(map.email.status).toBe('sent');
-      expect(map.instagram_dm.status).toBe('sent');
-      expect(map.facebook_dm.status).toBe('sent');
+      expect(map.instagram_dm).toEqual({
+        channel: 'instagram_dm',
+        status: 'skipped',
+        reason: 'channel_disabled',
+      });
+      expect(map.facebook_dm).toEqual({
+        channel: 'facebook_dm',
+        status: 'skipped',
+        reason: 'channel_disabled',
+      });
       expect(smsService.sendSms).toHaveBeenCalled();
       expect(emailConfig.sendEmail).toHaveBeenCalled();
-      expect(instagramService.sendInstagramMessage).toHaveBeenCalledWith(
-        'ig-psid-12345',
-        'CONSULT_READY_BODY',
-        correlationId,
-        'doctor-ig-token'
-      );
-      expect(instagramService.sendInstagramMessage).toHaveBeenCalledWith(
-        'fb-psid-from-conv',
-        'CONSULT_READY_BODY',
-        correlationId,
-        'doctor-fb-token'
-      );
+      expect(instagramService.sendInstagramMessage).not.toHaveBeenCalled();
     });
   });
 
@@ -646,7 +682,7 @@ describe('Notification fan-out helpers (Plan 01 · Task 16)', () => {
   // --------------------------------------------------------------------------
 
   describe('sendPrescriptionReadyToPatient', () => {
-    it('happy path: all three channels fire in parallel with the prescription view URL', async () => {
+    it('happy path: SMS and email carry the view link; Meta channels are skipped', async () => {
       const supa = buildSupabaseMock({
         prescription: { found: true },
         appointment:  { found: true, phone: '+919876500001' },
@@ -665,8 +701,9 @@ describe('Notification fan-out helpers (Plan 01 · Task 16)', () => {
       const map = Object.fromEntries(result.channels.map((c) => [c.channel, c]));
       expect(map.sms.status).toBe('sent');
       expect(map.email.status).toBe('sent');
-      expect(map.instagram_dm.status).toBe('sent');
+      expect(map.instagram_dm.status).toBe('skipped');
       expect(map.facebook_dm.status).toBe('skipped');
+      expect(instagramService.sendInstagramMessage).not.toHaveBeenCalled();
 
       expect(dmCopy.buildPrescriptionReadyPingDm).toHaveBeenCalledWith(
         expect.objectContaining({

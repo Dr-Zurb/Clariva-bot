@@ -22,6 +22,22 @@ import {
 import type { DmHandlerBranch } from '../../../types/dm-instrumentation';
 import type { DmStageHandler, DmTurnContext, DmTurnResult } from '../stage-router';
 import { isBookingEntryTurn } from './booking-entry-predicate';
+import { lastAssistantDmContent } from '../../../utils/reason-first-triage';
+
+function feeTurnContext(ctx: Pick<DmTurnContext, 'text' | 'recentMessages'>): {
+  userText: string;
+  lastBotMessage: string | undefined;
+} {
+  return {
+    userText: ctx.text,
+    lastBotMessage: lastAssistantDmContent(
+      ctx.recentMessages.map((m) => ({
+        sender_type: m.sender_type,
+        content: m.content ?? '',
+      }))
+    ),
+  };
+}
 
 /** mca-15: FAQ + booking link only — no name / phone / reason / consent in the thread. */
 function applyLinkFirstBooking(
@@ -141,6 +157,7 @@ export const bookingEntryStage = {
           patient: null,
           language: ctx.turnLanguage,
           wantsToBook: userExplicitlyWantsToBookNow(text),
+          ...feeTurnContext(ctx),
         });
         state = feeStart.state;
         replyText = feeStart.replyText;
@@ -167,6 +184,7 @@ export const bookingEntryStage = {
           patient: null,
           language: ctx.turnLanguage,
           wantsToBook: false,
+          ...feeTurnContext(ctx),
         });
         state = prices.state;
         replyText = prices.replyText;
@@ -182,6 +200,7 @@ export const bookingEntryStage = {
             patient,
             language: ctx.turnLanguage,
             wantsToBook: true,
+            ...feeTurnContext(ctx),
           });
           state = feeReady.state;
           replyText = feeReady.replyText;
@@ -210,6 +229,7 @@ export const bookingEntryStage = {
             patient: null,
             language: ctx.turnLanguage,
             wantsToBook: explicitBook,
+            ...feeTurnContext(ctx),
           });
           state = feeNew.state;
           replyText = feeNew.replyText;

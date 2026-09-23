@@ -86,7 +86,6 @@ import { InternalError, NotFoundError, ValidationError } from '../utils/errors';
 import { logAuditEvent } from '../utils/audit-logger';
 import { redactPhiForAI } from '../services/ai-service';
 import { scrubPatientPiiFromLogs } from '../services/account-deletion-pii-scrub';
-import { buildAccountDeletionExplainerDm } from '../utils/dm-copy';
 import {
   applyPatientErasurePlan,
   buildPatientErasurePlan,
@@ -94,24 +93,10 @@ import {
   serializeErasureAuditNotes,
   type PlanAndMaybeEraseResult,
 } from '../services/recording-erasure-service';
-import { coerceConversationLanguage } from '../services/conversation-service';
-import { sendInstagramMessage } from '../services/instagram-service';
-import { getInstagramAccessTokenForDoctor } from '../services/instagram-connect-service';
-import { sendSms } from '../services/twilio-sms-service';
-import { sendEmail } from '../config/email';
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const REASON_MAX_LENGTH = 500;
 const REVOCATION_REASON_ACCOUNT_DELETED = 'account_deleted';
-
-/**
- * Citation string used in the explainer DM. Centralized here (not env-
- * driven) because the wording is tied to the legal doctrine, not to a
- * deployment knob — if a region's deployment needs a different citation,
- * that's a code change with a legal review, not a config flip.
- */
-const LEGAL_RETENTION_CITATION =
-  'DPDP Act 2023 and GDPR Article 9 medical-record retention';
 
 // ----------------------------------------------------------------------------
 // Types
@@ -194,73 +179,11 @@ async function sendExplainerDm(input: {
   correlationId: string;
   erasure?: PlanAndMaybeEraseResult;
 }): Promise<{ sent: boolean; channel?: 'instagram' | 'sms' | 'email' }> {
-  const admin = getSupabaseAdminClient();
-  if (!admin) {
-    logger.warn(
-      { correlationId: input.correlationId, patientId: input.patientId },
-      'account_deletion_explainer_dm_skipped_no_admin_client',
-    );
-    return { sent: false };
-  }
-
-  const { data: conv } = await admin
-    .from('conversations')
-    .select('doctor_id, platform, platform_conversation_id, language')
-    .eq('patient_id', input.patientId)
-    .eq('platform', 'instagram')
-    .order('updated_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  const message = buildAccountDeletionExplainerDm({
-    language: coerceConversationLanguage(conv?.language),
-    citation: LEGAL_RETENTION_CITATION,
-    finalizedAt: input.finalizedAt,
-    recordingOutcome: input.erasure?.outcome,
-    recordingsHeldUntil: input.erasure?.latestHeldUntil
-      ? new Date(input.erasure.latestHeldUntil)
-      : null,
-  });
-
-  const igRecipientId = conv?.platform_conversation_id ?? null;
-  const doctorId = conv?.doctor_id ?? null;
-
-  if (igRecipientId && doctorId) {
-    try {
-      const doctorToken = await getInstagramAccessTokenForDoctor(
-        doctorId,
-        input.correlationId,
-      );
-      await sendInstagramMessage(
-        igRecipientId,
-        message,
-        input.correlationId,
-        doctorToken ?? undefined,
-      );
-      return { sent: true, channel: 'instagram' };
-    } catch (err) {
-      logger.warn(
-        {
-          correlationId: input.correlationId,
-          patientId: input.patientId,
-          error: err instanceof Error ? err.message : String(err),
-        },
-        'account_deletion_explainer_dm_ig_failed',
-      );
-    }
-  }
-
-  // v1: if no IG conversation routes, we still attempt SMS / email via a
-  // pre-scrub snapshot if the caller captured one. The caller does NOT
-  // capture one today (we keep this surface simple), so the DM quietly
-  // fails and is logged. Deployments where this matters can extend the
-  // helper to accept `phoneSnapshot` / `emailSnapshot` — not scope for v1.
-  void sendSms;
-  void sendEmail;
-
+  void input.finalizedAt;
+  void input.erasure;
   logger.info(
-    { correlationId: input.correlationId, patientId: input.patientId },
-    'account_deletion_explainer_dm_no_channel',
+    { correlationId: input.correlationId },
+    'account_deletion_explainer_skipped_meta',
   );
   return { sent: false };
 }

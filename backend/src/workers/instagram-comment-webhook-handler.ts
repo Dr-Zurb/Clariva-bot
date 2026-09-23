@@ -201,7 +201,7 @@ export async function processInstagramCommentWebhook(
     );
   }
 
-  if (isHighIntent && !receptionistPaused && underDailyCap) {
+  if (isHighIntent && intent !== 'medical_query' && !receptionistPaused && underDailyCap) {
     const doctorToken =
       doctorTokenEarly ?? (await getInstagramAccessTokenForDoctor(doctorId, correlationId));
     commentDoctorTokenPresent = !!doctorToken;

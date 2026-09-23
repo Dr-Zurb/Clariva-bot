@@ -176,6 +176,7 @@ function buildSupabaseMock(opts: BuildSupabaseOpts = {}): unknown {
                   ? {
                       doctor_id:       'doc-1',
                       patient_id:      'pat-1',
+                      appointment_id:  'appt-1',
                       actual_ended_at: opts.session.actualEndedAtIso ?? null,
                     }
                   : null,
@@ -211,6 +212,13 @@ function buildSupabaseMock(opts: BuildSupabaseOpts = {}): unknown {
         return {
           select: (): unknown => ({
             eq: (): unknown => ({
+              maybeSingle: async (): Promise<{
+                data: unknown;
+                error: null;
+              }> => ({
+                data: { automated_messaging_opted_out_at: null },
+                error: null,
+              }),
               eq: (): unknown => ({
                 eq: (): unknown => ({
                   limit: (): unknown => ({
@@ -219,6 +227,36 @@ function buildSupabaseMock(opts: BuildSupabaseOpts = {}): unknown {
                       error: null;
                     }> => ({
                       data:  opts.conversation ?? null,
+                      error: null,
+                    }),
+                  }),
+                }),
+              }),
+            }),
+          }),
+        };
+      }
+      if (table === 'appointments') {
+        return {
+          select: (): unknown => ({
+            eq: (): unknown => ({
+              maybeSingle: async (): Promise<{ data: unknown; error: null }> => ({
+                data: { conversation_id: 'conv-replay-1' },
+                error: null,
+              }),
+            }),
+          }),
+        };
+      }
+      if (table === 'messages') {
+        return {
+          select: (): unknown => ({
+            eq: (): unknown => ({
+              eq: (): unknown => ({
+                order: (): unknown => ({
+                  limit: (): unknown => ({
+                    maybeSingle: async (): Promise<{ data: unknown; error: null }> => ({
+                      data: { created_at: new Date().toISOString() },
                       error: null,
                     }),
                   }),
@@ -279,14 +317,18 @@ describe('notifyPatientOfDoctorReplay — happy path', () => {
     expect(result.channels.map((c) => c.channel).sort()).toEqual(
       ['instagram_dm', 'sms'],
     );
-    expect(result.channels.every((c) => c.status === 'sent')).toBe(true);
+    expect(result.channels.find((c) => c.channel === 'sms')?.status).toBe('sent');
+    expect(result.channels.find((c) => c.channel === 'instagram_dm')).toEqual({
+      channel: 'instagram_dm',
+      status: 'skipped',
+      reason: 'channel_disabled',
+    });
 
     // Decision 4: NO email channel in the fan-out for replay notifications.
     expect(result.channels.find((c) => c.channel === 'email')).toBeUndefined();
 
-    // SMS + IG providers each called exactly once.
     expect(smsService.sendSms).toHaveBeenCalledTimes(1);
-    expect(instagramService.sendInstagramMessage).toHaveBeenCalledTimes(1);
+    expect(instagramService.sendInstagramMessage).not.toHaveBeenCalled();
 
     // The audit row is written keyed on the recording access audit id —
     // this is the dedup key for the next call.
@@ -318,7 +360,7 @@ describe('notifyPatientOfDoctorReplay — happy path', () => {
     const ig  = result.channels.find((c) => c.channel === 'instagram_dm');
     expect(sms?.status).toBe('sent');
     expect(ig?.status).toBe('skipped');
-    expect(ig?.reason).toBe('no_recipient');
+    expect(ig?.reason).toBe('channel_disabled');
     expect(instagramService.sendInstagramMessage).not.toHaveBeenCalled();
   });
 
@@ -343,9 +385,13 @@ describe('notifyPatientOfDoctorReplay — happy path', () => {
       correlationId:          'cid-1',
     })) as { anySent: boolean; channels: Array<{ channel: string; status: string; error?: string }> };
 
-    expect(result.anySent).toBe(true);
+    expect(result.anySent).toBe(false);
     expect(result.channels.find((c) => c.channel === 'sms')?.status).toBe('failed');
-    expect(result.channels.find((c) => c.channel === 'instagram_dm')?.status).toBe('sent');
+    expect(result.channels.find((c) => c.channel === 'instagram_dm')).toEqual({
+      channel: 'instagram_dm',
+      status: 'skipped',
+      reason: 'channel_disabled',
+    });
   });
 });
 

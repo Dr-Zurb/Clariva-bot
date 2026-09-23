@@ -15,7 +15,7 @@ import {
 import { handleSupabaseError } from '../utils/db-helpers';
 import { InternalError } from '../utils/errors';
 import { logAuditEvent } from '../utils/audit-logger';
-import { formatStaffReviewResolvedContinueBookingDm } from '../utils/staff-service-review-dm';
+import { formatBookingLinkDm } from '../utils/booking-link-copy';
 import { getConversationLanguage } from './conversation-service';
 import { findServiceOfferingByKey, getActiveServiceCatalog } from '../utils/service-catalog-helpers';
 import { buildBookingPageUrl } from './slot-selection-service';
@@ -156,15 +156,12 @@ export async function tryApplyLearningPolicyAutobook(params: {
   nextState = mergeSlotStepAfterStaffResolution(nextState);
 
   const bookingUrl = buildBookingPageUrl(params.conversationId, params.doctorId);
-  const visitLabel = offering.label?.trim() || offering.service_key;
   const language = await getConversationLanguage(params.conversationId, params.correlationId);
-  const replyText = formatStaffReviewResolvedContinueBookingDm(
+  const replyText = formatBookingLinkDm({
     language,
-    settings,
-    visitLabel,
-    bookingUrl,
-    'learning_policy_autobook'
-  );
+    slotLink: bookingUrl,
+    doctorSettings: settings,
+  });
 
   await logAuditEvent({
     correlationId: params.correlationId,

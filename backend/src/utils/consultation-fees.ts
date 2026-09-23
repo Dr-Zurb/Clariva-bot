@@ -129,9 +129,39 @@ export function formatSingleConsultFeeDm(
     cur === 'INR' ? `₹${Math.round(minor / 100)}` : `${(minor / 100).toFixed(2)} ${cur}`;
   const locale = toStaticLocale(language);
   const byLocale: Record<StaticMessageLocale, string> = {
-    en: `Consult fee is ${amount}.`,
-    hi: `Consult fee ${amount} hai.`,
-    pa: `Consult fee ${amount} hai.`,
+    en: `Appointment fee is ${amount}.`,
+    hi: `Appointment fee ${amount} hai.`,
+    pa: `Appointment fee ${amount} hai.`,
+  };
+  if (locale === 'hi' && !languageUsesDevanagari(language)) return byLocale.hi;
+  if (locale === 'pa' && !languageUsesGurmukhi(language)) return byLocale.pa;
+  return byLocale[locale];
+}
+
+/** Closed "ok" after the fee line. Not a new question. */
+const BARE_FEE_ACK_RE =
+  /^(ok|okay|okey|k|alright|all right|got it|sure|cool|theek|thik|theek hai|accha|acha|achha)\.?!?$/i;
+
+export function isBareFeeQuoteAcknowledgement(text: string): boolean {
+  return BARE_FEE_ACK_RE.test(text.trim());
+}
+
+/** Matches the one-line fee quote, including the older "Consult fee" wording. */
+export function lastBotQuotedSingleFee(lastBotMessage: string | undefined): boolean {
+  const line = (lastBotMessage ?? '').trim();
+  if (!line) return false;
+  return (
+    /^(?:Consult|Appointment) fee is .+\.$/i.test(line) ||
+    /^(?:Consult|Appointment) fee .+ hai\.$/i.test(line)
+  );
+}
+
+export function formatFeeQuoteAcknowledgement(language: ConversationLanguage): string {
+  const locale = toStaticLocale(language);
+  const byLocale: Record<StaticMessageLocale, string> = {
+    en: 'Sure.',
+    hi: 'Theek hai.',
+    pa: 'Theek aa.',
   };
   if (locale === 'hi' && !languageUsesDevanagari(language)) return byLocale.hi;
   if (locale === 'pa' && !languageUsesGurmukhi(language)) return byLocale.pa;

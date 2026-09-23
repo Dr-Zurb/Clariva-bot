@@ -5,7 +5,12 @@
 
 import { buildBookingPageUrl } from '../../services/slot-selection-service';
 import { formatBookingLinkDm, formatClinicPageLinkDm } from '../../utils/booking-link-copy';
-import { formatSingleConsultFeeDm } from '../../utils/consultation-fees';
+import {
+  formatFeeQuoteAcknowledgement,
+  formatSingleConsultFeeDm,
+  isBareFeeQuoteAcknowledgement,
+  lastBotQuotedSingleFee,
+} from '../../utils/consultation-fees';
 import { buildPricesOnBookingPageLead } from '../../utils/instagram-faq-copy';
 import type { ConversationLanguage } from '../../utils/conversation-language';
 import { formatAwaitingStaffServiceConfirmationDm } from '../../utils/staff-service-review-dm';
@@ -178,8 +183,19 @@ function applyFeeQuoteOnly(
 
 /** Single-fee quotes ₹. Packaged uses the page link. Booking CTA only if they asked to book. */
 export function applyReceptionistFeeReply(
-  input: ApplyReadyPatientBookingPathInput & { wantsToBook: boolean }
+  input: ApplyReadyPatientBookingPathInput & {
+    wantsToBook: boolean;
+    userText?: string;
+    lastBotMessage?: string;
+  }
 ): { state: ConversationState; replyText: string } {
+  if (
+    input.userText &&
+    isBareFeeQuoteAcknowledgement(input.userText) &&
+    lastBotQuotedSingleFee(input.lastBotMessage)
+  ) {
+    return applyFeeQuoteOnly(input, formatFeeQuoteAcknowledgement(input.language));
+  }
   const quote = formatSingleConsultFeeDm(input.doctorSettings, input.language);
   if (quote && !input.wantsToBook) {
     return applyFeeQuoteOnly(input, quote);

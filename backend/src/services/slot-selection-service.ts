@@ -7,7 +7,6 @@
 
 import { getSupabaseAdminClient } from '../config/database';
 import { env } from '../config/env';
-import { shouldSkipAutomatedMetaSend } from './automated-messaging-opt-out';
 import {
   findConversationById,
   getConversationLanguage,
@@ -15,13 +14,9 @@ import {
   updateConversationState,
 } from './conversation-service';
 import {
-  buildAppointmentRescheduledConfirmDm,
   buildDuplicateBookingOnDateMessage,
-  buildSlotSelectedFollowUpDm,
 } from '../utils/dm-copy';
 import { getConnectionStatus } from './instagram-connect-service';
-import { getInstagramAccessTokenForDoctor } from './instagram-connect-service';
-import { sendInstagramMessage } from './instagram-service';
 import { getDoctorSettings } from './doctor-settings-service';
 import type { DoctorSettingsRow } from '../types/doctor-settings';
 import {
@@ -581,35 +576,6 @@ export async function processSlotSelection(
   await updateConversationState(conversationId, newState, correlationId);
 
   const redirectUrl = await getRedirectUrlForDoctor(doctorId);
-  const bookingLink = buildBookingPageUrl(conversationId, doctorId);
-  const language = await getConversationLanguage(conversationId, correlationId);
-  const message = buildSlotSelectedFollowUpDm({
-    language,
-    dateDisplay: dateStr,
-    bookingLink,
-  });
-
-  const recipientId = conversation.platform_conversation_id;
-  if (!recipientId || conversation.platform !== 'instagram') {
-    return { success: true, redirectUrl };
-  }
-
-  const accessToken = await getInstagramAccessTokenForDoctor(doctorId, correlationId);
-  if (accessToken) {
-    try {
-      const optOut = await shouldSkipAutomatedMetaSend({
-        conversationId,
-        correlationId,
-        ifMissing: 'skip',
-      });
-      if (!optOut.skip) {
-        await sendInstagramMessage(recipientId, message, correlationId, accessToken);
-      }
-    } catch {
-      // Fail-open: selection saved, state updated; user can still confirm in chat
-    }
-  }
-
   return { success: true, redirectUrl };
 }
 
@@ -971,39 +937,7 @@ export async function processRescheduleSlotSelection(
     correlationId
   );
 
-  const doctorSettings = await getDoctorSettings(doctorId);
-  const timezone = doctorSettings?.timezone ?? 'Asia/Kolkata';
-  const dateStr = formatSlotForDisplay(slotStart, timezone);
-
   const redirectUrl = await getRedirectUrlForDoctor(doctorId);
-
-  const recipientId = conversation.platform_conversation_id;
-  if (recipientId && conversation.platform === 'instagram') {
-    const accessToken = await getInstagramAccessTokenForDoctor(doctorId, correlationId);
-    if (accessToken) {
-      try {
-        const optOut = await shouldSkipAutomatedMetaSend({
-          conversationId,
-          correlationId,
-          ifMissing: 'skip',
-        });
-        if (!optOut.skip) {
-          const language = await getConversationLanguage(conversationId, correlationId);
-          await sendInstagramMessage(
-            recipientId,
-            buildAppointmentRescheduledConfirmDm({ language, dateDisplay: dateStr }),
-            correlationId,
-            accessToken
-          );
-        }
-      } catch (err) {
-        logger.warn(
-          { correlationId, appointmentId, error: err instanceof Error ? err.message : String(err) },
-          'Reschedule confirmation DM failed (non-blocking)'
-        );
-      }
-    }
-  }
 
   const oldIso =
     typeof appointment.appointment_date === 'string'

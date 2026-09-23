@@ -42,6 +42,14 @@ jest.mock('../../../src/services/prescription-pdf-cache', () => ({
 }));
 jest.mock('../../../src/services/conversation-service', () => ({
   getConversationLanguage: jest.fn().mockResolvedValue('en' as never),
+  readAutomatedMessagingOptedOutAt: jest.fn().mockResolvedValue({
+    ok: true,
+    optedOutAt: null,
+  } as never),
+  readLatestPatientMessageAt: jest.fn().mockResolvedValue({
+    ok: true,
+    createdAt: new Date().toISOString(),
+  } as never),
 }));
 
 const mockedDb = database as jest.Mocked<typeof database>;
@@ -91,7 +99,7 @@ describe('Notification Service (e-task-5)', () => {
   describe('sendPaymentConfirmationToPatient', () => {
     it('sends DM when appointment has patient_id and patient is on Instagram', async () => {
       const mockSupabase = createMockSupabase(
-        { data: { id: appointmentId, patient_id: patientId, doctor_id: doctorId }, error: null },
+        { data: { id: appointmentId, patient_id: patientId, doctor_id: doctorId, conversation_id: 'conv-1' }, error: null },
         {
           data: {
             id: patientId,
@@ -110,25 +118,12 @@ describe('Notification Service (e-task-5)', () => {
       );
 
       expect(result).toBe(true);
-      expect(mockedInstagram.sendInstagramMessage).toHaveBeenCalledWith(
-        'ig-psid-123',
-        expect.stringContaining('Payment received'),
-        correlationId,
-        undefined
-      );
-      expect(auditLogger.logAuditEvent).toHaveBeenCalledWith(
-        expect.objectContaining({
-          action: 'notification_sent',
-          resourceType: 'appointment',
-          resourceId: appointmentId,
-          metadata: { notification_type: 'payment_confirmation_dm', recipient_type: 'patient' },
-        })
-      );
+      expect(mockedInstagram.sendInstagramMessage).not.toHaveBeenCalled();
     });
 
     it('does not put an MRN in the Instagram body (mca-12)', async () => {
       const mockSupabase = createMockSupabase(
-        { data: { id: appointmentId, patient_id: patientId, doctor_id: doctorId }, error: null },
+        { data: { id: appointmentId, patient_id: patientId, doctor_id: doctorId, conversation_id: 'conv-1' }, error: null },
         {
           data: {
             id: patientId,
@@ -147,10 +142,7 @@ describe('Notification Service (e-task-5)', () => {
         'CLR-00123'
       );
 
-      const body = jest.mocked(mockedInstagram.sendInstagramMessage).mock.calls[0]?.[1];
-      expect(body).toEqual(expect.stringContaining('Payment received'));
-      expect(body).not.toMatch(/CLR-00123/);
-      expect(body).not.toMatch(/Patient ID/i);
+      expect(mockedInstagram.sendInstagramMessage).not.toHaveBeenCalled();
     });
 
     it('returns true and skips DM when appointment has no patient_id', async () => {
@@ -170,7 +162,7 @@ describe('Notification Service (e-task-5)', () => {
       expect(mockedInstagram.sendInstagramMessage).not.toHaveBeenCalled();
     });
 
-    it('returns false when admin client is null', async () => {
+    it('returns true when admin client is null because Meta is not used', async () => {
       mockedDb.getSupabaseAdminClient.mockReturnValue(null as never);
 
       const result = await sendPaymentConfirmationToPatient(
@@ -179,7 +171,7 @@ describe('Notification Service (e-task-5)', () => {
         correlationId
       );
 
-      expect(result).toBe(false);
+      expect(result).toBe(true);
       expect(mockedInstagram.sendInstagramMessage).not.toHaveBeenCalled();
     });
   });

@@ -59,9 +59,9 @@ describe('staff-service-review-dm (ARM-05)', () => {
       readConversationState({ matcherProposedCatalogServiceKey: 'skin' })
     );
     expect(s).toContain('Demo Clinic');
-    expect(s).toMatch(/soon/i);
+    expect(s).toMatch(/booking page/i);
     expect(s).toMatch(/not need to pay|pay yet/i);
-    expect(s).toContain('Dermatology consult');
+    expect(s).not.toContain('Dermatology consult');
   });
 
   it('formatStaffServiceReviewStillPendingDm is a short reassurance', () => {

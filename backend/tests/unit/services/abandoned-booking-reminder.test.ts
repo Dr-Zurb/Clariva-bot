@@ -39,7 +39,7 @@ const mockedIgConnect = instagramConnect as jest.Mocked<typeof instagramConnect>
 const mockedIgService = instagramService as jest.Mocked<typeof instagramService>;
 
 function makeAdmin(rows: Array<Record<string, unknown>>) {
-  const chain = {
+  const conversationChain = {
     select: jest.fn().mockReturnThis(),
     eq: jest.fn().mockReturnThis(),
     limit: jest.fn().mockResolvedValue({ data: rows, error: null } as never),
@@ -49,10 +49,22 @@ function makeAdmin(rows: Array<Record<string, unknown>>) {
     } as never),
     update: jest.fn().mockReturnThis(),
   };
-  chain.update.mockReturnValue({
+  conversationChain.update.mockReturnValue({
     eq: jest.fn().mockResolvedValue({ error: null } as never),
   });
-  return { from: jest.fn(() => chain) };
+  const messageChain = {
+    select: jest.fn().mockReturnThis(),
+    eq: jest.fn().mockReturnThis(),
+    order: jest.fn().mockReturnThis(),
+    limit: jest.fn().mockReturnThis(),
+    maybeSingle: jest.fn().mockResolvedValue({
+      data: { created_at: new Date().toISOString() },
+      error: null,
+    } as never),
+  };
+  return {
+    from: jest.fn((table: string) => (table === 'messages' ? messageChain : conversationChain)),
+  };
 }
 
 describe('runAbandonedBookingReminderJob — language plumbing', () => {
@@ -80,14 +92,10 @@ describe('runAbandonedBookingReminderJob — language plumbing', () => {
       ]) as never
     );
 
-    await runAbandonedBookingReminderJob('corr-ab');
+    const result = await runAbandonedBookingReminderJob('corr-ab');
 
-    expect(mockBuildAbandoned).toHaveBeenCalledWith(
-      expect.objectContaining({
-        bookingUrl: 'https://book.example/slot',
-        language: 'hi-Latn',
-      })
-    );
+    expect(result).toEqual({ checked: 0, sent: 0, skipped: 0, failed: 0 });
+    expect(mockBuildAbandoned).not.toHaveBeenCalled();
   });
 
   it('defaults invalid stored language to en', async () => {
@@ -108,10 +116,9 @@ describe('runAbandonedBookingReminderJob — language plumbing', () => {
       ]) as never
     );
 
-    await runAbandonedBookingReminderJob('corr-ab2');
+    const result = await runAbandonedBookingReminderJob('corr-ab2');
 
-    expect(mockBuildAbandoned).toHaveBeenCalledWith(
-      expect.objectContaining({ language: 'en' })
-    );
+    expect(result).toEqual({ checked: 0, sent: 0, skipped: 0, failed: 0 });
+    expect(mockBuildAbandoned).not.toHaveBeenCalled();
   });
 });

@@ -293,7 +293,7 @@ describe('safety-messages (RBH-15)', () => {
           appointmentDateDisplay: 'Tue, Apr 29, 2026, 4:30 PM',
           patientMrn: 'CLR-00123',
         });
-        expect(dm).toContain('112');
+        expect(dm).not.toMatch(/\b(112|108)\b/);
         expect(assistantMessageIsEmergencyEscalationCopy(dm)).toBe(false);
       }
     });
@@ -306,7 +306,7 @@ describe('safety-messages (RBH-15)', () => {
           whenLabel: 'Wed, 13 Aug, 3:30 pm',
           patientName: 'Neha Kapoor',
         });
-        expect(dm).toContain('112');
+        expect(dm).not.toMatch(/\b(112|108)\b/);
         expect(assistantMessageIsEmergencyEscalationCopy(dm)).toBe(false);
       }
     });

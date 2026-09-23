@@ -36,12 +36,6 @@ import {
   type ConversationLanguage,
   type StaticMessageLocale,
 } from './conversation-language';
-import {
-  BOOKING_SAFETY_NET_LINE_EN,
-  BOOKING_SAFETY_NET_LINE_HI,
-  BOOKING_SAFETY_NET_LINE_HI_LATN,
-  BOOKING_SAFETY_NET_LINE_PA_LATN,
-} from './safety-messages';
 
 /**
  * LANG6-D8: deliberate English in every static locale, with a reason.
@@ -814,7 +808,6 @@ type PaymentConfirmationCopy = {
   readonly patientIdLine: (mrn: string) => string;
   readonly saveMrnHelper: string;
   readonly voiceDisambiguation: string;
-  readonly safetyNet: string;
   readonly closing: string;
 };
 
@@ -827,7 +820,6 @@ const PAYMENT_CONFIRMATION_COPY: Readonly<Record<StaticMessageLocale, PaymentCon
     saveMrnHelper: '_Save this for future bookings._',
     voiceDisambiguation:
       "Note: voice consults happen via a web link from your browser — audio only, no phone call. We'll text + IG-DM the join link 5 min before.",
-    safetyNet: BOOKING_SAFETY_NET_LINE_EN,
     closing:
       "We'll send a reminder before your visit. Reply here anytime if you need to reschedule or have questions.",
   },
@@ -839,7 +831,6 @@ const PAYMENT_CONFIRMATION_COPY: Readonly<Record<StaticMessageLocale, PaymentCon
     saveMrnHelper: '_Future bookings ke liye save kar lein._',
     voiceDisambiguation:
       'Note: voice consult aapke browser se web link par hote hain — sirf audio, phone call nahi. 5 min pehle hum join link text + IG-DM karenge.',
-    safetyNet: BOOKING_SAFETY_NET_LINE_HI_LATN,
     closing:
       'Visit se pehle hum reminder bhejenge. Reschedule ya koi sawaal ho to yahan reply karein.',
   },
@@ -851,7 +842,6 @@ const PAYMENT_CONFIRMATION_COPY: Readonly<Record<StaticMessageLocale, PaymentCon
     saveMrnHelper: '_Future bookings layi save kar lo._',
     voiceDisambiguation:
       'Note: voice consult tuhade browser ton web link te hunde ne — sirf audio, phone call nahi. 5 min pehlan asi join link text + IG-DM karange.',
-    safetyNet: BOOKING_SAFETY_NET_LINE_PA_LATN,
     closing:
       'Visit ton pehlan asi reminder bhejange. Reschedule ya koi sawaal hove ta ithe reply karo.',
   },
@@ -892,17 +882,11 @@ export function formatDateWithMiddot(input: string): string {
  *   - Paragraph 3 (optional): `🆔 **Patient ID:** {mrn}` + italic "save this"
  *     helper. Omitted when no MRN is available (patient creation race, legacy
  *     flow).
- *   - Safety-net paragraph: fixed clinical safety-netting line (112/108 +
- *     nearest hospital) so the booking never reads as implicit reassurance to
- *     wait — a booked patient always keeps the escalation instruction in hand.
- *     The line is a shared constant from `safety-messages.ts`; the emergency
- *     escalation-copy detector strips it before matching, so it must never be
- *     inlined or reworded here.
  *   - Closing paragraph: reminder-before-visit promise + invitation to reply
  *     in the thread. This is the only place in the flow where we proactively
  *     tell the patient they can keep talking to us; the payment DM frequently
- *     arrives hours after the booking flow ends. Stays last so the DM ends on
- *     the warm note, not the escalation line.
+ *     arrives hours after the booking flow ends. Emergency wording stays off
+ *     this Meta message; the booking page carries the 112/108 line.
  *
  * No emojis outside of `✅` and `🆔`. No booking / cancel links in the body.
  * No amount/currency (avoid source-of-truth drift with the provider UI).
@@ -934,14 +918,14 @@ export function buildPaymentConfirmationMessage(input: PaymentConfirmationInput)
     parts.push('', copy.voiceDisambiguation);
   }
 
-  parts.push('', copy.safetyNet, '', copy.closing);
+  parts.push('', copy.closing);
 
   return parts.join('\n');
 }
 
 /**
  * Desk phone pre-booking confirmation (RQ7). Same confirmed-time / MRN /
- * safety-net / closing as the payment DM, without "Payment received" —
+ * closing as the payment DM, without "Payment received" —
  * the front desk booked them at no charge.
  */
 export function buildDeskBookingConfirmationMessage(input: {
@@ -958,7 +942,7 @@ export function buildDeskBookingConfirmationMessage(input: {
     parts.push('', copy.patientIdLine(mrn), copy.saveMrnHelper);
   }
 
-  parts.push('', copy.safetyNet, '', copy.closing);
+  parts.push('', copy.closing);
   return parts.join('\n');
 }
 
@@ -1346,10 +1330,7 @@ export function buildConsultationCheckinDm(input: ConsultationCheckinDmInput): s
 
 /**
  * T−24h soft reminder — no join link (link comes at T−30 / T−15 / T−5).
- * Ends with the booking safety-net line (shared constant from
- * `safety-messages.ts`): 24h out is where symptom deterioration matters most,
- * so the escalation instruction rides the reminder the patient will actually
- * read that day.
+ * No 112/108 line: that sentence lives on the booking page, not in Meta chat.
  */
 export interface AppointmentReminder24hDmInput {
   readonly language: ConversationLanguage;
@@ -1379,8 +1360,6 @@ export function buildAppointmentReminder24hDm(input: AppointmentReminder24hDmInp
       '',
       "We'll send a waiting-room link closer to your appointment.",
       'Reply in this thread if you need to reschedule.',
-      '',
-      BOOKING_SAFETY_NET_LINE_EN,
     ],
     hi: [
       timeLeft
@@ -1389,8 +1368,6 @@ export function buildAppointmentReminder24hDm(input: AppointmentReminder24hDmInp
       '',
       'अपॉइंटमेंट के करीब हम वेटिंग-रूम लिंक भेजेंगे।',
       'रिशेड्यूल के लिए इस थ्रेड में जवाब दें।',
-      '',
-      BOOKING_SAFETY_NET_LINE_HI,
     ],
     pa: [
       timeLeft
@@ -1399,8 +1376,6 @@ export function buildAppointmentReminder24hDm(input: AppointmentReminder24hDmInp
       '',
       'Appointment de kareeb asi waiting-room link bhejange.',
       'Reschedule laee is thread vich reply karo.',
-      '',
-      BOOKING_SAFETY_NET_LINE_PA_LATN,
     ],
   };
 
@@ -3291,12 +3266,12 @@ export function buildReceptionistPauseDefaultMessage(input: ConsentLanguageOnlyI
 // ---------------------------------------------------------------------------
 
 export const AUTOMATED_MESSAGING_STOP_ACK_EN =
-  "I'll stop sending automated messages here. Your doctor can still reply. Send START if you want them again.";
+  "I'll stop sending automated messages here. Send START if you want them again.";
 
 const AUTOMATED_MESSAGING_STOP_ACK_COPY: Readonly<Record<StaticMessageLocale, string>> = {
   en: AUTOMATED_MESSAGING_STOP_ACK_EN,
-  hi: 'Main yahan automated messages bhejna band karunga. Doctor ab bhi reply kar sakte hain. Dobara chahiye to START bhejein.',
-  pa: 'Main ithe automated messages bhejna band karunga. Doctor hun vi reply kar sakde han. Dobara chahide hon ta START bhejo.',
+  hi: 'Main yahan automated messages bhejna band karunga. Dobara chahiye to START bhejein.',
+  pa: 'Main ithe automated messages bhejna band karunga. Dobara chahide hon ta START bhejo.',
 };
 
 export const AUTOMATED_MESSAGING_START_ACK_EN = 'Automated messages are on again. How can I help?';
@@ -3604,14 +3579,13 @@ const RETURNING_FOLLOW_UP_CONFIRM_COPY: Readonly<
   Record<StaticMessageLocale, { body: (label: string) => string }>
 > = {
   en: {
-    body: (label) => `Is this a **follow-up** for **${label}**? Reply **Yes** or **No**.`,
+    body: (_label) => `Say book if you want the booking page.`,
   },
   hi: {
-    body: (label) =>
-      `Kya yeh **${label}** ke liye **follow-up** hai? **Yes** ya **No** reply karein.`,
+    body: (_label) => `Booking page chahiye ho to book likhein.`,
   },
   pa: {
-    body: (label) => `Ki eh **${label}** layi **follow-up** hai? **Yes** ya **No** reply karo.`,
+    body: (_label) => `Booking page chahidi hove ta book likho.`,
   },
 };
 

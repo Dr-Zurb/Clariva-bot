@@ -12,5 +12,6 @@ describe('buildDeskBookingConfirmationMessage', () => {
     expect(out).toContain('Tue, Apr 29 · 4:30 PM');
     expect(out).toContain('CLR-00123');
     expect(out.toLowerCase()).not.toContain('payment');
+    expect(out).not.toMatch(/\b(112|108)\b/);
   });
 });

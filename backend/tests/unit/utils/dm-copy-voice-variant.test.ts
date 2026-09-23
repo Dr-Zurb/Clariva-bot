@@ -133,8 +133,6 @@ describe('buildPaymentConfirmationMessage — voice modality (Task 26 / Principl
 
       Note: voice consults happen via a web link from your browser — audio only, no phone call. We'll text + IG-DM the join link 5 min before.
 
-      If your symptoms get worse or feel like an emergency before your visit, don't wait — call **112** or **108**, or go to the nearest hospital right away.
-
       We'll send a reminder before your visit. Reply here anytime if you need to reschedule or have questions."
     `);
   });
@@ -155,7 +153,7 @@ describe('buildPaymentConfirmationMessage — voice modality (Task 26 / Principl
     expect(out).toContain('no phone call');
   });
 
-  it('inserts the disambiguation paragraph BEFORE the safety-net + closing lines (no MRN)', () => {
+  it('inserts the disambiguation paragraph BEFORE the closing line (no MRN)', () => {
     const out = buildPaymentConfirmationMessage({ language: 'en',
       appointmentDateDisplay: 'Tue, Apr 29, 2026, 4:30 PM',
       modality: 'voice',
@@ -166,18 +164,17 @@ describe('buildPaymentConfirmationMessage — voice modality (Task 26 / Principl
     //   [0] ✅ Payment received.
     //   [1] Your appointment is confirmed …
     //   [2] Note: voice consults … (disambiguation)
-    //   [3] If your symptoms get worse … (safety-net)
-    //   [4] We'll send a reminder … (closing)
-    expect(paragraphs).toHaveLength(5);
+    //   [3] We'll send a reminder … (closing)
+    expect(paragraphs).toHaveLength(4);
     expect(paragraphs[2]).toContain('audio only');
     expect(paragraphs[2]).toContain('no phone call');
-    expect(paragraphs[3]).toContain('call **112** or **108**');
-    expect(paragraphs[4]).toBe(
+    expect(paragraphs[3]).toBe(
       "We'll send a reminder before your visit. Reply here anytime if you need to reschedule or have questions.",
     );
+    expect(out).not.toMatch(/\b(112|108)\b/);
   });
 
-  it('inserts the disambiguation paragraph BETWEEN the MRN block and the safety-net + closing lines', () => {
+  it('inserts the disambiguation paragraph BETWEEN the MRN block and the closing line', () => {
     const out = buildPaymentConfirmationMessage({ language: 'en',
       appointmentDateDisplay: 'Tue, Apr 29, 2026, 4:30 PM',
       patientMrn: 'CLR-00123',
@@ -190,15 +187,14 @@ describe('buildPaymentConfirmationMessage — voice modality (Task 26 / Principl
     //   [1] Your appointment is confirmed …
     //   [2] 🆔 Patient ID + _Save …_  (multi-line)
     //   [3] Note: voice consults …    (disambiguation)
-    //   [4] If your symptoms get worse … (safety-net)
-    //   [5] We'll send a reminder …   (closing)
-    expect(paragraphs).toHaveLength(6);
+    //   [4] We'll send a reminder …   (closing)
+    expect(paragraphs).toHaveLength(5);
     expect(paragraphs[2]).toContain('🆔 **Patient ID:** CLR-00123');
     expect(paragraphs[3]).toContain('audio only');
-    expect(paragraphs[4]).toContain('call **112** or **108**');
-    expect(paragraphs[5]).toBe(
+    expect(paragraphs[4]).toBe(
       "We'll send a reminder before your visit. Reply here anytime if you need to reschedule or have questions.",
     );
+    expect(out).not.toMatch(/\b(112|108)\b/);
   });
 });
 

@@ -26,6 +26,9 @@ import {
 
 const DAYS_AHEAD = 14;
 
+const BOOKING_PAGE_EMERGENCY_NOTE =
+  "If your symptoms get worse or feel like an emergency before your visit, don't wait — call 112 or 108, or go to the nearest hospital right away.";
+
 const MODALITY_LABEL: Record<ConsultationModalityApi, string> = {
   text: "Text chat",
   voice: "Voice",
@@ -420,6 +423,7 @@ function BookPageContent() {
             . Wait times are approximate (around order of arrival, not a fixed
             clock time).
           </p>
+          <p className="mt-4 text-sm text-gray-700">{BOOKING_PAGE_EMERGENCY_NOTE}</p>
           <button
             type="button"
             className="mt-6 w-full rounded-lg bg-blue-600 px-4 py-3 text-base font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
@@ -448,6 +452,9 @@ function BookPageContent() {
             : isQueueBook
               ? "Choose a day to join the queue. You’ll get a token number — wait times are approximate."
               : "Select a date and time for your appointment."}
+        </p>
+        <p className="mt-4 rounded-md border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700">
+          {BOOKING_PAGE_EMERGENCY_NOTE}
         </p>
 
         {serviceCatalog && mode === "book" && serviceCatalog.services.length > 0 && (
@@ -713,7 +720,6 @@ function BookPageContent() {
             </div>
             <p className="text-xs text-gray-500">
               If you pay online, the money goes to this clinic — not Halo Aid.
-              You can cancel or reschedule from the confirmation message.
               Doctor cancellations, emergencies, and platform failures are
               refunded in full. A missed visit is not refunded.
             </p>

@@ -27,21 +27,21 @@ type BookingLinkCopy = {
 const BOOKING_LINK_COPY: Readonly<Record<StaticMessageLocale, BookingLinkCopy>> = {
   en: {
     queue: (slotLink) =>
-      `Join the queue for your visit here: ${slotLink}\n\nChoose a day, then confirm - you'll get a token number. Wait times are approximate.`,
+      `Open this page to join the queue: ${slotLink}\n\nFinish on this page.`,
     slot: (slotLink) =>
-      `Open this link to get an appointment: ${slotLink}\n\nYou'll be redirected back to this chat when done.`,
+      `Open this link to get an appointment: ${slotLink}\n\nFinish on this page.`,
   },
   hi: {
     queue: (slotLink) =>
-      `Apni visit ke liye yahan queue join karein: ${slotLink}\n\nEk din choose karein, phir confirm karein - aapko token number milega. Wait time approximate hai.`,
+      `Queue join karne ke liye yeh page kholein: ${slotLink}\n\nIs page par finish karein.`,
     slot: (slotLink) =>
-      `Appointment lene ke liye yeh link kholein: ${slotLink}\n\nDone hone par aap wapas is chat par aa jayenge.`,
+      `Appointment lene ke liye yeh link kholein: ${slotLink}\n\nIs page par finish karein.`,
   },
   pa: {
     queue: (slotLink) =>
-      `Apni visit layi ithe queue join karo: ${slotLink}\n\nIk din choose karo, phir confirm karo - tenu token number milega. Wait time approximate hai.`,
+      `Queue join karan layi eh page kholo: ${slotLink}\n\nIs page te finish karo.`,
     slot: (slotLink) =>
-      `Appointment lain layi eh link kholo: ${slotLink}\n\nDone hon to tusi wapas is chat te aa jaoge.`,
+      `Appointment lain layi eh link kholo: ${slotLink}\n\nIs page te finish karo.`,
   },
 };
 
@@ -68,21 +68,21 @@ const CONTINUE_ON_PAGE_COPY: Readonly<
 > = {
   en: {
     cancel: (url) =>
-      `Continue cancellation on this page:\n${url}\n\nYou'll be redirected back to this chat when done.`,
+      `Continue cancellation on this page:\n${url}\n\nFinish on this page.`,
     reschedule: (url) =>
-      `Continue rescheduling on this page:\n${url}\n\nYou'll be redirected back to this chat when done.`,
+      `Continue rescheduling on this page:\n${url}\n\nFinish on this page.`,
   },
   hi: {
     cancel: (url) =>
-      `Cancellation is page par continue karein:\n${url}\n\nDone hone par aap wapas is chat par aa jayenge.`,
+      `Cancellation is page par continue karein:\n${url}\n\nIs page par finish karein.`,
     reschedule: (url) =>
-      `Rescheduling is page par continue karein:\n${url}\n\nDone hone par aap wapas is chat par aa jayenge.`,
+      `Rescheduling is page par continue karein:\n${url}\n\nIs page par finish karein.`,
   },
   pa: {
     cancel: (url) =>
-      `Cancellation is page te continue karo:\n${url}\n\nDone hon to tusi wapas is chat te aa jaoge.`,
+      `Cancellation is page te continue karo:\n${url}\n\nIs page te finish karo.`,
     reschedule: (url) =>
-      `Rescheduling is page te continue karo:\n${url}\n\nDone hon to tusi wapas is chat te aa jaoge.`,
+      `Rescheduling is page te continue karo:\n${url}\n\nIs page te finish karo.`,
   },
 };
 
@@ -94,14 +94,30 @@ export function formatRescheduleOnPageDm(input: BookingLinkDmInput): string {
   return CONTINUE_ON_PAGE_COPY[toStaticLocale(input.language)].reschedule(input.slotLink);
 }
 
+/**
+ * Status handoff. The page lists visits. The chat does not name a person or a time.
+ */
+export function formatUpcomingVisitsOnPageDm(input: {
+  readonly language: ConversationLanguage;
+  readonly slotLink: string;
+}): string {
+  const url = input.slotLink;
+  const byLocale: Record<StaticMessageLocale, string> = {
+    en: `Upcoming visits are on this page:\n${url}\n\nFinish on this page.`,
+    hi: `Upcoming visits is page par hain:\n${url}\n\nIs page par finish karein.`,
+    pa: `Upcoming visits is page te han:\n${url}\n\nIs page te finish karo.`,
+  };
+  return byLocale[toStaticLocale(input.language)];
+}
+
 /** Same `/book` URL, no “get an appointment” — fee / hours-missing / address-missing. */
 export function formatClinicPageLinkDm(input: BookingLinkDmInput): string {
   const locale = toStaticLocale(input.language);
   const url = input.slotLink;
   const byLocale: Record<StaticMessageLocale, string> = {
-    en: `${url}\n\nYou'll be redirected back to this chat when done.`,
-    hi: `${url}\n\nDone hone par aap wapas is chat par aa jayenge.`,
-    pa: `${url}\n\nDone hon to tusi wapas is chat te aa jaoge.`,
+    en: `${url}\n\nFinish on this page.`,
+    hi: `${url}\n\nIs page par finish karein.`,
+    pa: `${url}\n\nIs page te finish karo.`,
   };
   return byLocale[locale];
 }

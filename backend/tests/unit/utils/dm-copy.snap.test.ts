@@ -63,7 +63,6 @@ import {
   resolveComplaintClarificationMessage,
 } from '../../../src/utils/complaint-clarification';
 import { formatClinicalReasonAskMoreAfterDeflection } from '../../../src/utils/reason-first-triage';
-import { BOOKING_SAFETY_NET_LINE_EN } from '../../../src/utils/safety-messages';
 import type { CollectedPatientData } from '../../../src/utils/validation';
 
 interface SnapCase {
@@ -1155,14 +1154,14 @@ describe('buildPaymentConfirmationMessage invariants', () => {
     );
   });
 
-  it('carries the safety-net paragraph exactly once, immediately before the closing', () => {
+  it('does not mention emergency numbers', () => {
     const out = buildPaymentConfirmationMessage({ language: 'en',
       appointmentDateDisplay: 'Tue, Apr 29, 2026, 4:30 PM',
       patientMrn: 'CLR-00123',
     });
-    const paragraphs = out.split('\n\n');
-    expect(paragraphs[paragraphs.length - 2]).toBe(BOOKING_SAFETY_NET_LINE_EN);
-    expect(out.split(BOOKING_SAFETY_NET_LINE_EN).length - 1).toBe(1);
+    expect(out).not.toMatch(/\b(112|108)\b/);
+    expect(out.toLowerCase()).not.toContain('emergency');
+    expect(out.toLowerCase()).not.toContain('hospital');
   });
 
   it('does not include ✅ or 🆔 outside the designated paragraphs', () => {

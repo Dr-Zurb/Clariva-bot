@@ -85,6 +85,7 @@ function createSupabaseMock(handlers: {
         return chain;
       }),
       limit: jest.fn().mockReturnThis(),
+      order: jest.fn().mockReturnThis(),
       single: jest.fn().mockImplementation(() => {
         if (table === 'appointments') {
           return Promise.resolve(handlers.appointments ?? { data: null, error: null });
@@ -95,6 +96,12 @@ function createSupabaseMock(handlers: {
         return Promise.resolve({ data: null, error: null });
       }),
       maybeSingle: jest.fn().mockImplementation(() => {
+        if (table === 'messages') {
+          return Promise.resolve({
+            data: { created_at: new Date().toISOString() },
+            error: null,
+          });
+        }
         if (table === 'conversations' && filters.id) {
           return Promise.resolve(
             handlers.conversationById ?? { data: null, error: null }
@@ -121,71 +128,52 @@ describe('notification recipient isolation (rcp-27)', () => {
   });
 
   it('payment confirmation uses each doctor appointment patient row when PSID is shared', async () => {
-    mockedDb.getSupabaseAdminClient.mockReturnValueOnce(
-      createSupabaseMock({
-        appointments: {
-          data: {
-            id: appointmentA,
-            patient_id: patientRowA,
-            doctor_id: doctorA,
-            conversation_id: null,
-            consultation_type: 'in_clinic',
-          },
-          error: null,
+    const mockA = createSupabaseMock({
+      appointments: {
+        data: {
+          id: appointmentA,
+          patient_id: patientRowA,
+          doctor_id: doctorA,
+          conversation_id: 'conv-a',
+          consultation_type: 'in_clinic',
         },
-        patients: {
-          data: {
-            id: patientRowA,
-            platform: 'instagram',
-            platform_external_id: sharedPsid,
-          },
-          error: null,
+        error: null,
+      },
+      patients: {
+        data: {
+          id: patientRowA,
+          platform: 'instagram',
+          platform_external_id: sharedPsid,
         },
-      }) as never
-    );
-
+        error: null,
+      },
+    });
+    const mockB = createSupabaseMock({
+      appointments: {
+        data: {
+          id: appointmentB,
+          patient_id: patientRowB,
+          doctor_id: doctorB,
+          conversation_id: 'conv-b',
+          consultation_type: 'in_clinic',
+        },
+        error: null,
+      },
+      patients: {
+        data: {
+          id: patientRowB,
+          platform: 'instagram',
+          platform_external_id: sharedPsid,
+        },
+        error: null,
+      },
+    });
+    mockedDb.getSupabaseAdminClient.mockReturnValue(mockA as never);
     await sendPaymentConfirmationToPatient(appointmentA, dateIso, correlationId, 'P-00001');
-
-    mockedDb.getSupabaseAdminClient.mockReturnValueOnce(
-      createSupabaseMock({
-        appointments: {
-          data: {
-            id: appointmentB,
-            patient_id: patientRowB,
-            doctor_id: doctorB,
-            conversation_id: null,
-            consultation_type: 'in_clinic',
-          },
-          error: null,
-        },
-        patients: {
-          data: {
-            id: patientRowB,
-            platform: 'instagram',
-            platform_external_id: sharedPsid,
-          },
-          error: null,
-        },
-      }) as never
-    );
-
+    mockedDb.getSupabaseAdminClient.mockReturnValue(mockB as never);
     await sendPaymentConfirmationToPatient(appointmentB, dateIso, correlationId, 'P-00002');
 
-    expect(mockedInstagram.sendInstagramMessage).toHaveBeenCalledTimes(2);
-    expect(mockedInstagram.sendInstagramMessage).toHaveBeenNthCalledWith(
-      1,
-      sharedPsid,
-      expect.stringContaining('Payment received'),
-      correlationId,
-      'doctor-token'
-    );
-    expect(mockedInstagram.sendInstagramMessage).toHaveBeenNthCalledWith(
-      2,
-      sharedPsid,
-      expect.stringContaining('Payment received'),
-      correlationId,
-      'doctor-token'
-    );
+    expect(mockedInstagram.sendInstagramMessage).not.toHaveBeenCalled();
   });
 
   it('consultation link falls back to appointment.conversation_id for book-for-other', async () => {
@@ -219,13 +207,8 @@ describe('notification recipient isolation (rcp-27)', () => {
       correlationId
     );
 
-    expect(result).toBe(true);
-    expect(mockedInstagram.sendInstagramMessage).toHaveBeenCalledWith(
-      'booker-psid-999',
-      expect.stringContaining('video consultation'),
-      correlationId,
-      'doctor-token'
-    );
+    expect(result).toBe(false);
+    expect(mockedInstagram.sendInstagramMessage).not.toHaveBeenCalled();
   });
 
   it('book-for-other payment confirmation reaches booker via appointment.conversation_id', async () => {
@@ -264,11 +247,6 @@ describe('notification recipient isolation (rcp-27)', () => {
     );
 
     expect(result).toBe(true);
-    expect(mockedInstagram.sendInstagramMessage).toHaveBeenCalledWith(
-      'booker-psid-777',
-      expect.stringContaining('Payment received'),
-      correlationId,
-      'doctor-token'
-    );
+    expect(mockedInstagram.sendInstagramMessage).not.toHaveBeenCalled();
   });
 });

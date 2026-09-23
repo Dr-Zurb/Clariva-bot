@@ -10,8 +10,34 @@ import { logger } from '../config/logger';
 import {
   findConversationByPlatformId,
   readAutomatedMessagingOptedOutAt,
+  readLatestPatientMessageAt,
   setAutomatedMessagingOptedOutAt,
 } from './conversation-service';
+
+/** Meta standard messaging window (Developer Policies §5). */
+export const META_STANDARD_MESSAGING_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Stop a little early so a slow send does not cross Meta's 24-hour line.
+ * Automated pushes use this. A reply to a message that just arrived does not.
+ */
+export const META_MESSAGING_WINDOW_SAFETY_MS = 15 * 60 * 1000;
+
+/**
+ * True when the person's last message is still inside the standard window.
+ * Missing or unparseable timestamps are closed (do not send).
+ */
+export function isInsideMetaStandardMessagingWindow(
+  lastPatientMessageAtIso: string | null | undefined,
+  nowMs: number = Date.now()
+): boolean {
+  if (!lastPatientMessageAtIso) return false;
+  const at = Date.parse(lastPatientMessageAtIso);
+  if (!Number.isFinite(at)) return false;
+  const ageMs = nowMs - at;
+  if (ageMs < 0) return true;
+  return ageMs <= META_STANDARD_MESSAGING_WINDOW_MS - META_MESSAGING_WINDOW_SAFETY_MS;
+}
 
 export function isAutomatedMessagingOptedOutStamp(value: unknown): boolean {
   return typeof value === 'string' && value.trim().length > 0;
@@ -39,7 +65,12 @@ export function isStartMessagingText(text: string): boolean {
   return START_EXACT.test(trimmed) || START_PHRASE.test(trimmed);
 }
 
-export type AutomatedMetaSkipReason = 'opted_out' | 'flag_unreadable' | 'conversation_missing';
+export type AutomatedMetaSkipReason =
+  | 'opted_out'
+  | 'flag_unreadable'
+  | 'conversation_missing'
+  | 'messaging_window_closed'
+  | 'window_unreadable';
 
 export async function shouldSkipAutomatedMetaSend(params: {
   conversationId: string | null | undefined;
@@ -68,6 +99,22 @@ export async function shouldSkipAutomatedMetaSend(params: {
       'Automated Meta send skipped'
     );
     return { skip: true, reason: 'opted_out' };
+  }
+
+  const latest = await readLatestPatientMessageAt(conversationId, correlationId);
+  if (!latest.ok) {
+    logger.info(
+      { correlationId, conversationId, reason: 'window_unreadable' },
+      'Automated Meta send skipped'
+    );
+    return { skip: true, reason: 'window_unreadable' };
+  }
+  if (!isInsideMetaStandardMessagingWindow(latest.createdAt)) {
+    logger.info(
+      { correlationId, conversationId, reason: 'messaging_window_closed' },
+      'Automated Meta send skipped'
+    );
+    return { skip: true, reason: 'messaging_window_closed' };
   }
   return { skip: false };
 }

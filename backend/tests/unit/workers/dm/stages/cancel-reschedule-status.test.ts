@@ -209,7 +209,8 @@ describe('cancelRescheduleStatusStage', () => {
 
     const result = await cancelRescheduleStatusStage.handle(ctx);
     expect(result.branch).toBe('check_appointment_status');
-    expect(result.reply).toMatch(/next appointment/i);
+    expect(result.reply).toContain('Upcoming visits are on this page:');
+    expect(result.reply).not.toMatch(/Alex/);
     expect(result.nextState.step).toBe('responded');
   });
 

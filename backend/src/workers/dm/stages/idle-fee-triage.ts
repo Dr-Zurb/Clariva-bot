@@ -5,15 +5,11 @@
 
 import {
   classifierSignalsPaymentExistence,
-  resolvePostMedicalPaymentExistenceAck,
   resolveVisitReasonSnippetForTriage,
 } from '../../../services/ai-service';
-import { findPatientByIdWithAdmin } from '../../../services/patient-service';
 import { userExplicitlyWantsToBookNow } from '../../../utils/consultation-fees';
-import { composeDmReplySegments } from '../../../utils/dm-reply-composer';
 import { isPostBookingAcknowledgment } from '../../../utils/dm-appointment-status';
 import {
-  formatReasonFirstFeePatienceBridgeWhileAskMore,
   isVagueConsultationPaymentExistenceQuestion,
   recentPatientThreadHasClinicalReason,
   userWantsExplicitFullFeeList,
@@ -31,16 +27,15 @@ import {
   mergeTriage,
   type ConversationState,
 } from '../../../types/conversation';
-import type { ReturningRecencyBucket } from '../../../types/returning-patient';
 import type { DmHandlerBranch } from '../../../types/dm-instrumentation';
 import type { DmStageHandler, DmTurnContext, DmTurnResult } from '../stage-router';
-import { extractPatientFirstName, shouldUseReturningPatientMemory } from '../returning-patient';
 import {
   applyLeadPlusPageLink,
   applyReadyPatientBookingPath,
   applyReceptionistFeeReply,
 } from '../booking-entry-ready-path';
 import { isIdleFeeTriageTurn } from './idle-fee-triage-predicate';
+import { lastAssistantDmContent } from '../../../utils/reason-first-triage';
 import { buildReceptionistGreetingMessage } from '../../../utils/instagram-greeting-copy';
 import { getConnectedInstagramDisplayName } from '../../../services/instagram-connect-service';
 import { isTeleconsultCatalogAuthoritative } from '../../../utils/consultation-fees';
@@ -92,6 +87,13 @@ function pricesOnBookingPageReply(
     patient: null,
     language: ctx.turnLanguage,
     wantsToBook,
+    userText: ctx.text,
+    lastBotMessage: lastAssistantDmContent(
+      ctx.recentMessages.map((m) => ({
+        sender_type: m.sender_type,
+        content: m.content ?? '',
+      }))
+    ),
   });
 }
 
@@ -164,20 +166,9 @@ export const idleFeeTriageStage: DmStageHandler = {
       )
     ) {
       dmRoutingBranch = 'post_medical_payment_existence_ack';
-      replyText = await resolvePostMedicalPaymentExistenceAck(
-        text,
-        correlationId,
-        ctx.turnLanguage
-      );
-      state = mergeTriage(
-        {
-          ...state,
-          lastIntent: intentResult.intent,
-          step: 'responded',
-          updatedAt: new Date().toISOString(),
-        },
-        { postMedicalConsultFeeAckSent: true }
-      );
+      const feeReply = pricesOnBookingPageReply(ctx, state, intentResult.intent);
+      replyText = feeReply.replyText;
+      state = feeReply.state;
     } else if (
       state.triage?.reasonFirstTriagePhase &&
       !inCollection &&
@@ -195,23 +186,10 @@ export const idleFeeTriageStage: DmStageHandler = {
         state = escaped.nextState;
       } else if (signalsFeePricing && !userExplicitlyWantsToBookNow(text)) {
         if (state.triage?.reasonFirstTriagePhase === 'ask_more') {
-          dmRoutingBranch = 'reason_first_triage_ask_more_payment_bridge';
-          const bridgeSnippet = (
-            await resolveVisitReasonSnippetForTriage(recentForTriage, text, correlationId)
-          ).trim();
-          replyText = formatReasonFirstFeePatienceBridgeWhileAskMore(ctx.turnLanguage, {
-            reasonSnippet: bridgeSnippet,
-            recentPostMedicalFeeAck: state.triage?.postMedicalConsultFeeAckSent === true,
-          });
-          state = mergeTriage(
-            {
-              ...state,
-              lastIntent: intentResult.intent,
-              step: 'responded',
-              updatedAt: new Date().toISOString(),
-            },
-            { reasonFirstTriagePhase: undefined }
-          );
+          dmRoutingBranch = 'fee_deterministic_idle';
+          const feeReply = pricesOnBookingPageReply(ctx, state, intentResult.intent);
+          replyText = feeReply.replyText;
+          state = feeReply.state;
         } else {
           const narrowed = await runReasonFirstFeeNarrowFromTriage(ctx, state, recentForTriage);
           dmRoutingBranch = narrowed.branch;
@@ -432,28 +410,6 @@ export const idleFeeTriageStage: DmStageHandler = {
         updatedAt: new Date().toISOString(),
       };
 
-      let welcomeBackSegment:
-        | {
-            kind: 'welcome_back';
-            language: typeof ctx.turnLanguage;
-            firstName?: string;
-            recencyBucket?: ReturningRecencyBucket;
-          }
-        | undefined;
-      if (shouldUseReturningPatientMemory(ctx.returningProfile)) {
-        let firstName: string | undefined;
-        if (ctx.returningProfile.hasName && conversation.patient_id) {
-          const patient = await findPatientByIdWithAdmin(conversation.patient_id, correlationId);
-          firstName = extractPatientFirstName(patient?.name);
-        }
-        welcomeBackSegment = {
-          kind: 'welcome_back',
-          language: ctx.turnLanguage,
-          firstName,
-          recencyBucket: ctx.returningProfile.priorVisits.recencyBucket,
-        };
-      }
-
       const accountName =
         conversation.platform === 'instagram'
           ? await getConnectedInstagramDisplayName(ctx.doctorId, correlationId)
@@ -465,13 +421,7 @@ export const idleFeeTriageStage: DmStageHandler = {
             hasAddress: Boolean(instagramAddressToShare(doctorSettings)),
             accountName,
           });
-      replyText =
-        welcomeBackSegment != null && !isThanksOnlyUserMessage(text)
-          ? composeDmReplySegments([
-              welcomeBackSegment,
-              { kind: 'markdown', content: greetingReply },
-            ])
-          : greetingReply;
+      replyText = greetingReply;
     } else if (
       isBookIntent &&
       justStartingCollection &&

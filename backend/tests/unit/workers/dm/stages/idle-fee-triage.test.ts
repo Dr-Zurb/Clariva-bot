@@ -423,9 +423,30 @@ describe('idleFeeTriageStage', () => {
     });
 
     const result = await idleFeeTriageStage.handle(ctx);
-    expect(result.reply).toBe('Consult fee is ₹500.');
+    expect(result.reply).toBe('Appointment fee is ₹500.');
     expect(result.reply).not.toContain('https://example.com/book');
     expect(result.reply).not.toMatch(/get an appointment/i);
+  });
+
+  it('ok after the fee line does not quote the fee again', async () => {
+    const ctx = minimalTurnCtx({
+      intentResult: { intent: 'ask_question', confidence: 1 },
+      signalsFeePricing: true,
+      text: 'ok',
+      recentMessages: [
+        { sender_type: 'assistant', content: 'Consult fee is ₹10.' },
+      ] as never,
+      doctorSettings: {
+        timezone: 'Asia/Kolkata',
+        catalog_mode: 'single_fee',
+        appointment_fee_minor: 1000,
+        appointment_fee_currency: 'INR',
+      } as never,
+    });
+
+    const result = await idleFeeTriageStage.handle(ctx);
+    expect(result.reply).toBe('Sure.');
+    expect(result.reply).not.toMatch(/fee/i);
   });
 
   it('consented returning greeting prepends welcome_back when flag on (rcp-21)', async () => {
@@ -464,9 +485,8 @@ describe('idleFeeTriageStage', () => {
 
     const result = await idleFeeTriageStage.handle(ctx);
     expect(result.branch).toBe('greeting_template');
-    expect(patientService.findPatientByIdWithAdmin).toHaveBeenCalledWith('patient-1', 'corr-1');
-    expect(composeDmReplySegments).toHaveBeenCalled();
-    expect(result.reply).toContain('Welcome back segment');
+    expect(patientService.findPatientByIdWithAdmin).not.toHaveBeenCalled();
+    expect(result.reply).not.toContain('Welcome back');
     expect(result.reply).toContain("I'm the receptionist");
     expect(ctx.runGenerateResponse).not.toHaveBeenCalled();
   });

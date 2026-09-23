@@ -322,20 +322,21 @@ describe('sendPostConsultChatHistoryDm — happy path', () => {
       'instagram_dm',
       'sms',
     ]);
-    expect(result.channels.every((c) => c.status === 'sent')).toBe(true);
+    expect(result.channels.find((c) => c.channel === 'sms')?.status).toBe('sent');
+    expect(result.channels.find((c) => c.channel === 'instagram_dm')).toEqual({
+      channel: 'instagram_dm',
+      status: 'skipped',
+      reason: 'channel_disabled',
+    });
 
     // Decision 1 sub-decision: NO email channel for chat-history DM.
     expect(result.channels.find((c) => c.channel === 'email')).toBeUndefined();
 
     expect(smsService.sendSms).toHaveBeenCalledTimes(1);
-    expect(instagramService.sendInstagramMessage).toHaveBeenCalledTimes(1);
+    expect(instagramService.sendInstagramMessage).not.toHaveBeenCalled();
 
-    // Both channels see the same composed body — joinUrl is the proof
-    // that env wiring + HMAC mint completed end-to-end.
     const smsBody = smsService.sendSms.mock.calls[0][1] as string;
-    const igBody  = instagramService.sendInstagramMessage.mock.calls[0][1] as string;
     expect(smsBody).toContain('https://app.clariva.test/c/history/' + sessionId + '?t=');
-    expect(igBody).toContain('https://app.clariva.test/c/history/' + sessionId + '?t=');
     expect(smsBody).toContain("Dr. Sharma's practice");
     expect(smsBody).toContain('Available for 90 days');
 
@@ -385,7 +386,7 @@ describe('sendPostConsultChatHistoryDm — happy path', () => {
     const ig  = result.channels.find((c) => c.channel === 'instagram_dm');
     expect(sms?.status).toBe('sent');
     expect(ig?.status).toBe('skipped');
-    expect(ig?.reason).toBe('no_recipient');
+    expect(ig?.reason).toBe('channel_disabled');
     expect(instagramService.sendInstagramMessage).not.toHaveBeenCalled();
   });
 
@@ -412,9 +413,13 @@ describe('sendPostConsultChatHistoryDm — happy path', () => {
       channels: Array<{ channel: string; status: string; error?: string }>;
     };
 
-    expect(result.anySent).toBe(true);
+    expect(result.anySent).toBe(false);
     expect(result.channels.find((c) => c.channel === 'sms')?.status).toBe('failed');
-    expect(result.channels.find((c) => c.channel === 'instagram_dm')?.status).toBe('sent');
+    expect(result.channels.find((c) => c.channel === 'instagram_dm')).toEqual({
+      channel: 'instagram_dm',
+      status: 'skipped',
+      reason: 'channel_disabled',
+    });
 
     // Dedup column STILL stamped — partial-success is "we tried"
     expect(captured).toHaveLength(1);
@@ -447,7 +452,12 @@ describe('sendPostConsultChatHistoryDm — happy path', () => {
     };
 
     expect(result.anySent).toBe(false);
-    expect(result.channels.every((c) => c.status === 'failed')).toBe(true);
+    expect(result.channels.find((c) => c.channel === 'sms')?.status).toBe('failed');
+    expect(result.channels.find((c) => c.channel === 'instagram_dm')).toEqual({
+      channel: 'instagram_dm',
+      status: 'skipped',
+      reason: 'channel_disabled',
+    });
 
     // Stamp-on-attempt: prevents tight retry loops from hammering the
     // providers. Reconciliation cron's job to retry, not the inline

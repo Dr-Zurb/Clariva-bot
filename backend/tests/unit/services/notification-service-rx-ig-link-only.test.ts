@@ -98,7 +98,7 @@ function buildSendSupabaseMock() {
             id: appointmentId,
             patient_id: 'patient-1',
             doctor_id: doctorId,
-            conversation_id: null,
+            conversation_id: 'conv-rx-1',
           },
           error: null,
         } as never),
@@ -137,6 +137,18 @@ function buildSendSupabaseMock() {
         single: jest.fn().mockResolvedValue({ data: null, error: null } as never),
       };
     }
+    if (table === 'messages') {
+      return {
+        select: jest.fn().mockReturnThis(),
+        eq: jest.fn().mockReturnThis(),
+        order: jest.fn().mockReturnThis(),
+        limit: jest.fn().mockReturnThis(),
+        maybeSingle: jest.fn().mockResolvedValue({
+          data: { created_at: new Date().toISOString() },
+          error: null,
+        } as never),
+      };
+    }
     return {};
   });
 
@@ -159,7 +171,7 @@ describe('sendPrescriptionToPatient · IG link-only (mca-01)', () => {
     env.APP_BASE_URL = originalBaseUrl;
   });
 
-  it('sends a generic IG notice with the share URL and never attaches PDF or images', async () => {
+  it('sends the prescription by email and does not message Instagram', async () => {
     mockedDb.getSupabaseAdminClient.mockReturnValue(buildSendSupabaseMock() as never);
     jest.mocked(pdfService.generatePrescriptionPdf).mockResolvedValue({
       storagePath: 'prescription-pdfs/doc/rx.pdf',
@@ -175,14 +187,13 @@ describe('sendPrescriptionToPatient · IG link-only (mca-01)', () => {
     expect(result.sent).toBe(true);
     expect(instagramService.sendInstagramImage).not.toHaveBeenCalled();
     expect(instagramService.sendInstagramFile).not.toHaveBeenCalled();
-    expect(instagramService.sendInstagramMessage).toHaveBeenCalledTimes(1);
-    const igBody = jest.mocked(instagramService.sendInstagramMessage).mock.calls[0]?.[1];
-    expect(igBody).toContain('https://app.test/r/');
-    expect(igBody).toMatch(/prescription/i);
-    expect(igBody).not.toMatch(/Amlodipine/i);
+    expect(instagramService.sendInstagramMessage).not.toHaveBeenCalled();
+    expect(result.channels?.instagram).toBe(false);
+    expect(result.channels?.email).toBe(true);
     expect(mockedEmail.sendEmail).toHaveBeenCalled();
     const emailBody = jest.mocked(mockedEmail.sendEmail).mock.calls[0]?.[2];
     expect(emailBody).toMatch(/Amlodipine/i);
+    expect(emailBody).toContain('https://app.test/r/');
   });
 
   it('skips Instagram when the share URL cannot be minted; email still sends', async () => {

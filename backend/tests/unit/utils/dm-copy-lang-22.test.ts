@@ -47,10 +47,10 @@ const URL = 'https://book.example/b?t=1';
 describe('lang-22 booking / staff / funnel copy', () => {
   it('booking-link families: en byte-identical + queue/slot preserved', () => {
     expect(formatBookingLinkDm({ language: 'en', slotLink: URL, doctorSettings: QUEUE })).toBe(
-      `Join the queue for your visit here: ${URL}\n\nChoose a day, then confirm - you'll get a token number. Wait times are approximate.`
+      `Open this page to join the queue: ${URL}\n\nFinish on this page.`
     );
     expect(formatBookingLinkDm({ language: 'en', slotLink: URL, doctorSettings: SLOT })).toBe(
-      `Open this link to get an appointment: ${URL}\n\nYou'll be redirected back to this chat when done.`
+      `Open this link to get an appointment: ${URL}\n\nFinish on this page.`
     );
     expect(formatRescheduleLinkDm({ language: 'en', url: URL, doctorSettings: QUEUE })).toBe(
       `Pick a new day for your visit: [Reschedule](${URL})`
@@ -120,13 +120,10 @@ describe('lang-22 booking / staff / funnel copy', () => {
         readConversationState({ matcherProposedCatalogServiceKey: 'skin' })
       )
     ).toBe(
-      "Thanks — **Demo Clinic** will confirm your visit type before we open scheduling. We've noted your request as **Dermatology consult**. " +
-        'Our team will reply here **soon**. ' +
-        "You do **not** need to pay yet. We'll message you when you can pick a time."
+      'Thanks. **Demo Clinic** is confirming this booking. Message here when you want the booking page. You do not need to pay in this chat.'
     );
     expect(formatStaffServiceReviewStillPendingDm('en', settings)).toBe(
-      "We're still confirming with **Demo Clinic**. You'll get a message here when you can choose a time. " +
-        'Thanks for your patience.'
+      '**Demo Clinic** is still confirming this booking. Message here when you want the booking page.'
     );
     expect(formatStaffServiceReviewSlaTimeoutDm('en')).toBe(
       "Our team hasn't responded to your booking review yet — we're following up now. You can also try again later or ask to book."
@@ -196,7 +193,7 @@ describe('lang-22 booking / staff / funnel copy', () => {
     );
     expect(
       buildReturningFollowUpConfirmMessage({ language: 'en', serviceLabel: 'Skin consult' })
-    ).toBe('Is this a **follow-up** for **Skin consult**? Reply **Yes** or **No**.');
+    ).toBe('Say book if you want the booking page.');
     expect(buildPhoneDisplayFallbackLabel({ language: 'en' })).toBe('your number');
   });
 

@@ -7,12 +7,16 @@ import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 jest.mock('../../../src/services/conversation-service', () => ({
   findConversationByPlatformId: jest.fn(),
   readAutomatedMessagingOptedOutAt: jest.fn(),
+  readLatestPatientMessageAt: jest.fn(),
   setAutomatedMessagingOptedOutAt: jest.fn(),
 }));
 
 import {
+  isInsideMetaStandardMessagingWindow,
   isStartMessagingText,
   isStopMessagingText,
+  META_MESSAGING_WINDOW_SAFETY_MS,
+  META_STANDARD_MESSAGING_WINDOW_MS,
   shouldSkipAutomatedMetaSend,
   shouldSkipCommentPrivateReply,
 } from '../../../src/services/automated-messaging-opt-out';
@@ -20,6 +24,9 @@ import * as conversationService from '../../../src/services/conversation-service
 
 const readFlag = conversationService.readAutomatedMessagingOptedOutAt as jest.MockedFunction<
   typeof conversationService.readAutomatedMessagingOptedOutAt
+>;
+const readLatest = conversationService.readLatestPatientMessageAt as jest.MockedFunction<
+  typeof conversationService.readLatestPatientMessageAt
 >;
 const findConv = conversationService.findConversationByPlatformId as jest.MockedFunction<
   typeof conversationService.findConversationByPlatformId
@@ -60,11 +67,14 @@ describe('isStartMessagingText', () => {
 });
 
 describe('shouldSkipAutomatedMetaSend', () => {
+  const recent = new Date().toISOString();
+
   beforeEach(() => {
     jest.clearAllMocks();
+    readLatest.mockResolvedValue({ ok: true, createdAt: recent });
   });
 
-  it('allows when the stamp is null', async () => {
+  it('allows when the stamp is null and the person wrote inside the window', async () => {
     readFlag.mockResolvedValue({ ok: true, optedOutAt: null });
     await expect(
       shouldSkipAutomatedMetaSend({
@@ -73,6 +83,42 @@ describe('shouldSkipAutomatedMetaSend', () => {
         ifMissing: 'skip',
       })
     ).resolves.toEqual({ skip: false });
+  });
+
+  it('skips when the last patient message is outside the window', async () => {
+    readFlag.mockResolvedValue({ ok: true, optedOutAt: null });
+    readLatest.mockResolvedValue({
+      ok: true,
+      createdAt: new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString(),
+    });
+    const result = await shouldSkipAutomatedMetaSend({
+      conversationId: 'conv-1',
+      correlationId: 'c1',
+      ifMissing: 'skip',
+    });
+    expect(result).toEqual({ skip: true, reason: 'messaging_window_closed' });
+  });
+
+  it('skips when no patient message is on file', async () => {
+    readFlag.mockResolvedValue({ ok: true, optedOutAt: null });
+    readLatest.mockResolvedValue({ ok: true, createdAt: null });
+    const result = await shouldSkipAutomatedMetaSend({
+      conversationId: 'conv-1',
+      correlationId: 'c1',
+      ifMissing: 'skip',
+    });
+    expect(result).toEqual({ skip: true, reason: 'messaging_window_closed' });
+  });
+
+  it('fail-closes when the window cannot be read', async () => {
+    readFlag.mockResolvedValue({ ok: true, optedOutAt: null });
+    readLatest.mockResolvedValue({ ok: false });
+    const result = await shouldSkipAutomatedMetaSend({
+      conversationId: 'conv-1',
+      correlationId: 'c1',
+      ifMissing: 'skip',
+    });
+    expect(result).toEqual({ skip: true, reason: 'window_unreadable' });
   });
 
   it('skips when opted out', async () => {
@@ -103,6 +149,30 @@ describe('shouldSkipAutomatedMetaSend', () => {
     });
     expect(result).toEqual({ skip: false });
     expect(readFlag).not.toHaveBeenCalled();
+    expect(readLatest).not.toHaveBeenCalled();
+  });
+});
+
+describe('isInsideMetaStandardMessagingWindow', () => {
+  const now = Date.parse('2026-09-23T12:00:00.000Z');
+
+  it('is open just inside the safety margin', () => {
+    const at = new Date(
+      now - (META_STANDARD_MESSAGING_WINDOW_MS - META_MESSAGING_WINDOW_SAFETY_MS)
+    ).toISOString();
+    expect(isInsideMetaStandardMessagingWindow(at, now)).toBe(true);
+  });
+
+  it('is closed one millisecond past the safety margin', () => {
+    const at = new Date(
+      now - (META_STANDARD_MESSAGING_WINDOW_MS - META_MESSAGING_WINDOW_SAFETY_MS) - 1
+    ).toISOString();
+    expect(isInsideMetaStandardMessagingWindow(at, now)).toBe(false);
+  });
+
+  it('is closed when the timestamp is missing', () => {
+    expect(isInsideMetaStandardMessagingWindow(null, now)).toBe(false);
+    expect(isInsideMetaStandardMessagingWindow('not-a-date', now)).toBe(false);
   });
 });
 

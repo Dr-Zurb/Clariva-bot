@@ -1,23 +1,8 @@
 /**
- * Abandoned booking reminder: sends a one-time DM ~1 hour after booking link
- * was sent when the patient hasn't completed payment. Cron-driven.
+ * Abandoned-booking nudge stays off Instagram. The person already has the booking link.
  */
 
-import { getSupabaseAdminClient } from '../config/database';
 import { logger } from '../config/logger';
-import { shouldSkipAutomatedMetaSend } from './automated-messaging-opt-out';
-import { getInstagramAccessTokenForDoctor } from './instagram-connect-service';
-import { sendInstagramMessage } from './instagram-service';
-import { buildBookingPageUrl } from './slot-selection-service';
-import { mergeBooking, type ConversationState } from '../types/conversation';
-import {
-  readConversationState,
-  writeConversationState,
-} from '../types/conversation-state-io';
-import { buildAbandonedBookingReminderMessage } from '../utils/dm-copy';
-import { coerceConversationLanguage } from './conversation-service';
-
-const REMINDER_DELAY_MS = 60 * 60_000; // 1 hour
 
 export interface AbandonedBookingReminderResult {
   checked: number;
@@ -29,65 +14,6 @@ export interface AbandonedBookingReminderResult {
 export async function runAbandonedBookingReminderJob(
   correlationId: string
 ): Promise<AbandonedBookingReminderResult> {
-  const admin = getSupabaseAdminClient();
-  if (!admin) return { checked: 0, sent: 0, skipped: 0, failed: 0 };
-
-  // Find conversations where bookingLinkSentAt is set and old enough.
-  // metadata->>step = 'awaiting_slot_selection' ensures the patient hasn't moved on.
-  const cutoff = new Date(Date.now() - REMINDER_DELAY_MS).toISOString();
-  const { data: rows, error } = await admin
-    .from('conversations')
-    .select('id, doctor_id, platform, platform_conversation_id, metadata, language')
-    .eq('platform', 'instagram')
-    .eq('status', 'active')
-    .limit(50);
-
-  if (error || !rows?.length) {
-    if (error) logger.warn({ correlationId, err: error }, 'Abandoned booking reminder query failed');
-    return { checked: 0, sent: 0, skipped: 0, failed: 0 };
-  }
-
-  let sent = 0;
-  let skipped = 0;
-  let failed = 0;
-  let checked = 0;
-
-  for (const row of rows) {
-    const meta = readConversationState(row.metadata);
-    if (meta.step !== 'awaiting_slot_selection') continue;
-    if (!meta.booking?.bookingLinkSentAt) continue;
-    if (meta.booking?.bookingReminderSent === true) continue;
-    if (new Date(meta.booking?.bookingLinkSentAt) > new Date(cutoff)) continue;
-
-    checked++;
-    const token = await getInstagramAccessTokenForDoctor(row.doctor_id, correlationId);
-    if (!token) { skipped++; continue; }
-
-    try {
-      const optOut = await shouldSkipAutomatedMetaSend({
-        conversationId: row.id,
-        correlationId,
-        ifMissing: 'skip',
-      });
-      if (optOut.skip) { skipped++; continue; }
-      const bookingUrl = buildBookingPageUrl(row.id, row.doctor_id);
-      const language = coerceConversationLanguage(row.language);
-      const msg = buildAbandonedBookingReminderMessage({ bookingUrl, language });
-      await sendInstagramMessage(row.platform_conversation_id, msg, correlationId, token);
-
-      // Mark reminder sent in metadata.
-      const updatedMeta: ConversationState = mergeBooking(meta, { bookingReminderSent: true });
-      await admin
-        .from('conversations')
-        .update({ metadata: writeConversationState(updatedMeta) })
-        .eq('id', row.id);
-
-      sent++;
-    } catch (e) {
-      logger.warn({ err: e, correlationId, conversationId: row.id }, 'Abandoned booking reminder DM failed');
-      failed++;
-    }
-  }
-
-  return { checked, sent, skipped, failed };
+  logger.info({ correlationId }, 'abandoned_booking_reminder_skipped_meta');
+  return { checked: 0, sent: 0, skipped: 0, failed: 0 };
 }

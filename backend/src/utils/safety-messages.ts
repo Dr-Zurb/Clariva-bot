@@ -74,20 +74,16 @@ const EMERGENCY_REAFFIRM_LATIN_PA =
   'Kirpa karke hune **112** jaan **108** te call karo - emergency service tuhade kol pahunch sakdi hai. Main ithe medical madad nahi de sakda.';
 
 // ---------------------------------------------------------------------------
-// Booking safety-net line (clinical safety-netting on confirmations/reminders)
+// Booking safety-net line (booking page only — never a Meta DM)
 // ---------------------------------------------------------------------------
 //
-// Fixed sentence appended by dm-copy to the booking-confirmation DM and the
-// T−24h reminder so a booked patient always keeps the escalation instruction
-// in hand ("a booking is not reassurance"). Constants live HERE — not in
-// dm-copy — because `assistantMessageIsEmergencyEscalationCopy` must strip
-// these exact strings before matching: they contain 112/108 + hospital and
-// would otherwise make every confirmation look like a prior emergency
-// escalation to the classifier-context / reaffirm logic. If you edit a line,
-// the strip list updates automatically; never inline a diverged copy of it.
-//
-// Script variants follow the host family's register (payment-confirmation is
-// Roman-Hindi; the 24h reminder is Devanagari-Hindi; pa is Roman in both).
+// The sentence used to ride payment confirmations and the T−24h reminder.
+// Those Meta messages no longer include it. The constants stay so
+// `stripBookingSafetyNetLines` can still remove historical copies before
+// emergency matching: they contain 112/108 + hospital and would otherwise
+// make an old confirmation look like a prior emergency escalation.
+// If you edit a line, the strip list updates automatically. The booking page
+// shows the English sentence (without markdown bold).
 
 export const BOOKING_SAFETY_NET_LINE_EN =
   "If your symptoms get worse or feel like an emergency before your visit, don't wait — call **112** or **108**, or go to the nearest hospital right away.";

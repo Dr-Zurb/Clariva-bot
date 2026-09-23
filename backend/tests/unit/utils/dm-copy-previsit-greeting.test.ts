@@ -6,7 +6,6 @@ import {
   buildConsultationStartingNowDm,
   formatPrevisitTimeLeftPhrase,
 } from '../../../src/utils/dm-copy';
-import { BOOKING_SAFETY_NET_LINE_EN } from '../../../src/utils/safety-messages';
 
 describe('previsit DM greeting', () => {
   it('check-in opens with Hi {firstName} and time left', () => {
@@ -69,7 +68,7 @@ describe('previsit DM greeting', () => {
     expect(msg).not.toContain('http');
   });
 
-  it('24h reminder ends with the booking safety-net line', () => {
+  it('24h reminder does not mention emergency numbers', () => {
     const msg = buildAppointmentReminder24hDm({
       language: 'en',
       practiceName: 'Test Clinic',
@@ -77,7 +76,9 @@ describe('previsit DM greeting', () => {
       patientName: 'Neha Kapoor',
     });
     const lines = msg.split('\n');
-    expect(lines[lines.length - 1]).toBe(BOOKING_SAFETY_NET_LINE_EN);
+    expect(lines[lines.length - 1]).toBe('Reply in this thread if you need to reschedule.');
+    expect(msg).not.toMatch(/\b(112|108)\b/);
+    expect(msg.toLowerCase()).not.toContain('emergency');
   });
 });
 
