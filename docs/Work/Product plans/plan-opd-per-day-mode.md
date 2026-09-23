@@ -59,7 +59,7 @@ These are locked in chat 2026-05-17. Re-opening any of them belongs in a new bat
 
 - **DL-7: Session-overrun handling — explicit doctor action with auto-fallback.** After `session_end + 30 min` (the "did the session actually end" grace), any `pending|confirmed` appointment on that date is flagged `session_overrun` (new flag, not a status replacement) and surfaces in a "Needs attention" tray in the OPD tab. The doctor's bulk actions are: **Reschedule all to next-available** (default), **Reschedule per-patient**, **Mark as completed (saw briefly)**, **Cancel with refund**, **Mark as no-show**. Per-row override of the bulk action is supported.
 
-- **DL-8: 24h auto-reschedule fallback for session-overrun.** If the doctor doesn't action the overrun tray within 24h, the system auto-reschedules every flagged row to next-available (same doctor, same modality, same service) and notifies the patient. The doctor retains a 7-day editable window to override the auto-reschedule before it hardens into "the patient's new appointment."
+- **DL-8: No automatic reschedule.** Unfinished visits stay on the day they were booked. The hourly fallback used to move every flagged row to the next open slot; that refilled later OPD days and is off. The doctor still resolves overrun from the tray (DL-7).
 
 - **DL-9: Mode-scheduling policy lives in `doctor_settings.opd_policies.mode_schedule` (existing JSONB; no new migration for the policy itself).**
   ```jsonc

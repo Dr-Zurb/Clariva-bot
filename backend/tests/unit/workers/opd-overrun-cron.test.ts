@@ -146,7 +146,7 @@ describe('runOpdOverrunFallbackCron', () => {
     expect(result).toEqual({ candidatesScanned: 0, rescheduled: 0, errors: 0 });
   });
 
-  it('invokes bulkResolveSessionOverrun for stale groups', async () => {
+  it('does not move stale overrun visits onto a later day', async () => {
     const candidates = [
       { doctor_id: 'doc-1', appointment_date: '2026-05-15T06:00:00.000Z' },
     ];
@@ -164,32 +164,8 @@ describe('runOpdOverrunFallbackCron', () => {
     };
 
     const result = await runOpdOverrunFallbackCron(supabase as never);
-    expect(mockBulkResolve).toHaveBeenCalledTimes(1);
-    const callArgs = mockBulkResolve.mock.calls[0] as unknown[];
-    expect(callArgs[3]).toBe('reschedule_all');
-    expect(result.rescheduled).toBe(3);
-  });
-
-  it('counts errors when bulk resolve throws', async () => {
-    mockBulkResolve.mockRejectedValueOnce(new Error('lock timeout'));
-    const candidates = [
-      { doctor_id: 'doc-1', appointment_date: '2026-05-15T06:00:00.000Z' },
-    ];
-
-    const supabase = {
-      from: jest.fn(() => ({
-        select: jest.fn().mockReturnThis(),
-        in: jest.fn().mockReturnThis(),
-        not: jest.fn().mockReturnThis(),
-        lt: jest.fn().mockReturnValue({
-          then: (resolve: (v: { data: typeof candidates; error: null }) => void) =>
-            resolve({ data: candidates, error: null }),
-        }),
-      })),
-    };
-
-    const result = await runOpdOverrunFallbackCron(supabase as never);
-    expect(result.errors).toBe(1);
-    expect(result.rescheduled).toBe(0);
+    expect(mockBulkResolve).not.toHaveBeenCalled();
+    expect(supabase.from).not.toHaveBeenCalled();
+    expect(result).toEqual({ candidatesScanned: 0, rescheduled: 0, errors: 0 });
   });
 });

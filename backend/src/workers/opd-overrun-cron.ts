@@ -1,5 +1,6 @@
 /**
- * OPD session overrun flagging + 24h fallback workers (pdm-09 · DL-7 / DL-8).
+ * OPD session overrun flagging (pdm-09 · DL-7).
+ * The 24h auto-reschedule fallback is off: it was copying unfinished visits onto later days.
  *
  * Mirrors `opd-mode-notifications-cron` lifecycle: `startOpdOverrunWorker` returns
  * `{ stop, runFlaggingOnce, runFallbackOnce }`.
@@ -12,7 +13,6 @@ import { env } from '../config/env';
 import { logger } from '../config/logger';
 import { getDoctorSettings } from '../services/doctor-settings-service';
 import { computeSlotGridForDate } from '../services/opd/opd-mode-conversion-service';
-import { bulkResolveSessionOverrun } from '../services/opd/opd-overrun-service';
 import { sessionDateFromAppointmentDate } from '../services/opd/opd-queue-service';
 
 const FLAGGING_INTERVAL_MS = 5 * 60 * 1000;
@@ -164,93 +164,19 @@ export async function runOpdOverrunFlaggingCron(
 }
 
 /**
- * Hourly: auto-reschedule overrun rows untouched for 24h (DL-8).
+ * Does not move visits. The old 24h fallback copied unfinished
+ * pending/confirmed rows onto the next open day, so later OPD days
+ * filled themselves with arrived walk-ins. The doctor still resolves
+ * overrun from the tray.
  */
 export async function runOpdOverrunFallbackCron(
-  supabase: SupabaseClient
+  _supabase: SupabaseClient
 ): Promise<OverrunFallbackCronResult> {
-  const startedAt = Date.now();
-  const result: OverrunFallbackCronResult = {
+  return {
     candidatesScanned: 0,
     rescheduled: 0,
     errors: 0,
   };
-
-  const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-
-  const { data: candidates, error } = await supabase
-    .from('appointments')
-    .select('doctor_id, appointment_date')
-    .in('status', ['pending', 'confirmed'])
-    .not('session_overrun_at', 'is', null)
-    .lt('session_overrun_at', twentyFourHoursAgo);
-
-  if (error) {
-    logger.error({ err: error }, 'overrun-fallback-cron: query failed');
-    result.errors += 1;
-    return result;
-  }
-
-  result.candidatesScanned = candidates?.length ?? 0;
-  if (!candidates || candidates.length === 0) {
-    logger.info(
-      { elapsed_ms: Date.now() - startedAt, ...result },
-      'overrun-fallback-cron: done (no candidates)'
-    );
-    return result;
-  }
-
-  const grouped = new Set<string>();
-  const timezoneByDoctor = new Map<string, string>();
-  for (const c of candidates) {
-    const doctorId = c.doctor_id as string;
-    let timezone = timezoneByDoctor.get(doctorId);
-    if (!timezone) {
-      const settings = await getDoctorSettings(doctorId);
-      timezone = settings?.timezone ?? 'Asia/Kolkata';
-      timezoneByDoctor.set(doctorId, timezone);
-    }
-    const date = sessionDateFromAppointmentDate(
-      new Date(c.appointment_date as string),
-      timezone
-    );
-    grouped.add(`${doctorId}::${date}`);
-  }
-
-  for (const key of grouped) {
-    const [doctorId, date] = key.split('::');
-    if (!doctorId || !date) continue;
-
-    try {
-      const bulkResult = await bulkResolveSessionOverrun(
-        supabase,
-        doctorId,
-        date,
-        'reschedule_all',
-        undefined,
-        {
-          triggeredBy: 'system_overrun_fallback',
-          correlationId: `fallback-${key}-${Date.now()}`,
-        }
-      );
-      result.rescheduled += bulkResult.resolved;
-      logger.info(
-        {
-          event: 'opd_overrun.fallback_rescheduled',
-          doctor_id: doctorId,
-          date,
-          count: bulkResult.resolved,
-        },
-        'opd_overrun.fallback_rescheduled'
-      );
-    } catch (err) {
-      result.errors += 1;
-      logger.error({ err, doctorId, date }, 'overrun-fallback-cron: bulk-resolve failed');
-    }
-  }
-
-  logger.info({ elapsed_ms: Date.now() - startedAt, ...result }, 'overrun-fallback-cron: done');
-  return result;
 }
 
 export function startOpdOverrunWorker(opts?: {
