@@ -26,5 +26,9 @@ alwaysApply: true
 - If the ask is short/vague or you had to infer intent, restate your interpretation in ONE line before writing code.
 - For a genuine two-way-door ambiguity (e.g. "can't type X" vs "shouldn't allow X"), ask first — don't build on a guess.
 
+## STOP and tell me to switch to Opus if the task touches:
+PHI columns, RLS / `auth.uid()`, a new migration, payments/consent, or a 5+ file refactor.
+You (Auto) will not escalate yourself — flag it instead of guessing.
+
 ## Before saying "done"
 Run the verification gate (typecheck + lint + tests) before declaring done — never skip it. The full checklist (`DEFINITION_OF_DONE.md`) loads automatically when editing code.

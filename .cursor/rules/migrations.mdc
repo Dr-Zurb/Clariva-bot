@@ -3,10 +3,7 @@ globs: backend/migrations/**
 alwaysApply: false
 ---
 
-# Migration / schema change — STOP
+# Migration / schema change
 
-New migrations are on the hard-rules list. Do **not** silently proceed.
-
-- Surface this to the user and recommend an Opus (max-thinking) turn before writing the file.
 - RLS policies, backfills, and PHI columns must not be guessed — confirm the approach first.
-- If continuing, follow @docs/Reference/engineering/development/MIGRATIONS_AND_CHANGE.md exactly, and keep the change additive/reversible where possible.
+- Follow @docs/Reference/engineering/development/MIGRATIONS_AND_CHANGE.md exactly, and keep the change additive/reversible where possible.
