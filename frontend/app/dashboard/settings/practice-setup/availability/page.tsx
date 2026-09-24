@@ -9,7 +9,8 @@ import {
   postBlockedTime,
   deleteBlockedTime,
 } from "@/lib/api";
-import type { AvailabilitySlot, DayOfWeek } from "@/types/availability";
+import type { AvailabilitySlot, AvailabilityVisitFlags, DayOfWeek } from "@/types/availability";
+import { ALL_VISIT_FLAGS } from "@/types/availability";
 import type { BlockedTime } from "@/types/blocked-time";
 import { SaveButton } from "@/components/ui/SaveButton";
 import {
@@ -108,6 +109,10 @@ export default function AvailabilityPage() {
         day_of_week: a.day_of_week,
         start_time: a.start_time.slice(0, 5),
         end_time: a.end_time.slice(0, 5),
+        in_clinic: a.in_clinic !== false,
+        video: a.video !== false,
+        voice: a.voice !== false,
+        text: a.text !== false,
       }));
       setSlots(mapped);
       setLastSavedSlots(JSON.stringify(mapped));
@@ -141,6 +146,10 @@ export default function AvailabilityPage() {
         setAvailabilityMessage({ type: "error", text: "Start time must be before end time for each slot." });
         return;
       }
+      if (!s.in_clinic && !s.video && !s.voice && !s.text) {
+        setAvailabilityMessage({ type: "error", text: "Choose at least one visit type for each block." });
+        return;
+      }
     }
     setAvailabilityMessage(null);
     saveInProgressRef.current = true;
@@ -151,13 +160,18 @@ export default function AvailabilityPage() {
         day_of_week: s.day_of_week,
         start_time: s.start_time.length === 5 ? `${s.start_time}:00` : s.start_time,
         end_time: s.end_time.length === 5 ? `${s.end_time}:00` : s.end_time,
+        in_clinic: s.in_clinic,
+        video: s.video,
+        voice: s.voice,
+        text: s.text,
       }));
       await putAvailability(token, payload);
       setLastSavedSlots(JSON.stringify(slotsToSave));
       setSaveSuccess(true);
     } catch (err) {
       const status = err && typeof err === "object" && "status" in err ? (err as { status?: number }).status : 500;
-      setAvailabilityMessage({ type: "error", text: status === 401 ? "Session expired." : "Failed to save." });
+      const message = err instanceof Error && err.message ? err.message : "Failed to save.";
+      setAvailabilityMessage({ type: "error", text: status === 401 ? "Session expired." : message });
     } finally {
       saveInProgressRef.current = false;
       setSaving(false);
@@ -214,7 +228,10 @@ export default function AvailabilityPage() {
 
   const addSlot = (day: DayOfWeek) => {
     setSaveSuccess(false);
-    setSlots((prev) => [...prev, { day_of_week: day, start_time: "09:00", end_time: "17:00" }]);
+    setSlots((prev) => [
+      ...prev,
+      { day_of_week: day, start_time: "09:00", end_time: "17:00", ...ALL_VISIT_FLAGS },
+    ]);
     setAvailabilityMessage(null);
   };
 
@@ -223,6 +240,18 @@ export default function AvailabilityPage() {
     setSlots((prev) => {
       const next = [...prev];
       next[flatIndex] = { ...next[flatIndex], [field]: value };
+      return next;
+    });
+    setAvailabilityMessage(null);
+  };
+
+  const toggleVisit = (flatIndex: number, flag: keyof AvailabilityVisitFlags) => {
+    setSaveSuccess(false);
+    setSlots((prev) => {
+      const next = [...prev];
+      const slot = next[flatIndex];
+      if (!slot) return prev;
+      next[flatIndex] = { ...slot, [flag]: !slot[flag] };
       return next;
     });
     setAvailabilityMessage(null);
@@ -365,14 +394,16 @@ export default function AvailabilityPage() {
     <div>
       <h1 className="text-2xl font-semibold text-gray-900">Availability</h1>
       <p className="mt-1 text-gray-600">
-        Weekly schedule and blocked times when you are unavailable.
+        Weekly hours for in-clinic, video, voice, and text visits.
       </p>
 
       {/* Section 1: Weekly Slots */}
       <section className="mt-6 rounded-lg border border-gray-200 bg-white p-4" aria-labelledby="slots-heading">
         <form onSubmit={handleSaveClick}>
           <h2 id="slots-heading" className="text-lg font-semibold text-gray-900">Weekly Slots</h2>
-          <p className="mt-1 text-sm text-gray-600">Set your weekly availability. Patients can book within these slots.</p>
+          <p className="mt-1 text-sm text-gray-600">
+            Each block is a time range. Turn on the visit types patients can book in that range. The same day can hold different blocks.
+          </p>
           {availabilityMessage && (
             <div role="alert" className="mt-3 rounded-md bg-red-50 p-2 text-sm text-red-800">
               {availabilityMessage.text}
@@ -396,31 +427,60 @@ export default function AvailabilityPage() {
                       return (
                         <div
                           key={flatIdx}
-                          className="flex items-center gap-2 rounded-md border border-gray-200 bg-white px-2 py-1.5"
+                          className="flex flex-col gap-1.5 rounded-md border border-gray-200 bg-white px-2 py-1.5"
                         >
-                          <input
-                            type="time"
-                            value={slot.start_time}
-                            onChange={(e) => updateSlot(flatIdx, "start_time", e.target.value)}
-                            className="w-24 rounded border border-gray-300 px-1.5 py-0.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                            aria-label={`${DAY_NAMES[day]} start time`}
-                          />
-                          <span className="text-gray-500">–</span>
-                          <input
-                            type="time"
-                            value={slot.end_time}
-                            onChange={(e) => updateSlot(flatIdx, "end_time", e.target.value)}
-                            className="w-24 rounded border border-gray-300 px-1.5 py-0.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                            aria-label={`${DAY_NAMES[day]} end time`}
-                          />
-                          <button
-                            type="button"
-                            onClick={() => removeSlot(flatIdx)}
-                            className="rounded p-1 text-red-600 hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-red-500"
-                            aria-label={`Remove ${DAY_NAMES[day]} slot`}
-                          >
-                            <span aria-hidden>×</span>
-                          </button>
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="time"
+                              value={slot.start_time}
+                              onChange={(e) => updateSlot(flatIdx, "start_time", e.target.value)}
+                              className="w-24 rounded border border-gray-300 px-1.5 py-0.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                              aria-label={`${DAY_NAMES[day]} start time`}
+                            />
+                            <span className="text-gray-500">–</span>
+                            <input
+                              type="time"
+                              value={slot.end_time}
+                              onChange={(e) => updateSlot(flatIdx, "end_time", e.target.value)}
+                              className="w-24 rounded border border-gray-300 px-1.5 py-0.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                              aria-label={`${DAY_NAMES[day]} end time`}
+                            />
+                            <button
+                              type="button"
+                              onClick={() => removeSlot(flatIdx)}
+                              className="rounded p-1 text-red-600 hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-red-500"
+                              aria-label={`Remove ${DAY_NAMES[day]} slot`}
+                            >
+                              <span aria-hidden>×</span>
+                            </button>
+                          </div>
+                          <div className="flex flex-wrap gap-1">
+                            {(
+                              [
+                                ["in_clinic", "In clinic"],
+                                ["video", "Video"],
+                                ["voice", "Voice"],
+                                ["text", "Text"],
+                              ] as const
+                            ).map(([flag, label]) => {
+                              const on = slot[flag];
+                              return (
+                                <button
+                                  key={flag}
+                                  type="button"
+                                  aria-pressed={on}
+                                  onClick={() => toggleVisit(flatIdx, flag)}
+                                  className={
+                                    on
+                                      ? "rounded-full bg-blue-600 px-2 py-0.5 text-xs font-medium text-white"
+                                      : "rounded-full border border-gray-300 bg-white px-2 py-0.5 text-xs font-medium text-gray-600"
+                                  }
+                                >
+                                  {label}
+                                </button>
+                              );
+                            })}
+                          </div>
                         </div>
                       );
                     })}

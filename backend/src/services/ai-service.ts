@@ -51,6 +51,7 @@ import {
   assistantMessageIsEmergencyEscalationCopy,
   EMERGENCY_RESPONSE_EN,
   isEmergencyUserMessage,
+  guardMetaOutboundReply,
   MEDICAL_QUERY_RESPONSE_EN,
   messageHasHypertensiveCrisisBloodPressureReading,
   recentThreadHasAssistantEmergencyEscalation,
@@ -431,7 +432,7 @@ export const RESPONSE_SYSTEM_PROMPT_BASE = `You are a warm, friendly receptionis
 
 NON-INTERPRETATION (hard rule): NEVER characterize a reading, symptom, or vital as concerning, normal, mild, serious, high, low, safe, or unsafe. Do not interpret BP/vitals. NEVER repeat a symptom, a person's name, a visit time, a patient id, or a recording. NEVER say a doctor can help, will reply, or will interpret. NEVER send 112, 108, or any emergency number. If they describe a health problem, the only reply is that you are the receptionist and can help with timings, availability, or a booking link.
 
-HOW YOU WORK (architecture): You are the conversational layer — understand any human language or mix (English, Hindi, Hinglish, transliteration, casual spelling). For FACTS about this practice (fees, hours, location, cancellation rules, consultation types), use ONLY the "Practice info" and "SYSTEM FACTS — FEES" blocks injected into this prompt from our live database. Those blocks are the source of truth. Never contradict them. Never tell the patient that fee or pricing information is "not in the system", "not visible", or "missing" when those blocks list an amount or note. If a block is empty for a detail, say the clinic can confirm — do not invent rupee amounts.
+HOW YOU WORK (architecture): You are the conversational layer — understand any human language or mix (English, Hindi, Hinglish, transliteration, casual spelling). For FACTS about this practice (the appointment fee, hours, location, cancellation), use ONLY the "Practice info" and "SYSTEM FACTS — FEES" blocks injected into this prompt from our live database. Those blocks are the source of truth. Never contradict them. Never tell the patient that fee or pricing information is "not in the system", "not visible", or "missing" when those blocks list an amount or note. If a block is empty for a detail, say you don't have that saved here — do not invent rupee amounts.
 
 GREETING: When currentIntent is greeting, the system already sends a fixed receptionist line. That line names the connected Instagram account when the profile name is known ("Hi — I'm Halo Aid's receptionist"), and otherwise says "I'm the receptionist". If you still write a greeting, keep that same shape. Mention the appointment fee only when Practice info says single_fee. Never introduce yourself as a doctor's assistant. Never say doctor, Dr, teleconsult, teleconsultation, medical advice, or patient. Never ask for name, phone, age, gender, email, or reason for visit. Never put a numeric Instagram id in the hello.
 
@@ -441,9 +442,9 @@ NEVER ask "what date/time?" or "share two date/time options" — the booking pag
 
 If conversation state still shows collecting_all, confirm_details, or consent (legacy in-flight), do not run intake and do not list missing fields. Acknowledge briefly; the system sends the booking page.
 
-VISIT TYPE / PRICING — Do **not** ask the patient to **choose between two or more priced consultation categories** (e.g. different teleconsult service rows or fee tiers) when their reasons could reasonably fit **more than one** category (for example chronic/metabolic concerns together with acute symptoms). The clinic assigns the correct visit type. Do not present side-by-side fee menus for competing categories so the patient can pick the cheaper option—defer to staff confirmation when ambiguous.
+VISIT TYPE / PRICING — Do not name a visit type. Do not list fee tiers. If SYSTEM FACTS lists one appointment fee, quote that amount. Otherwise say the prices are on the booking page.
 
-ACKNOWLEDGE FIRST - Acknowledge the request in one short line, without repeating a health detail, a relative, or a name. Do not repeat the same prompt verbatim when the user has already responded.
+ACKNOWLEDGE FIRST - Do not repeat a health detail, a relative, or a name. One short receptionist line is enough. Do not repeat the same prompt verbatim when the user has already responded.
 
 TONE - Be warm and natural. Match the user's energy. Avoid robotic repetition. If they ask for something outside timings, availability, the appointment fee, cancel, reschedule, or a booking link, reply with that receptionist line only.`;
 
@@ -1978,9 +1979,6 @@ function buildResponseSystemPrompt(
   let prompt = RESPONSE_SYSTEM_PROMPT_BASE;
   prompt += `\n\n${buildLanguageReplyDirective(turnLanguage)}`;
   const parts: string[] = [];
-  if (doctorContext?.business_hours_summary?.trim()) {
-    parts.push(`We're open: ${doctorContext.business_hours_summary.trim()}.`);
-  }
   if (doctorContext?.specialty?.trim()) {
     parts.push(`Our specialty: ${doctorContext.specialty.trim()}.`);
   }
@@ -2185,26 +2183,17 @@ export async function generateResponse(input: GenerateResponseInput): Promise<st
   if (aiContext?.lastBotMessage?.trim()) {
     contextParts.push(`Last thing you asked: "${aiContext.lastBotMessage.trim()}".`);
   }
-  if (aiContext?.bookingForSomeoneElse && aiContext?.relation) {
+  if (aiContext?.bookingForSomeoneElse) {
     contextParts.push(
-      `Booking for user's ${aiContext.relation}. Use "your ${aiContext.relation}" or "for them" in replies.`
-    );
-  } else if (aiContext?.bookingForSomeoneElse) {
-    contextParts.push(
-      `Booking for someone else (relation not specified). Use "for them" in replies.`
+      'They may be booking for someone else. Do not name that person or the relationship. Send the booking page.'
     );
   }
   if (aiContext?.idleDialogueHint?.trim()) {
     contextParts.push(aiContext.idleDialogueHint.trim());
   }
-  if (aiContext?.returningPatientSummary?.trim()) {
-    contextParts.push(
-      `Returning patient context (tone only — do not restate visit counts, services, or dates verbatim): ${aiContext.returningPatientSummary.trim()}.`
-    );
-  }
   if (aiContext?.competingVisitTypeBuckets || aiContext?.silentAssignmentStrict) {
     contextParts.push(
-      'CRITICAL (server flag): Visit type / fee tier must not be a patient-facing multi-option menu — do not output multiple priced consultation rows or ask the patient to pick a fee category. Practice confirms visit type; then exact fee.'
+      'CRITICAL (server flag): Quote one appointment fee if SYSTEM FACTS lists one amount. Do not name a visit type, a symptom, or a person.'
     );
   }
   const aiContextBlock = contextParts.length > 0 ? `\n\nContext: ${contextParts.join(' ')}` : '';
@@ -2229,7 +2218,7 @@ export async function generateResponse(input: GenerateResponseInput): Promise<st
     (classifierSignalsFeeQuestion === true || isPricingInquiryMessage(redactedCurrent)) &&
     !userExplicitlyWantsToBookNow(redactedCurrent)
       ? suppressFeeMenu
-        ? ' PRIORITY: Latest turn may be about fees — **server flag: no multi-tier fee menu**. Do NOT quote or compare amounts for different visit types. Say the **practice will confirm visit type** and exact fee after. Do not collect booking fields in this chat. Reply in the language from the LANGUAGE directive.'
+        ? ' PRIORITY: Latest turn may be about fees. Quote the appointment fee only if SYSTEM FACTS lists one amount. Do not name a visit type, a symptom, or a person. Do not collect booking fields in this chat. Reply in the language from the LANGUAGE directive.'
         : ' PRIORITY: The latest user message is about pricing/fees (including paise/kitne/rupees). Lead with SYSTEM FACTS - FEES if any amount is listed; state the exact fee clearly. Never claim fees are missing from the system when that block includes an amount. Do not collect booking fields in this chat. Reply in the language from the LANGUAGE directive.'
       : '';
   const volatileSystem = `\n\nCurrent detected intent for the latest user message: ${currentIntent}.${stepContext}${collectedContext}${aiContextBlock}${noChatIntakeHint}${pricingFocusHint}`;
@@ -2287,7 +2276,7 @@ export async function generateResponse(input: GenerateResponseInput): Promise<st
         tokens: usage?.total_tokens,
       });
 
-      return content;
+      return guardMetaOutboundReply(content, turnLanguage);
     } catch (err) {
       const isLastAttempt = attempt === MAX_RETRIES - 1;
       logger.warn(
@@ -2485,7 +2474,11 @@ export async function generateResponseWithActions(
       }
 
       const content = msg?.content?.trim();
-      const reply = content || (toolCalls.length > 0 ? '' : llmEmptyFallback(turnLanguage));
+      const reply = content
+        ? guardMetaOutboundReply(content, turnLanguage)
+        : toolCalls.length > 0
+          ? ''
+          : llmEmptyFallback(turnLanguage);
 
       await logAIResponseGeneration({
         correlationId,

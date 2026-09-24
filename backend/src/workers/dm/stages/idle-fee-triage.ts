@@ -38,9 +38,12 @@ import { isIdleFeeTriageTurn } from './idle-fee-triage-predicate';
 import { lastAssistantDmContent } from '../../../utils/reason-first-triage';
 import { buildReceptionistGreetingMessage } from '../../../utils/instagram-greeting-copy';
 import { getConnectedInstagramDisplayName } from '../../../services/instagram-connect-service';
+import { listDoctorAvailabilityWindows } from '../../../services/availability-service';
+import { formatWeeklyTimingsLine } from '../../../utils/availability-timings';
 import { isTeleconsultCatalogAuthoritative } from '../../../utils/consultation-fees';
 import {
   buildHoursMissingLead,
+  buildHoursOnPageLead,
   buildHoursQuoteLead,
   buildAddressNotSharedLead,
   buildLocationQuoteLead,
@@ -288,8 +291,9 @@ export const idleFeeTriageStage: DmStageHandler = {
       (!state.step || state.step === 'responded') &&
       isHoursFaqUserMessage(text)
     ) {
-      const hours = doctorSettings?.business_hours_summary?.trim();
-      if (hours) {
+      const windows = await listDoctorAvailabilityWindows(ctx.doctorId);
+      const timings = formatWeeklyTimingsLine(windows);
+      if (timings.kind === 'quote') {
         dmRoutingBranch = 'booking_start_link_first';
         state = {
           ...state,
@@ -297,7 +301,28 @@ export const idleFeeTriageStage: DmStageHandler = {
           step: 'responded',
           updatedAt: new Date().toISOString(),
         };
-        replyText = buildHoursQuoteLead(ctx.turnLanguage, hours);
+        replyText = buildHoursQuoteLead(ctx.turnLanguage, timings.text);
+      } else if (timings.kind === 'page') {
+        dmRoutingBranch = 'booking_start_link_first';
+        const readyHours = applyLeadPlusPageLink({
+          state: mergeTriage(
+            {
+              ...state,
+              lastIntent: intentResult.intent,
+              updatedAt: new Date().toISOString(),
+            },
+            { activeFlow: undefined }
+          ),
+          intent: intentResult.intent,
+          conversationId: conversation.id,
+          doctorId: ctx.doctorId,
+          doctorSettings,
+          patient: null,
+          language: ctx.turnLanguage,
+          lead: buildHoursOnPageLead(ctx.turnLanguage),
+        });
+        state = readyHours.state;
+        replyText = readyHours.replyText;
       } else {
         dmRoutingBranch = 'booking_start_link_first';
         const readyHours = applyLeadPlusPageLink({

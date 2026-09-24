@@ -58,6 +58,7 @@ patient_phone       TEXT NOT NULL  -- Encrypted at rest (platform-level, Supabas
 appointment_date    TIMESTAMPTZ NOT NULL
 status              TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'confirmed', 'cancelled', 'completed', 'no_show'))  -- no_show: migration 031 (OPD-08)
 reason_for_visit    TEXT NULL  -- Patient main complaint/symptom (required for new bookings; migration 016)
+previsit_context    JSONB NULL -- migration 243 (clk-09): illness chips since, course, tried, aim. NULL if skipped. Not a copy of reason_for_visit.
 notes               TEXT NULL  -- Optional patient extras + doctor default_notes (migration 016)
 related_appointment_id UUID NULL REFERENCES appointments(id) ON DELETE SET NULL  -- migration 031: same-day return / link to prior visit
 opd_event_type      TEXT NOT NULL DEFAULT 'standard' CHECK (opd_event_type IN ('standard', 'return_after_completed'))  -- migration 031
@@ -152,7 +153,8 @@ platform_external_id TEXT          -- Platform user ID (e.g. Instagram PSID) - m
 consent_status      TEXT DEFAULT 'pending' CHECK (consent_status IN ('pending', 'granted', 'revoked'))  -- migration 005
 consent_granted_at  TIMESTAMPTZ    -- When consent was granted - migration 005
 consent_revoked_at  TIMESTAMPTZ    -- When consent was revoked - migration 006
-consent_method      TEXT           -- How consent was obtained (e.g. instagram_dm) - migration 005
+consent_method      TEXT           -- How consent was obtained (e.g. instagram_dm, owned_booking_page) - migration 005
+registered_via      TEXT           -- bot | front_desk | booking_for_other | import | doctor | public_clinic (migration 242). Not PHI. NULL = unknown.
 created_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 ```
@@ -330,6 +332,7 @@ appointment_fee_minor   BIGINT NULL
 appointment_fee_currency TEXT NULL
 country                 TEXT NULL
 practice_name           TEXT NULL
+public_slug             TEXT NULL  -- migration 241; unique when set; URL-safe booking path (/d/:slug); not PHI
 timezone                TEXT NOT NULL DEFAULT 'Asia/Kolkata'
 slot_interval_minutes   INTEGER NOT NULL DEFAULT 15
 max_advance_booking_days INTEGER NOT NULL DEFAULT 90
@@ -374,6 +377,22 @@ updated_at              TIMESTAMPTZ NOT NULL DEFAULT now()
 **RLS:** Enabled (doctor read/insert/update own row; service role can read for worker)
 
 **See:** e-task-4.1-per-doctor-payment-settings.md; **e-task-opd-01** (OPD modes); **SFU-01** (`service-catalog-schema.ts`, `PATCH` doctor settings)
+
+---
+
+### `availability` (migration **001**, visit types **244**)
+
+**Purpose:** Weekly blocks a doctor is bookable. Each row is one day and time range. Migration 244 adds which visit types that block covers. Existing rows default to all four types. Not PHI.
+
+**Columns added in 244:**
+```sql
+in_clinic  BOOLEAN NOT NULL DEFAULT true
+video      BOOLEAN NOT NULL DEFAULT true
+voice      BOOLEAN NOT NULL DEFAULT true
+text       BOOLEAN NOT NULL DEFAULT true
+```
+
+Instagram timings are built from these rows. `doctor_settings.business_hours_summary` is no longer the timings source.
 
 ---
 
@@ -535,7 +554,7 @@ document_type   TEXT NOT NULL  -- lab_report | imaging | discharge_summary | old
 report_date     DATE NULL
 ordered_by      TEXT NOT NULL  -- us | outside
 source          TEXT NOT NULL  -- front_desk | patient
-actor_id        UUID NOT NULL  -- uploader; no FK
+actor_id        UUID NOT NULL  -- front_desk: auth.users id. source = patient: patients.id. No FK. No upload route in clk-09.
 created_at      TIMESTAMPTZ NOT NULL
 updated_at      TIMESTAMPTZ NOT NULL
 extracted_results JSONB NOT NULL DEFAULT '[]'  -- migration 236; staff-confirmed lab panels
@@ -608,7 +627,7 @@ doctor_id       UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE
 patient_id      UUID NOT NULL REFERENCES patients(id) ON DELETE CASCADE
 appointment_id  UUID NOT NULL REFERENCES appointments(id) ON DELETE CASCADE
 source          TEXT NOT NULL  -- front_desk | patient
-actor_id        UUID NOT NULL  -- last writer; no FK
+actor_id        UUID NOT NULL  -- front_desk and assistant: auth.users id. source = patient: patients.id. No FK.
 why_today       TEXT NOT NULL
 allergies       JSONB NOT NULL -- { none: true } | { none: false, items: [{ name, reaction? }] }
 medicines       JSONB NOT NULL -- { none: true } | { none: false, items: [{ name, dose? }] }

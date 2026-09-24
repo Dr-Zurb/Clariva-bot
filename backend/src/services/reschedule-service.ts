@@ -39,10 +39,11 @@ async function loadReschedulableAppointment(
   id: string;
   doctor_id: string;
   status: string;
+  consultation_type: string | null;
 }> {
   const { data, error } = await supabase
     .from('appointments')
-    .select('id, doctor_id, status')
+    .select('id, doctor_id, status, consultation_type')
     .eq('id', appointmentId)
     .single();
 
@@ -138,7 +139,8 @@ async function applyRescheduleDate(
 async function findNextAvailableSlotStart(
   doctorId: string,
   correlationId: string,
-  timezone: string
+  timezone: string,
+  visitType?: 'in_clinic' | 'video' | 'voice' | 'text'
 ): Promise<Date | null> {
   const maxDays = env.AVAILABLE_SLOTS_MAX_FUTURE_DAYS;
   const today = DateTime.now().setZone(timezone).startOf('day');
@@ -148,7 +150,10 @@ async function findNextAvailableSlotStart(
     const dateYmd = day.toISODate();
     if (!dateYmd) continue;
 
-    const slots = await getAvailableSlots(doctorId, dateYmd, correlationId, { timezone });
+    const slots = await getAvailableSlots(doctorId, dateYmd, correlationId, {
+      timezone,
+      visitType,
+    });
     if (slots.length > 0) {
       return new Date(slots[0]!.start);
     }
@@ -170,7 +175,19 @@ export async function rescheduleAppointmentToNextAvailable(
   const settings = await getDoctorSettings(row.doctor_id);
   const timezone = settings?.timezone ?? 'Asia/Kolkata';
 
-  const nextStart = await findNextAvailableSlotStart(row.doctor_id, correlationId, timezone);
+  const visitType =
+    row.consultation_type === 'in_clinic' ||
+    row.consultation_type === 'video' ||
+    row.consultation_type === 'voice' ||
+    row.consultation_type === 'text'
+      ? row.consultation_type
+      : undefined;
+  const nextStart = await findNextAvailableSlotStart(
+    row.doctor_id,
+    correlationId,
+    timezone,
+    visitType
+  );
   if (!nextStart) {
     throw new ConflictError('No available slots found for reschedule');
   }

@@ -1590,12 +1590,85 @@ export async function getSlotPageInfo(
  */
 export async function getDaySlots(
   bookingToken: string,
-  date: string
+  date: string,
+  visit?: "in_clinic" | "video" | "voice" | "text"
 ): Promise<ApiSuccess<DaySlotsData>> {
   const params = new URLSearchParams({ token: bookingToken, date });
+  if (visit) params.set("visit", visit);
   return request<DaySlotsData>(
     `/api/v1/bookings/day-slots?${params.toString()}`
   );
+}
+
+export interface PublicClinicPageInfoData {
+  doctorId: string;
+  practiceName: string;
+  timezone: string;
+  mode: "book";
+  opdMode?: OpdModeApi;
+  bookingAllowed?: boolean;
+  bookingBlockedReason?: BookingBlockedReasonApi;
+  serviceCatalog?: BookingPageCatalogApi | null;
+}
+
+export async function getPublicClinicPageInfo(
+  slug: string
+): Promise<ApiSuccess<PublicClinicPageInfoData>> {
+  const params = new URLSearchParams({ slug });
+  return request<PublicClinicPageInfoData>(
+    `/api/v1/bookings/public/page-info?${params.toString()}`
+  );
+}
+
+export async function getPublicClinicDaySlots(
+  slug: string,
+  date: string,
+  visit?: "in_clinic" | "video" | "voice" | "text"
+): Promise<ApiSuccess<DaySlotsData>> {
+  const params = new URLSearchParams({ slug, date });
+  if (visit) params.set("visit", visit);
+  return request<DaySlotsData>(
+    `/api/v1/bookings/public/day-slots?${params.toString()}`
+  );
+}
+
+export interface PublicClinicCheckoutApi extends PublicBookingIntakeApi {
+  slug: string;
+  slotStart: string;
+  patientAge: number;
+  patientSex: "male" | "female" | "other";
+  catalogServiceKey?: string;
+  catalogServiceId?: string;
+  consultationModality?: ConsultationModalityApi;
+  conversationToken?: string;
+}
+
+export async function postPublicClinicCheckout(
+  body: PublicClinicCheckoutApi
+): Promise<ApiSuccess<SelectSlotAndPayData>> {
+  const res = await fetch(`${requireApiBaseUrl()}/api/v1/bookings/public/checkout`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    cache: "no-store",
+  });
+  const json = (await res.json().catch(() => ({}))) as
+    | ApiSuccess<SelectSlotAndPayData>
+    | ApiError;
+  if (!res.ok) {
+    const message = isApiError(json) ? json.error.message : "Request failed";
+    const err = new Error(message) as Error & { status?: number; code?: string };
+    err.status = res.status;
+    if (isApiError(json)) err.code = json.error.code;
+    throw err;
+  }
+  if (isApiError(json)) {
+    const err = new Error(json.error.message) as Error & { status?: number; code?: string };
+    err.status = json.error.statusCode ?? 500;
+    err.code = json.error.code;
+    throw err;
+  }
+  return json as ApiSuccess<SelectSlotAndPayData>;
 }
 
 /**

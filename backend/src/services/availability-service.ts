@@ -80,12 +80,25 @@ export async function getDoctorAvailability(
   return (availability || []) as Availability[];
 }
 
+export type AvailabilityVisitType = 'in_clinic' | 'video' | 'voice' | 'text';
+
 /** Options for getAvailableSlots (per-doctor overrides) */
 export interface GetAvailableSlotsOptions {
   slotIntervalMinutes?: number;
   minAdvanceHours?: number;
   /** IANA timezone (e.g. Asia/Kolkata) for slot timestamps; availability times are local to this TZ (e-task-2) */
   timezone?: string;
+  /** Keep blocks that include this visit type. Omitted means every block. */
+  visitType?: AvailabilityVisitType;
+}
+
+function windowAllowsVisit(
+  row: Availability,
+  visit: AvailabilityVisitType | undefined
+): boolean {
+  if (!visit) return true;
+  const flag = row[visit];
+  return flag !== false;
 }
 
 /**
@@ -128,7 +141,9 @@ export async function getAvailableSlots(
 
   const slots = generateSlotsFromAvailability(
     date,
-    availabilityRows as Availability[],
+    (availabilityRows as Availability[]).filter((row) =>
+      windowAllowsVisit(row, options?.visitType)
+    ),
     slotInterval,
     timezone
   );
@@ -205,7 +220,9 @@ export async function getDaySlotsWithStatus(
 
   const allSlots = generateSlotsFromAvailability(
     date,
-    availabilityRows as Availability[],
+    (availabilityRows as Availability[]).filter((row) =>
+      windowAllowsVisit(row, options?.visitType)
+    ),
     slotInterval,
     timezone
   );
@@ -625,9 +642,59 @@ export async function updateAvailability(
  * @param userId - Authenticated user ID
  * @returns Array of created availability records
  */
+export async function listDoctorAvailabilityWindows(
+  doctorId: string
+): Promise<Availability[]> {
+  const admin = getSupabaseAdminClient();
+  if (!admin) return [];
+  const { data, error } = await admin
+    .from('availability')
+    .select('*')
+    .eq('doctor_id', doctorId)
+    .eq('is_available', true);
+  if (error || !data) return [];
+  return data as Availability[];
+}
+
+export async function isSlotOpenForVisit(input: {
+  doctorId: string;
+  slotStartIso: string;
+  visit: AvailabilityVisitType;
+  timezone: string;
+  correlationId: string;
+  slotIntervalMinutes?: number;
+}): Promise<boolean> {
+  const date = new Intl.DateTimeFormat('en-CA', {
+    timeZone: input.timezone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date(input.slotStartIso));
+  const { slots } = await getDaySlotsWithStatus(
+    input.doctorId,
+    date,
+    input.correlationId,
+    {
+      timezone: input.timezone,
+      slotIntervalMinutes: input.slotIntervalMinutes,
+      visitType: input.visit,
+    }
+  );
+  const target = new Date(input.slotStartIso).getTime();
+  return slots.some((slot) => Math.abs(new Date(slot.start).getTime() - target) < 1000);
+}
+
 export async function replaceDoctorAvailability(
   doctorId: string,
-  slots: Array<{ day_of_week: number; start_time: string; end_time: string }>,
+  slots: Array<{
+    day_of_week: number;
+    start_time: string;
+    end_time: string;
+    in_clinic: boolean;
+    video: boolean;
+    voice: boolean;
+    text: boolean;
+  }>,
   correlationId: string,
   userId: string
 ): Promise<Availability[]> {
@@ -647,7 +714,15 @@ export async function replaceDoctorAvailability(
 
 async function doReplaceDoctorAvailability(
   doctorId: string,
-  slots: Array<{ day_of_week: number; start_time: string; end_time: string }>,
+  slots: Array<{
+    day_of_week: number;
+    start_time: string;
+    end_time: string;
+    in_clinic: boolean;
+    video: boolean;
+    voice: boolean;
+    text: boolean;
+  }>,
   correlationId: string,
   userId: string
 ): Promise<Availability[]> {
@@ -684,6 +759,10 @@ async function doReplaceDoctorAvailability(
     start_time: normalizeTime(s.start_time),
     end_time: normalizeTime(s.end_time),
     is_available: true,
+    in_clinic: s.in_clinic,
+    video: s.video,
+    voice: s.voice,
+    text: s.text,
   }));
 
   const { data: inserted, error: insertError } = await admin

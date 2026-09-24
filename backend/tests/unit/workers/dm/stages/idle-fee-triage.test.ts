@@ -33,6 +33,10 @@ jest.mock('../../../../../src/services/instagram-connect-service', () => ({
   getConnectedInstagramDisplayName: jest.fn(async () => null),
 }));
 
+jest.mock('../../../../../src/services/availability-service', () => ({
+  listDoctorAvailabilityWindows: jest.fn(async () => []),
+}));
+
 jest.mock('../../../../../src/workers/dm/returning-patient', () => ({
   extractPatientFirstName: jest.fn((name?: string | null) => {
     const trimmed = name?.trim();
@@ -58,6 +62,7 @@ import {
 import * as patientService from '../../../../../src/services/patient-service';
 import { shouldUseReturningPatientMemory } from '../../../../../src/workers/dm/returning-patient';
 import { getConnectedInstagramDisplayName } from '../../../../../src/services/instagram-connect-service';
+import { listDoctorAvailabilityWindows } from '../../../../../src/services/availability-service';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 
@@ -381,17 +386,28 @@ describe('idleFeeTriageStage', () => {
   });
 
   it('hours on file → quote only, no /book', async () => {
+    (listDoctorAvailabilityWindows as unknown as { mockResolvedValueOnce: (v: unknown) => void }).mockResolvedValueOnce(
+      [1, 2, 3, 4, 5].map((day) => ({
+        day_of_week: day,
+        start_time: '09:00:00',
+        end_time: '17:00:00',
+        is_available: true,
+        in_clinic: true,
+        video: true,
+        voice: true,
+        text: true,
+      }))
+    );
     const ctx = minimalTurnCtx({
       intentResult: { intent: 'ask_question', confidence: 1 },
       text: 'timings?',
       doctorSettings: {
         timezone: 'Asia/Kolkata',
-        business_hours_summary: 'Mon–Fri 9am–5pm',
       } as never,
     });
 
     const result = await idleFeeTriageStage.handle(ctx);
-    expect(result.reply).toBe('Timings: Mon–Fri 9am–5pm');
+    expect(result.reply).toBe('Timings: Mon–Fri 9:00 am–5:00 pm');
     expect(result.reply).not.toContain('https://example.com/book');
     expect(result.reply).not.toMatch(/get an appointment/i);
   });

@@ -945,6 +945,8 @@ export function validateGetPaymentParams(params: unknown): GetPaymentParams {
 // Booking Slot Selection (e-task-3)
 // ============================================================================
 
+const availabilityVisitQuery = z.enum(['in_clinic', 'video', 'voice', 'text']).optional();
+
 export const daySlotsQuerySchema = z.object({
   token: z.string().min(1, 'token is required'),
   date: z
@@ -954,6 +956,7 @@ export const daySlotsQuerySchema = z.object({
       const d = new Date(val + 'T12:00:00Z');
       return !isNaN(d.getTime());
     }, 'date must be valid'),
+  visit: availabilityVisitQuery,
 });
 
 export type DaySlotsQuery = z.infer<typeof daySlotsQuerySchema>;
@@ -1027,6 +1030,86 @@ export function validateSlotPageInfoQuery(
   if (!result.success) {
     const first = result.error.issues[0];
     const message = first?.message ?? 'Invalid query parameters';
+    throw new ValidationError(message);
+  }
+  return result.data;
+}
+
+const publicSlugField = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .min(3)
+  .max(48)
+  .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, 'slug is invalid');
+
+/** clk-02: public clinic page. Token is not accepted here. */
+export const publicClinicPageQuerySchema = z.object({
+  slug: publicSlugField,
+});
+
+export type PublicClinicPageQuery = z.infer<typeof publicClinicPageQuerySchema>;
+
+export function validatePublicClinicPageQuery(
+  query: Record<string, string | undefined>
+): PublicClinicPageQuery {
+  const result = publicClinicPageQuerySchema.safeParse(query);
+  if (!result.success) {
+    const first = result.error.issues[0];
+    const message = first?.message ?? 'Invalid query parameters';
+    throw new ValidationError(message);
+  }
+  return result.data;
+}
+
+/** clk-02: public day slots. Same date rule as the token day-slot query. */
+export const publicClinicDaySlotsQuerySchema = z.object({
+  slug: publicSlugField,
+  date: daySlotsQuerySchema.shape.date,
+  visit: availabilityVisitQuery,
+});
+
+export type PublicClinicDaySlotsQuery = z.infer<typeof publicClinicDaySlotsQuerySchema>;
+
+export function validatePublicClinicDaySlotsQuery(
+  query: Record<string, string | undefined>
+): PublicClinicDaySlotsQuery {
+  const result = publicClinicDaySlotsQuerySchema.safeParse(query);
+  if (!result.success) {
+    const first = result.error.issues[0];
+    const message = first?.message ?? 'Invalid query parameters';
+    throw new ValidationError(message);
+  }
+  return result.data;
+}
+
+/** clk-03: public clinic checkout. No booking token. Consent must be granted. */
+export const publicClinicCheckoutBodySchema = z.object({
+  slug: publicSlugField,
+  slotStart: selectSlotBodySchema.shape.slotStart,
+  catalogServiceKey: z.string().min(1).max(64).trim().optional(),
+  catalogServiceId: z.string().uuid().optional(),
+  consultationModality: z.enum(['text', 'voice', 'video']).optional(),
+  patientName: patientNameSchema,
+  patientPhone: patientPhoneSchema,
+  patientAge: patientAgeSchema,
+  patientSex: z.enum(['male', 'female', 'other']),
+  reasonForVisit: z
+    .string()
+    .trim()
+    .min(1, 'Reason is required')
+    .max(REASON_MAX_LEN, `Reason for visit must be at most ${REASON_MAX_LEN} characters`),
+  consentGranted: z.literal(true, { message: 'Consent is required' }),
+  conversationToken: z.string().trim().min(1).max(2000).optional(),
+});
+
+export type PublicClinicCheckoutBody = z.infer<typeof publicClinicCheckoutBodySchema>;
+
+export function validatePublicClinicCheckoutBody(body: unknown): PublicClinicCheckoutBody {
+  const result = publicClinicCheckoutBodySchema.safeParse(body);
+  if (!result.success) {
+    const first = result.error.issues[0];
+    const message = first?.message ?? 'Invalid request body';
     throw new ValidationError(message);
   }
   return result.data;
@@ -1629,6 +1712,17 @@ export const investigationsCustomOrdersSchema = z
 export const patchDoctorSettingsSchema = z
   .object({
     practice_name: z.string().max(200).trim().nullable().optional(),
+    public_slug: z
+      .string()
+      .trim()
+      .toLowerCase()
+      .min(3)
+      .max(48)
+      .regex(
+        /^[a-z0-9]+(?:-[a-z0-9]+)*$/,
+        'Booking link must be 3–48 characters: lowercase letters, numbers, and hyphens'
+      )
+      .optional(),
     timezone: z.string().max(100).trim().optional(),
     slot_interval_minutes: z.number().int().min(1).max(60).optional(),
     max_advance_booking_days: z.number().int().min(1).max(365).optional(),
@@ -1814,19 +1908,64 @@ function parseTimeToMinutes(t: string): number {
   return h * 3600 + m * 60 + s;
 }
 
+const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+const availabilitySlotSchema = z
+  .object({
+    day_of_week: z.number().int().min(0).max(6, 'day_of_week must be 0-6 (Sunday-Saturday)'),
+    start_time: z.string().regex(TIME_REGEX, 'start_time must be HH:MM or HH:MM:SS'),
+    end_time: z.string().regex(TIME_REGEX, 'end_time must be HH:MM or HH:MM:SS'),
+    in_clinic: z.boolean().optional().default(true),
+    video: z.boolean().optional().default(true),
+    voice: z.boolean().optional().default(true),
+    text: z.boolean().optional().default(true),
+  })
+  .refine(
+    (s) => parseTimeToMinutes(s.start_time) < parseTimeToMinutes(s.end_time),
+    'start_time must be before end_time'
+  )
+  .refine(
+    (s) => s.in_clinic || s.video || s.voice || s.text,
+    'Choose at least one visit type for each block'
+  );
+
 export const putAvailabilitySchema = z.object({
-  slots: z.array(
-    z
-      .object({
-        day_of_week: z.number().int().min(0).max(6, 'day_of_week must be 0-6 (Sunday-Saturday)'),
-        start_time: z.string().regex(TIME_REGEX, 'start_time must be HH:MM or HH:MM:SS'),
-        end_time: z.string().regex(TIME_REGEX, 'end_time must be HH:MM or HH:MM:SS'),
-      })
-      .refine(
-        (s) => parseTimeToMinutes(s.start_time) < parseTimeToMinutes(s.end_time),
-        'start_time must be before end_time'
-      )
-  ),
+  slots: z.array(availabilitySlotSchema).superRefine((slots, ctx) => {
+    const visitLabels = [
+      ['in_clinic', 'in-clinic'],
+      ['video', 'video'],
+      ['voice', 'voice'],
+      ['text', 'text'],
+    ] as const;
+    for (let i = 0; i < slots.length; i++) {
+      for (let j = i + 1; j < slots.length; j++) {
+        const a = slots[i]!;
+        const b = slots[j]!;
+        if (a.day_of_week !== b.day_of_week) continue;
+        const aStart = parseTimeToMinutes(a.start_time);
+        const aEnd = parseTimeToMinutes(a.end_time);
+        const bStart = parseTimeToMinutes(b.start_time);
+        const bEnd = parseTimeToMinutes(b.end_time);
+        if (aStart === bStart && aEnd === bEnd) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `Two blocks on ${DAY_NAMES[a.day_of_week]} share the same start and end`,
+          });
+          return;
+        }
+        if (aStart < bEnd && bStart < aEnd) {
+          const shared = visitLabels.find(([key]) => a[key] && b[key]);
+          if (shared) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              message: `Two ${shared[1]} blocks overlap on ${DAY_NAMES[a.day_of_week]}`,
+            });
+            return;
+          }
+        }
+      }
+    }
+  }),
 });
 
 export type PutAvailabilityBody = z.infer<typeof putAvailabilitySchema>;

@@ -85,6 +85,14 @@ export function buildHoursQuoteLead(language: ConversationLanguage, hours: strin
   });
 }
 
+export function buildHoursOnPageLead(language: ConversationLanguage): string {
+  return pickLocale(language, {
+    en: 'Timings are on this page:',
+    hi: 'Timings is page par hain:',
+    pa: 'Timings is page te han:',
+  });
+}
+
 export function buildHoursMissingLead(language: ConversationLanguage): string {
   return pickLocale(language, {
     en: "I don't have timings saved. They're on this page:",

@@ -455,7 +455,14 @@ export interface Patient {
   consent_method?: string | null;
   medical_record_number: string | null; // Human-readable Patient ID (migration 018); NULL until first payment (migration 046)
   /** How the row was created (migrations 201 / 206). Not PHI. */
-  registered_via?: 'bot' | 'front_desk' | 'booking_for_other' | 'import' | 'doctor' | null;
+  registered_via?:
+    | 'bot'
+    | 'front_desk'
+    | 'booking_for_other'
+    | 'import'
+    | 'doctor'
+    | 'public_clinic'
+    | null;
   /** Auth user who created the row (migration 206). Not PHI. */
   created_by?: string | null;
   /** Read-time label for created_by. Never log. Not a DB column. */
@@ -543,6 +550,10 @@ export interface Message {
  * @property start_time - Start time for availability (TIME)
  * @property end_time - End time for availability (TIME)
  * @property is_available - Whether doctor is available during this time
+ * @property in_clinic - In-clinic visits can book inside this block (migration 244)
+ * @property video - Video visits can book inside this block (migration 244)
+ * @property voice - Voice visits can book inside this block (migration 244)
+ * @property text - Text visits can book inside this block (migration 244)
  * @property created_at - Timestamp when record was created
  * @property updated_at - Timestamp when record was last updated
  */
@@ -553,6 +564,11 @@ export interface Availability {
   start_time: string; // TIME type stored as string (HH:MM:SS format)
   end_time: string; // TIME type stored as string (HH:MM:SS format)
   is_available: boolean;
+  /** Missing means open for that visit type (rows written before migration 244). */
+  in_clinic?: boolean;
+  video?: boolean;
+  voice?: boolean;
+  text?: boolean;
   created_at: Date;
   updated_at: Date;
 }
