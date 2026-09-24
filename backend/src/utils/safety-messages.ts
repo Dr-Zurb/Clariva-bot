@@ -149,6 +149,27 @@ export function resolveSafetyMessage(
   return MEDICAL_QUERY_BY_LOCALE[locale];
 }
 
+/**
+ * Last check on model-written Instagram/Facebook text.
+ * Appointment-fee wording stays. Health, emergency numbers, and “doctor” do not.
+ */
+const META_REPLY_HARD_BLOCK =
+  /\b(112|108)\b|\bprescriptions?\b|\bdiagnos|\bsymptoms?\b|\bmedicines?\b|\bmedications?\b|\ballerg|\bhospital\b|\bemergency\b|\bdoctors?\b|\bdr\.?\b|visit type|welcome back|डॉक्टर|ਡਾਕਟਰ|अस्पताल|ਹਸਪਤਾਲ|इमरजेंसी|ਐਮਰਜੈਂਸੀ/i;
+
+export function guardMetaOutboundReply(text: string, language: ConversationLanguage): string {
+  const softened = text
+    .replace(/\bteleconsultations\b/gi, 'online appointments')
+    .replace(/\bteleconsultation\b/gi, 'online appointment')
+    .replace(/\bteleconsults\b/gi, 'online appointments')
+    .replace(/\bteleconsult\b/gi, 'online appointment')
+    .replace(/\bconsultations\b/gi, 'appointments')
+    .replace(/\bconsultation\b/gi, 'appointment');
+  if (META_REPLY_HARD_BLOCK.test(softened)) {
+    return resolveSafetyMessage('medical_query', language);
+  }
+  return softened;
+}
+
 // ---------------------------------------------------------------------------
 // Emergency signal detection (keyword / phrase; deterministic, no logging)
 // ---------------------------------------------------------------------------
