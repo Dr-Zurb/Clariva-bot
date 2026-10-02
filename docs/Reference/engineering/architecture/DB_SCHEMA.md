@@ -216,6 +216,24 @@ updated_at              TIMESTAMPTZ NOT NULL DEFAULT now()
 
 ---
 
+### `visit_page_links`
+
+**Purpose:** One-hour short code for an Instagram clinic link. Stands in for the signed booking token so the chat message stays short. Not PHI. The code is a capability and must not be logged.
+
+**Columns:**
+```sql
+code             TEXT PRIMARY KEY
+conversation_id  UUID NOT NULL REFERENCES conversations(id) ON DELETE CASCADE
+doctor_id        UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE
+purpose          TEXT NULL CHECK (purpose IN ('times', 'change'))
+expires_at       TIMESTAMPTZ NOT NULL
+created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+```
+
+**RLS:** Enabled with no policies. Service role only.
+
+---
+
 ### `messages`
 
 **Purpose:** Store individual messages in conversations. PHI in content (encrypted at rest).

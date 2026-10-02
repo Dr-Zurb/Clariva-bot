@@ -16,6 +16,12 @@ jest.mock('../../../../src/services/instagram-connect-service', () => ({
   getConnectedInstagramDisplayName: jest.fn(async () => null),
 }));
 
+jest.mock('../../../../src/services/visit-page-link-service', () => ({
+  mintVisitPageLink: jest.fn(async () => 'https://example.com/d/clinic'),
+  findVisitPageLink: jest.fn(async () => null),
+  isVisitPageCode: jest.fn(() => false),
+}));
+
 jest.mock('../../../../src/utils/booking-page-url', () => ({
   buildBookingPageUrl: jest.fn(() => 'https://example.com/d/clinic'),
   buildPublicClinicPageUrl: jest.fn(() => null),

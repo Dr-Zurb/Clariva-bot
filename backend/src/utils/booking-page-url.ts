@@ -43,6 +43,17 @@ export function buildBookingPageUrl(
   return `${bookingPageBase()}?token=${token}${forQuery}`;
 }
 
+/** Instagram chat link. `code` is the short visit-page code, not the signed token. */
+export function buildShortVisitPageUrl(
+  publicSlug: string,
+  code: string,
+  purpose?: BookingPageFor
+): string {
+  const origin = bookingPageBase().replace(/\/book$/, '');
+  const forQuery = purpose === 'times' || purpose === 'change' ? `&for=${purpose}` : '';
+  return `${origin}/d/${publicSlug}?c=${code}${forQuery}`;
+}
+
 /**
  * Reschedule stays on `/book?token=`. The token includes the appointment.
  */

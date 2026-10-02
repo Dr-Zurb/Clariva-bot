@@ -2,7 +2,8 @@
  * Instagram-only signpost. Facebook keeps the stage router.
  */
 
-import { buildBookingPageUrl, type BookingPageFor } from '../../../utils/booking-page-url';
+import { mintVisitPageLink } from '../../../services/visit-page-link-service';
+import type { BookingPageFor } from '../../../utils/booking-page-url';
 import { isTeleconsultCatalogAuthoritative } from '../../../utils/consultation-fees';
 import { instagramAddressToShare } from '../../../utils/instagram-faq-copy';
 import {
@@ -69,12 +70,13 @@ export async function handleInstagramVisitTurn(ctx: DmTurnContext): Promise<DmTu
       appointment_fee_currency: ctx.doctorSettings?.appointment_fee_currency,
     }),
   });
-  const url = buildBookingPageUrl(
-    ctx.conversation.id,
-    ctx.doctorId,
-    ctx.doctorSettings?.public_slug,
-    bookingPurpose(kind)
-  );
+  const url = await mintVisitPageLink({
+    conversationId: ctx.conversation.id,
+    doctorId: ctx.doctorId,
+    publicSlug: ctx.doctorSettings?.public_slug,
+    purpose: bookingPurpose(kind),
+    correlationId: ctx.correlationId,
+  });
   const firstReply = isFirstAutomatedReply(ctx);
   const reply = renderInstagramVisitReply({
     kind,

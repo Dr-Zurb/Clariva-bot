@@ -8,6 +8,7 @@ import { env } from '../config/env';
 import { logger } from '../config/logger';
 import { DoctorNotVerifiedError, InternalError, UnauthorizedError, ValidationError } from '../utils/errors';
 import { verifyBookingToken } from '../utils/booking-token';
+import { findVisitPageLink, isVisitPageCode } from './visit-page-link-service';
 import { handleSupabaseError } from '../utils/db-helpers';
 import { getDoctorSettings } from './doctor-settings-service';
 import { isSlotOpenForVisit } from './availability-service';
@@ -74,6 +75,13 @@ async function resolveOptionalConversation(
 ): Promise<OptionalConversation> {
   const raw = token?.trim();
   if (!raw) return { kind: 'none' };
+  if (isVisitPageCode(raw)) {
+    const link = await findVisitPageLink(raw, correlationId);
+    if (!link || link.doctorId !== doctorId) return { kind: 'none' };
+    const conversation = await findConversationById(link.conversationId, correlationId);
+    if (!conversation || conversation.doctor_id !== doctorId) return { kind: 'none' };
+    return { kind: 'attach', conversationId: link.conversationId };
+  }
   let verified: ReturnType<typeof verifyBookingToken>;
   try {
     verified = verifyBookingToken(raw);

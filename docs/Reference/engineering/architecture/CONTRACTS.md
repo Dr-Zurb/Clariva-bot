@@ -427,7 +427,7 @@ Token routes `slot-page-info` and `day-slots` stay token-only.
 | `catalogServiceKey` | string | Optional. Required when the practice catalog has more than one service. |
 | `catalogServiceId` | uuid | Optional catalog id. |
 | `consultationModality` | `text` \| `voice` \| `video` | Optional. Required when the chosen service has more than one mode. |
-| `conversationToken` | string | Optional. The `?c=` booking token. When it verifies for this slug's doctor and is not a reschedule token, the appointment's `conversation_id` is set and the token checkout's conversation confirmation runs. Missing, expired, or other-doctor tokens still book with `conversation_id` null and add nothing about the other practice. A reschedule token for this doctor is **400** and does not create a second appointment. |
+| `conversationToken` | string | Optional. The `?c=` value: either the signed booking token or an 8-character visit-page code. When it verifies for this slug's doctor and is not a reschedule token, the appointment's `conversation_id` is set and the token checkout's conversation confirmation runs. Missing, expired, or other-doctor tokens still book with `conversation_id` null and add nothing about the other practice. A reschedule token for this doctor is **400** and does not create a second appointment. |
 
 **Success `data`:** `{ paymentUrl, redirectUrl, appointmentId, mode: "book", opdMode, tokenNumber?, prepPath? }`. `prepPath` is a relative `/book/prep?t=` history-form link for the same session. The booking SMS carries the absolute form of that link. One SMS. The reason is not in the message.
 

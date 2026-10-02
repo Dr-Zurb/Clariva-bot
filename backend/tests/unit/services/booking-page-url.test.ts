@@ -47,6 +47,19 @@ describe('booking page URL', () => {
     expect(plain.searchParams.get('for')).toBeNull();
   });
 
+  it('builds a short clinic link from an 8-character code', async () => {
+    const { buildShortVisitPageUrl } = await loadUrls();
+    const change = new URL(buildShortVisitPageUrl('city-clinic', 'k7m2pq9x', 'change'));
+    const times = new URL(buildShortVisitPageUrl('city-clinic', 'k7m2pq9x', 'times'));
+    const plain = new URL(buildShortVisitPageUrl('city-clinic', 'k7m2pq9x'));
+    expect(change.pathname).toBe('/d/city-clinic');
+    expect(change.searchParams.get('c')).toBe('k7m2pq9x');
+    expect(change.searchParams.get('for')).toBe('change');
+    expect(times.searchParams.get('for')).toBe('times');
+    expect(plain.searchParams.get('for')).toBeNull();
+    expect(change.searchParams.get('c')).not.toContain('.');
+  });
+
   it('keeps reschedule on /book?token=', async () => {
     const { buildReschedulePageUrl, verifyBookingToken } = await loadUrls();
     const url = new URL(buildReschedulePageUrl(CONV, DOC, APPT));

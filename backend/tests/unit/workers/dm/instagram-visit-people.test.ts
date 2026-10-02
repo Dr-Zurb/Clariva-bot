@@ -21,6 +21,15 @@ jest.mock('../../../../src/services/automated-messaging-opt-out', () => {
   };
 });
 
+jest.mock('../../../../src/services/visit-page-link-service', () => ({
+  mintVisitPageLink: jest.fn(
+    async (input: { purpose?: string }) =>
+      input.purpose === 'times' || input.purpose === 'change'
+        ? `https://example.com/d/clinic?for=${input.purpose}`
+        : 'https://example.com/d/clinic'
+  ),
+}));
+
 jest.mock('../../../../src/utils/booking-page-url', () => ({
   buildBookingPageUrl: jest.fn(
     (_conversationId: string, _doctorId: string, _slug?: string | null, purpose?: string) =>

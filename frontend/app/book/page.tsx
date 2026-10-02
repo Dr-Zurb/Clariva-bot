@@ -31,6 +31,11 @@ import {
   resolvePublicClinicIntake,
   type PublicBookingIntakeField,
 } from "@/lib/public-booking-intake";
+import { ChangeVisitScreen } from "@/components/public-clinic/ChangeVisitScreen";
+import {
+  clinicDisplayName,
+  PublicClinicFrame,
+} from "@/components/public-clinic/PublicClinicFrame";
 import {
   bookingPagePurpose,
   bookingPageTitle,
@@ -486,51 +491,31 @@ function BookPageContent({ slug }: { slug?: string }) {
 
   if (pageLoading) {
     return (
-      <main className="min-h-screen bg-gray-50 p-4">
-        <div className="mx-auto max-w-md">
-          <p className="text-center text-gray-600">Loading…</p>
-        </div>
-      </main>
+      <PublicClinicFrame width="md">
+        <p className="text-center text-sm text-muted-foreground">Loading…</p>
+      </PublicClinicFrame>
     );
   }
 
   if (pageError) {
     return (
-      <main className="min-h-screen bg-gray-50 p-4">
-        <div className="mx-auto max-w-md rounded-lg border border-red-200 bg-red-50 p-6 text-center">
-          <p className="font-medium text-red-800">{pageError}</p>
-        </div>
-      </main>
+      <PublicClinicFrame width="md">
+        <p className="text-center text-sm font-medium text-red-800">{pageError}</p>
+      </PublicClinicFrame>
     );
   }
 
   if (purpose === "change" && mode !== "reschedule") {
-    return (
-      <main className="min-h-screen bg-gray-50 p-4">
-        <div className="mx-auto max-w-md">
-          <h1 className="text-xl font-semibold text-gray-900">
-            {bookingPageTitle("change", false)}
-          </h1>
-          {practiceName ? (
-            <p className="mt-1 text-sm text-gray-600">{practiceName}</p>
-          ) : null}
-          <p className="mt-4 text-sm text-gray-700">No upcoming visits from this chat.</p>
-          <Link
-            href={newVisitHref}
-            className="mt-6 inline-block text-sm font-medium text-blue-700 underline"
-          >
-            New visit
-          </Link>
-        </div>
-      </main>
-    );
+    return <ChangeVisitScreen practiceName={practiceName} newVisitHref={newVisitHref} />;
   }
+
+  const clinic = clinicDisplayName(practiceName);
 
   if (queueSuccess) {
     return (
-      <main className="min-h-screen bg-gray-50 p-4">
-        <div className="mx-auto max-w-md rounded-lg border border-green-200 bg-white p-6 shadow-sm">
-          <h1 className="text-xl font-semibold text-gray-900">
+      <PublicClinicFrame width="md">
+        <div>
+          <h1 className="text-xl font-semibold tracking-tight text-foreground">
             You&apos;re in the queue
           </h1>
           <p className="mt-3 text-sm text-gray-700">
@@ -544,7 +529,7 @@ function BookPageContent({ slug }: { slug?: string }) {
           <p className="mt-4 text-sm text-gray-700">{AFTER_BOOKING_URGENCY_NOTICE}</p>
           <button
             type="button"
-            className="mt-6 w-full rounded-lg bg-blue-600 px-4 py-3 text-base font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+            className="mt-6 w-full rounded-lg bg-primary px-4 py-3 text-base font-medium text-primary-foreground hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
             onClick={() => {
               window.location.href = isSlug ? "/book/success" : queueSuccess.redirectUrl;
             }}
@@ -552,20 +537,20 @@ function BookPageContent({ slug }: { slug?: string }) {
             {isSlug ? "Continue" : "Continue to Instagram"}
           </button>
         </div>
-      </main>
+      </PublicClinicFrame>
     );
   }
 
   return (
-    <main className="min-h-screen bg-gray-50 p-4">
-      <div className="mx-auto max-w-md">
-        <h1 className="text-xl font-semibold text-gray-900">
+    <PublicClinicFrame align="start" width="md">
+      <div>
+        {mode !== "reschedule" && clinic ? (
+          <p className="text-sm font-medium text-[hsl(var(--halo-navy))]">{clinic}</p>
+        ) : null}
+        <h1 className="mt-1 text-xl font-semibold tracking-tight text-foreground">
           {bookingPageTitle(purpose, mode === "reschedule")}
         </h1>
-        {mode !== "reschedule" && practiceName ? (
-          <p className="mt-1 text-sm text-gray-600">{practiceName}</p>
-        ) : null}
-        <p className="mt-1 text-sm text-gray-600">
+        <p className="mt-3 text-sm leading-6 text-muted-foreground">
           {mode === "reschedule"
             ? opdMode === "queue"
               ? "Pick a new day for your visit. You’ll keep a place in the queue for that session day."
@@ -979,7 +964,7 @@ function BookPageContent({ slug }: { slug?: string }) {
               !intakeReady ||
               !visitTermsReady
             }
-            className="w-full rounded-lg bg-blue-600 px-4 py-3 text-base font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+            className="w-full rounded-lg bg-primary px-4 py-3 text-base font-medium text-primary-foreground hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {saving
               ? "Processing…"
@@ -996,7 +981,7 @@ function BookPageContent({ slug }: { slug?: string }) {
           )}
         </div>
       </div>
-    </main>
+    </PublicClinicFrame>
   );
 }
 
@@ -1004,11 +989,9 @@ export function PublicClinicBookPage({ slug }: { slug: string }) {
   return (
     <Suspense
       fallback={
-        <main className="min-h-screen bg-gray-50 p-4">
-          <div className="mx-auto max-w-md">
-            <p className="text-center text-gray-600">Loading…</p>
-          </div>
-        </main>
+        <PublicClinicFrame width="md">
+          <p className="text-center text-sm text-muted-foreground">Loading…</p>
+        </PublicClinicFrame>
       }
     >
       <BookPageContent slug={slug} />
@@ -1020,11 +1003,9 @@ export default function BookPage() {
   return (
     <Suspense
       fallback={
-        <main className="min-h-screen bg-gray-50 p-4">
-          <div className="mx-auto max-w-md">
-            <p className="text-center text-gray-600">Loading…</p>
-          </div>
-        </main>
+        <PublicClinicFrame width="md">
+          <p className="text-center text-sm text-muted-foreground">Loading…</p>
+        </PublicClinicFrame>
       }
     >
       <BookPageContent />
