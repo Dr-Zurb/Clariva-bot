@@ -25,7 +25,6 @@ function gateCtxForTurn(turnCtx: DmTurnContext): DmGateContext {
     ...turnCtx.gateCtx,
     platform: turnCtx.conversation.platform,
     doctorId: turnCtx.doctorId,
-    instagramAccountName: turnCtx.instagramAccountName ?? null,
   };
 }
 

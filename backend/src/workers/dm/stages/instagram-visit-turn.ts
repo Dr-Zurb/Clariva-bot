@@ -11,7 +11,6 @@ import {
   singleVisitFeeAmount,
   type InstagramVisitKind,
 } from '../../../utils/instagram-visit-replies';
-import { getConnectedInstagramDisplayName } from '../../../services/instagram-connect-service';
 import type { DmHandlerBranch } from '../../../types/dm-instrumentation';
 import type { DmTurnContext, DmTurnResult } from '../stage-router';
 
@@ -64,22 +63,20 @@ export async function handleInstagramVisitTurn(ctx: DmTurnContext): Promise<DmTu
       appointment_fee_currency: ctx.doctorSettings?.appointment_fee_currency,
     }),
   });
-  const accountName =
-    ctx.instagramAccountName ??
-    (await getConnectedInstagramDisplayName(ctx.doctorId, ctx.correlationId));
   const url = buildBookingPageUrl(
     ctx.conversation.id,
     ctx.doctorId,
     ctx.doctorSettings?.public_slug
   );
+  const firstReply = isFirstAutomatedReply(ctx);
   const reply = renderInstagramVisitReply({
     kind,
     language: ctx.turnLanguage,
-    accountName,
     url,
     address,
     feeAmount,
-    includeStopHint: kind !== 'silent' && isFirstAutomatedReply(ctx),
+    greet: kind === 'menu' && firstReply,
+    includeStopHint: kind !== 'silent' && firstReply,
   });
   return {
     branch: branchFor(kind),

@@ -343,15 +343,15 @@ describe('RBH-02 webhook worker characterization', () => {
       expect(aiService.generateResponse).not.toHaveBeenCalled();
       expect(mockSendMessage).toHaveBeenCalledWith(
         '987654321012345',
-        expect.stringContaining('Automated messages are paused here.'),
+        expect.stringContaining('Messages are paused here.'),
         'corr-pause',
-        'doctor-token'
+        'doctor-token',
+        TEST_DOCTOR_ID
       );
-      expect(conversationService.updateConversationState).toHaveBeenCalledWith(
-        TEST_CONV_ID,
-        expect.objectContaining({ step: 'responded' }),
-        'corr-pause'
-      );
+      const stateCall = jest.mocked(conversationService.updateConversationState).mock.calls[0];
+      expect(stateCall?.[0]).toBe(TEST_CONV_ID);
+      expect(stateCall?.[1]).toEqual(expect.objectContaining({ step: 'responded' }));
+      expect(stateCall?.[2]).toBe('corr-pause');
       expect(mockMarkProcessed).toHaveBeenCalledWith('evt-pause-1', 'instagram');
     });
   });

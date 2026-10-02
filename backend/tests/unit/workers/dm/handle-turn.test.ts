@@ -226,8 +226,10 @@ describe('executeDmTurn — emergency head gate (rcp-08)', () => {
     const result = await executeDmTurn(ctx, { conflictRecovery: true });
 
     expect(result.branch).toBe('conflict_recovery_ai');
-    expect(result.reply).toContain('Automated reply.');
-    expect(result.reply).toContain('Visits:');
+    expect(result.reply).toContain('Hi, please choose from the following:');
+    expect(result.reply).toContain('1. New visit / revisit / follow-up');
+    expect(result.reply).not.toMatch(/automated/i);
+    expect(result.reply).not.toContain('https://');
     expect(result.reply).not.toContain('Halo Aid');
     expect(ctx.runGenerateResponse).not.toHaveBeenCalled();
   });

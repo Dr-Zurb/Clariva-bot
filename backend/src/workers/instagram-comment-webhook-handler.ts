@@ -30,7 +30,6 @@ import {
   instagramCommentPrivateReply,
   singleVisitFeeAmount,
 } from '../utils/instagram-visit-replies';
-import { getConnectedInstagramDisplayName } from '../services/instagram-connect-service';
 import type { CommentIntent } from '../types/ai';
 import type { WebhookProvider } from '../types/webhook';
 
@@ -232,10 +231,8 @@ export async function processInstagramCommentWebhook(
         commenterIgId,
         correlationId
       );
-      const accountName = await getConnectedInstagramDisplayName(doctorId, correlationId);
       const dmMessage = instagramCommentPrivateReply({
         language,
-        accountName,
         url: buildPublicClinicPageUrl(settings?.public_slug),
         feeAmount: singleVisitFeeAmount(settings),
         askedFee: intent === 'pricing_inquiry',

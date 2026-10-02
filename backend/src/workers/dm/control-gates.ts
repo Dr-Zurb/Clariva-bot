@@ -33,6 +33,7 @@ import type { ConversationLanguage } from '../../utils/conversation-language';
 import type { ConversationPlatform } from '../../types/database';
 import { buildBookingPageUrl } from '../../utils/booking-page-url';
 import {
+  instagramPauseReply,
   instagramStartAck,
   instagramStopAck,
   renderInstagramVisitReply,
@@ -62,7 +63,6 @@ export interface DmGateContext {
   /** Set by executeDmTurn from the conversation. Facebook keeps the shared copy. */
   platform?: ConversationPlatform;
   doctorId?: string;
-  instagramAccountName?: string | null;
 }
 
 export interface DmGateResult {
@@ -224,10 +224,13 @@ function instagramOrSafetyReply(ctx: DmGateContext): string {
   if (ctx.platform !== 'instagram') {
     return resolveSafetyMessage('medical_query', ctx.turnLanguage);
   }
+  const firstReply = !ctx.recentMessages.some(
+    (message) => message.sender_type === 'system' || message.sender_type === 'doctor'
+  );
   return renderInstagramVisitReply({
     kind: 'health',
     language: ctx.turnLanguage,
-    accountName: ctx.instagramAccountName,
+    includeStopHint: firstReply,
   });
 }
 
@@ -265,7 +268,6 @@ export const messagingOptOutGate: DmControlGate = {
           ctx.platform === 'instagram'
             ? instagramStartAck({
                 language: ctx.turnLanguage,
-                accountName: ctx.instagramAccountName,
                 url: instagramVisitUrl(ctx),
               })
             : buildAutomatedMessagingStartAckMessage({ language: ctx.turnLanguage }),
@@ -330,7 +332,11 @@ export const receptionistPausedGate: DmControlGate = {
   handle(ctx) {
     return {
       branch: 'receptionist_paused',
-      reply: resolveReceptionistPauseMessage(ctx.doctorSettings, ctx.turnLanguage),
+      reply:
+        ctx.platform === 'instagram'
+          ? ctx.doctorSettings?.instagram_receptionist_pause_message?.trim() ||
+            instagramPauseReply(ctx.turnLanguage)
+          : resolveReceptionistPauseMessage(ctx.doctorSettings, ctx.turnLanguage),
       nextState: {
         ...ctx.state,
         lastIntent: ctx.intentResult.intent,

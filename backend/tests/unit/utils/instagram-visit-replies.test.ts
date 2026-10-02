@@ -7,11 +7,17 @@ import {
 
 const URL = 'https://example.com/d/city-clinic';
 
+const MENU = [
+  'Please choose from the following:',
+  '1. New visit / revisit / follow-up',
+  '2. Change or cancel a visit',
+  '3. Check availability',
+].join('\n');
+
 function rendered(kind: Parameters<typeof renderInstagramVisitReply>[0]['kind']): string {
   return renderInstagramVisitReply({
     kind,
     language: 'en',
-    accountName: 'City Clinic',
     url: URL,
     address: '12 Market Road',
     feeAmount: '₹500',
@@ -30,15 +36,56 @@ describe('instagram visit replies', () => {
         })
       ).toBe('visits');
     }
-    expect(rendered('visits')).toBe(`Visits: ${URL}`);
-    expect(rendered('menu')).toContain('Automated reply from City Clinic.');
+    expect(rendered('visits')).toBe(`New visit / revisit / follow-up: ${URL}`);
+    expect(rendered('menu')).toBe(MENU);
     expect(rendered('menu')).not.toContain('Halo Aid');
   });
 
-  it('drops the name when the profile name is missing', () => {
+  it('greets only the first menu, then repeats the list without Hi', () => {
     expect(
-      renderInstagramVisitReply({ kind: 'menu', language: 'en', url: URL })
-    ).toContain('Automated reply.\nVisits:');
+      renderInstagramVisitReply({
+        kind: 'menu',
+        language: 'en',
+        greet: true,
+        includeStopHint: true,
+      })
+    ).toBe(
+      [
+        'Hi, please choose from the following:',
+        '1. New visit / revisit / follow-up',
+        '2. Change or cancel a visit',
+        '3. Check availability',
+        'Reply STOP to stop these messages.',
+      ].join('\n')
+    );
+    expect(rendered('menu')).not.toMatch(/^Hi/);
+    for (const kind of ['menu', 'health', 'non_text', 'address_hidden', 'online'] as const) {
+      expect(rendered(kind)).not.toContain(URL);
+      expect(rendered(kind)).not.toMatch(/^Hi/);
+    }
+  });
+
+  it('routes each menu number and word to its link', () => {
+    const route = (text: string) =>
+      classifyInstagramVisitTurn({
+        text,
+        hasSingleFee: false,
+        hasSharedAddress: false,
+        onlineOnly: false,
+      });
+    expect(route('1')).toBe('visits');
+    expect(route('2')).toBe('change');
+    expect(route('3.')).toBe('times');
+    expect(route('new visit')).toBe('visits');
+    expect(route('revisit')).toBe('visits');
+    expect(route('follow up')).toBe('visits');
+    expect(route('follow-up')).toBe('visits');
+    expect(route('change a visit')).toBe('change');
+    expect(route('cancel a visit')).toBe('cancel');
+    expect(route('availability')).toBe('times');
+    expect(rendered('change')).toBe(`Change or cancel a visit: ${URL}`);
+    expect(rendered('cancel')).toBe(`Change or cancel a visit: ${URL}`);
+    expect(rendered('times')).toBe(`Availability: ${URL}`);
   });
 
   it('answers a single fee in chat and several fees with a link', () => {
@@ -94,7 +141,7 @@ describe('instagram visit replies', () => {
       })
     ).toBe('silent');
     expect(instagramStopAck('en')).toBe(
-      'Automated replies are off. Send START to turn them on.'
+      'Messages are off. Reply START to turn them back on.'
     );
   });
 
@@ -119,7 +166,7 @@ describe('instagram visit replies', () => {
       const text = rendered(kind).replace(/https?:\/\/\S+/g, '');
       expect(text).not.toMatch(/\bI\b/);
       expect(text).not.toContain('?');
-      expect(text).not.toMatch(/\b(appointment|booking|slot|token|queue|Halo Aid)\b/i);
+      expect(text).not.toMatch(/\b(appointment|booking|slot|token|queue|Halo Aid|automated|consultation)\b/i);
     }
   });
 });
