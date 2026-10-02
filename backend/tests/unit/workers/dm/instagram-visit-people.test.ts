@@ -241,10 +241,14 @@ describe('instagram replies people actually send', () => {
   });
 
   it('does not answer a health question or share a hidden address', async () => {
-    const health = await handleInstagramVisitTurn(turn('I have fever what should I take', prior, singleFee));
-    expect(health.reply).toContain('Health questions are not answered in this chat.');
-    expect(health.reply).not.toContain(LINK);
-    expect(health.reply.startsWith('Hi,')).toBe(false);
+    for (const text of ['I have fever what should I take', 'mere sir dard hai', 'pet dard', 'bukhar hai', 'khansi', 'ulti']) {
+      const health = await handleInstagramVisitTurn(turn(text, prior, singleFee));
+      expect(health.reply).toContain('Health questions are not answered here.');
+      expect(health.reply).toContain('Please choose from the following:');
+      expect(health.reply).not.toContain(LINK);
+      expect(health.reply.startsWith('Hi,')).toBe(false);
+      expect(health.reply.toLowerCase()).not.toContain(text.toLowerCase());
+    }
 
     const firstHealth = await executeDmTurn(turn('i have chest pain', [], singleFee));
     expect(firstHealth.branch).toBe('emergency_safety');
@@ -302,6 +306,12 @@ describe('instagram replies people actually send', () => {
     );
     expect(renderInstagramVisitReply({ kind: 'fee', language: 'hi', feeAmount: '₹500' })).toBe(
       'Visit fee: ₹500.'
+    );
+    expect(renderInstagramVisitReply({ kind: 'health', language: 'hi-Latn' })).toContain(
+      'Yahan health questions ka jawab nahi diya jata.'
+    );
+    expect(renderInstagramVisitReply({ kind: 'health', language: 'hi-Latn' })).toContain(
+      'Inme se chunein:'
     );
   });
 });

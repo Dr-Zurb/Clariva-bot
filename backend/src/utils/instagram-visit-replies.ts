@@ -45,6 +45,9 @@ const VIEW_ASK = /\b(my visit|my appointment|appointment status|visit status|sta
 const TIMES_ASK =
   /\b(timings?|availability|available|slots?|what time|open slots?|time kya|time batao)\b/i;
 const PLACE_ASK = /\b(kahan|kidhar)\b/i;
+/** Hinglish and Punjabi symptoms. English "I have a fever" stays in the shared checker. */
+const SYMPTOM_LOCAL =
+  /\b(?:sir|sar|seer|pet|pait|matha)\s*dard\b|\b(?:dards?|bukha+r|kha+nsi|ulti)\b|सिर\s*दर्द|पेट\s*दर्द|दर्द|बुखार|खांसी|उल्टी|ਸਿਰ\s*ਦਰਦ|ਪੇਟ\s*ਦਰਦ|ਦਰਦ|ਬੁਖਾਰ|ਖੰਘ|ਉਲਟੀ/i;
 const EMOJI_ONLY = /^(?:\p{Extended_Pictographic}|\uFE0F|\u200D|\s)+$/u;
 const MENU_NUMBER =
   /^\s*(?:option|number|no\.?)?\s*([1-3])(?:st|nd|rd)?\s*[.)]?\s*(?:please|pls|plz)?\s*$/i;
@@ -132,7 +135,8 @@ export function classifyInstagramVisitTurn(input: {
   const clinical =
     input.intent === 'medical_query' ||
     input.intent === 'emergency' ||
-    isClinicalAdviceUserMessage(text);
+    isClinicalAdviceUserMessage(text) ||
+    SYMPTOM_LOCAL.test(text);
   if (clinical) return 'health';
   if (input.signalsFeePricing || isFeeAsk(text)) {
     return input.hasSingleFee ? 'fee' : 'fees';
@@ -203,14 +207,14 @@ export function renderInstagramVisitReply(input: {
     case 'health':
       body = [
         line(input.language, {
-          en: 'Health questions are not answered in this chat.',
+          en: 'Health questions are not answered here.',
           hi: {
-            native: 'इस chat में health questions का जवाब नहीं दिया जाता।',
-            latin: 'Is chat mein health questions ka jawab nahi diya jata.',
+            native: 'यहाँ health questions का जवाब नहीं दिया जाता।',
+            latin: 'Yahan health questions ka jawab nahi diya jata.',
           },
           pa: {
-            native: 'ਇਸ chat ਵਿੱਚ health questions ਦਾ ਜਵਾਬ ਨਹੀਂ ਦਿੱਤਾ ਜਾਂਦਾ।',
-            latin: 'Is chat vich health questions da jawab nahi ditta janda.',
+            native: 'ਇੱਥੇ health questions ਦਾ ਜਵਾਬ ਨਹੀਂ ਦਿੱਤਾ ਜਾਂਦਾ।',
+            latin: 'Ethe health questions da jawab nahi ditta janda.',
           },
         }),
         options,
