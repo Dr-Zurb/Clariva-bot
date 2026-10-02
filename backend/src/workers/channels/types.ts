@@ -23,7 +23,8 @@ export type InboundSkipReason =
   | 'sender_is_page'
   | 'no_page_ids'
   | 'no_doctor'
-  | 'no_doctor_token';
+  | 'no_doctor_token'
+  | 'message_unsent';
 
 export interface ParseInboundSkip {
   skip: true;
@@ -32,6 +33,8 @@ export interface ParseInboundSkip {
   pageId?: string;
   pageIds?: string[];
   doctorId?: string;
+  /** Instagram mid when the person unsent the message. */
+  platformMessageId?: string;
 }
 
 export interface InboundTenant {

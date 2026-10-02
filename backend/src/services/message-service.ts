@@ -279,3 +279,54 @@ export async function getSenderIdByPlatformMessageId(
   await logDataAccess(correlationId, undefined as any, 'message', message.conversation_id);
   return conv.platform_conversation_id;
 }
+
+/**
+ * Remove a stored Instagram message after the person unsends it.
+ * Scoped to this doctor's conversation. No reply is sent. Content is not logged.
+ *
+ * @returns true when a row was deleted
+ */
+export async function deleteUnsentMessage(
+  doctorId: string,
+  platformMessageId: string,
+  correlationId: string
+): Promise<boolean> {
+  const supabaseAdmin = getSupabaseAdminClient();
+  if (!supabaseAdmin) {
+    throw new InternalError('Service role client not available');
+  }
+  const mid = platformMessageId.trim();
+  if (!mid) return false;
+
+  const { data: message, error: msgError } = await supabaseAdmin
+    .from('messages')
+    .select('id, conversation_id')
+    .eq('platform_message_id', mid)
+    .limit(1)
+    .maybeSingle();
+
+  if (msgError) {
+    handleSupabaseError(msgError, correlationId);
+  }
+  if (!message?.id || !message.conversation_id) return false;
+
+  const { data: conv, error: convError } = await supabaseAdmin
+    .from('conversations')
+    .select('id')
+    .eq('id', message.conversation_id)
+    .eq('doctor_id', doctorId)
+    .maybeSingle();
+
+  if (convError) {
+    handleSupabaseError(convError, correlationId);
+  }
+  if (!conv) return false;
+
+  const { error: deleteError } = await supabaseAdmin.from('messages').delete().eq('id', message.id);
+  if (deleteError) {
+    handleSupabaseError(deleteError, correlationId);
+  }
+
+  await logDataModification(correlationId, undefined as any, 'delete', 'message', message.id);
+  return true;
+}

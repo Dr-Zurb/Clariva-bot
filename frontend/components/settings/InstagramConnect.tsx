@@ -77,9 +77,11 @@ export default function InstagramConnect({ token }: InstagramConnectProps) {
           ? "This Instagram account is already linked to another Halo Aid account."
           : errParam === "no_pages"
             ? "Could not find an Instagram professional account. Switch to a Business or Creator account, then try again."
-            : errParam === "doctor_not_verified"
+            :         errParam === "doctor_not_verified"
               ? "Verify your medical registration before connecting Instagram."
-              : "Connection was not completed.";
+              : errParam === "webhook_subscribe_failed"
+                ? "Instagram is linked, but incoming messages could not be turned on. Disconnect and connect again."
+                : "Connection was not completed.";
       setMessage({ type: "error", text: errMsg });
       window.history.replaceState({}, "", window.location.pathname);
     }

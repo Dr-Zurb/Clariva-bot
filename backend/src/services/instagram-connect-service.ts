@@ -43,6 +43,8 @@ const INSTAGRAM_BUSINESS_SCOPES = [
   'instagram_business_basic',
   'instagram_business_manage_messages',
 ];
+/** Messages only. Comments and reactions are not in this review file's token. */
+export const INSTAGRAM_DM_SUBSCRIBED_FIELDS = 'messages';
 const META_HTTP_TIMEOUT_MS = 10000;
 
 // ============================================================================
@@ -1020,22 +1022,23 @@ export async function getInstagramAccessTokenForDoctor(
 
 /**
  * Enable webhook delivery for an Instagram professional account (Instagram Login).
- * Best-effort: logs warning on failure (doctor still connected).
+ * Subscribes to `messages` only, which this file's token can cover.
  *
+ * @returns false when Meta rejects the subscription. The doctor row may already be saved.
  * @see https://developers.facebook.com/docs/instagram-platform/webhooks/
  */
 export async function subscribeInstagramAccountApps(
   instagramAccountId: string,
   accessToken: string,
   correlationId: string
-): Promise<void> {
+): Promise<boolean> {
   try {
     await axios.post(
       `${INSTAGRAM_GRAPH_BASE}/v18.0/${encodeURIComponent(instagramAccountId)}/subscribed_apps`,
       null,
       {
         params: {
-          subscribed_fields: 'messages,comments,messaging_postbacks,message_reactions',
+          subscribed_fields: INSTAGRAM_DM_SUBSCRIBED_FIELDS,
           access_token: accessToken,
         },
         timeout: META_HTTP_TIMEOUT_MS,
@@ -1045,6 +1048,7 @@ export async function subscribeInstagramAccountApps(
       { correlationId, pageId: instagramAccountId },
       'Instagram account subscribed_apps ok'
     );
+    return true;
   } catch (err: unknown) {
     logger.warn(
       {
@@ -1055,6 +1059,7 @@ export async function subscribeInstagramAccountApps(
       },
       'Instagram account subscribed_apps failed'
     );
+    return false;
   }
 }
 

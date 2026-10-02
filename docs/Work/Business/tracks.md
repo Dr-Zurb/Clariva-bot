@@ -257,34 +257,46 @@ Instagram Login app only (not Facebook Page / `pages_*`). **First file** — req
 - `instagram_business_basic`
 - `instagram_business_manage_messages`
 
-Comments (`instagram_business_manage_comments`) is the second file after this one is approved. Justification still written below. Frame as **clinic Instagram receptionist / appointment FAQs**, not diagnosis or a medical-records product.
+Comments (`instagram_business_manage_comments`) is the second file after this one is approved. Justification still written below. Frame this file as a clinic connecting Instagram and receiving fixed replies plus a link to its own page. Not diagnosis, and not a medical-records product.
+
+**2 Oct 2026 — request list:** App Review shows only `instagram_business_basic` and `instagram_business_manage_messages`. Removed from this request before Next: `pages_show_list`, `pages_manage_metadata`, `pages_messaging`, `business_management`, `pages_read_engagement`, plus `instagram_business_content_publish`, `instagram_business_manage_insights`, Human Agent, and `instagram_business_manage_comments`. Facebook Login for Business stays on the app for a later file. Do not add those rows back.
 
 **Safety plan Phase 5 (checked 15 Sep 2026 against current Meta docs):** one private reply per comment within 7 days of the comment; Instagram Live only during the broadcast; follow-ups only after the person replies, then inside 24 hours; payload is `POST …/messages` with `recipient.comment_id` and `message.text` (no `messaging_type` on that path). Outside-window Graph errors are `code` 10 with subcodes `2534022`, `2018278`, or `2018065`. Sources: [private replies](https://developers.facebook.com/docs/instagram-platform/private-replies/) · [error codes](https://developers.facebook.com/docs/messenger-platform/error-codes/). Our send path matches. Do not use `HUMAN_AGENT` for automated reminders.
 
-**Full terms audit (15 Sep 2026):** all Meta/Instagram terms snapshotted + read → [`meta-terms/2026-09-15/AUDIT.md`](../../Reference/engineering/compliance/meta-terms/2026-09-15/AUDIT.md). Submission-relevant: keep the review framing accurate (receptionist / appointment FAQs — Dev Policies §1 bans misleading Meta), and know the Dev Policies §5 Healthcare clause is with counsel (L10 point 7) before submitting claims about health data. After approval, unused permissions can be suspended in 28 days — keep flows exercised.
+**Full terms audit (15 Sep 2026):** all Meta/Instagram terms snapshotted + read → [`meta-terms/2026-09-15/AUDIT.md`](../../Reference/engineering/compliance/meta-terms/2026-09-15/AUDIT.md). Submission-relevant: keep the review framing accurate to the signpost (fixed menu and a link — Dev Policies §1 bans misleading Meta), and know the Dev Policies §5 Healthcare clause is with counsel (L10 point 7) before submitting claims about health data. After approval, unused permissions can be suspended in 28 days — keep flows exercised.
 
-**This sitting:** one screencast covering Connect → Instagram login → dashboard shows connected → test DM reply (hours / book). Testers are fine. Record after deploy so the booking link is the public host, not Tailscale.
+**This sitting:** two screencasts, one per permission, on the deployed signpost. Testers are fine. The booking link in the tape must be the public host, not Tailscale.
 
-**Then (same week, after the file exists):** App Dashboard → App Review → request Advanced Access for `basic` + `messages` only. Paste privacy `https://haloaid.com/privacy`, terms `https://haloaid.com/terms`, data-deletion `https://haloaid.com/data-deletion-callback`. Submit. Clock is weeks.
+**Then:** App Dashboard → App Review → the two permissions already on the request. Paste privacy `https://haloaid.com/privacy`, terms `https://haloaid.com/terms`, data-deletion `https://haloaid.com/data-deletion-callback`. Submit. Clock is weeks.
 
 Do **not** click Security Centre → Access verification (Tech Provider). That is a different program.
 
-**Screencast shot list (one file, ~3–5 min, dummy patient only)**
+**Screencasts (two files, dummy patient only, English UI).** Meta's permission reference requires these shots. Record the send happening; do not paste screenshots of a message already sitting in the inbox. Tape the deployed signpost. If the live account still answers hours inside the chat, deploy first.
 
-1. Halo Aid dashboard → Connect Instagram → login succeeds → account shows connected.
-2. Dummy user DMs the test clinic: “what are your hours” / “I want to book” → bot replies with FAQ and/or the booking-page link. Do **not** collect name, phone, or symptoms. Do **not** show Rx, chart, or a diagnosis.
-3. Optional 10s: dummy types STOP → ack. Proves opt-out.
-4. Do **not** tape comments or emergency/symptom lines on this file. Comments is the second file.
+`instagram_business_basic`
 
-Say on the tape, once: “This is a clinic receptionist. People message or comment; we answer appointment FAQs and send a link to book on our site.”
+1. Settings → Connect Instagram → the Instagram grant screen.
+2. Back on Settings, “Connected as @username”.
+
+`instagram_business_manage_messages`
+
+1. The same Instagram grant, in this recording.
+2. Dummy account messages the clinic (“hi”, then “1”). Halo Aid sends the fixed menu, then the new-visit link. Cut to the Instagram inbox, web or the app, and show that message arriving.
+3. App Dashboard → Instagram → API Integration Helper: generate the send-message cURL on screen.
+
+Do not type a symptom. Do not show a chart. Do not tape comments. Optional 10s: dummy types STOP and the opt-out line comes back.
+
+Say once, on the messages tape: “The clinic connects Instagram. Halo Aid answers with a fixed menu and a link to the clinic’s own page. Health questions are not answered in Instagram.”
 
 **Paste into each permission (honest — clinic, not a generic salon bot; not a medical-records app)**
 
 `instagram_business_basic`  
-Halo Aid lets a clinic connect their Instagram professional account so they can run appointment FAQs from that account. We need basic profile/account access to complete Login, show the connected account in the clinic’s dashboard, and send replies as that account. We do not use this for ads or to scrape the graph.
+Halo Aid reads the connected Instagram professional account’s id and username once, at connect. The id is stored so inbound message webhooks route to the correct clinic. The username is shown on the clinic’s Settings page as “Connected as @username” so staff can confirm which account is linked. No media and no other profile fields are read. This is not used for ads.
 
 `instagram_business_manage_messages`  
-When someone DMs the clinic’s Instagram account about appointments (hours, fees, how to book), Halo Aid replies on the clinic’s behalf with short FAQs and a link to the clinic’s own booking page. We do not diagnose, prescribe, or collect medical history in the thread. People can type STOP to opt out of automated messages. We only message people who wrote first, inside Meta’s messaging window.
+Clinics connect their Instagram professional account in Halo Aid Settings. When a person messages that account, Halo Aid sends a fixed, pre-written reply: a three-item menu, a link to the clinic’s own page, a single visit fee when the clinic has set one, or the clinic address when the clinic has chosen to share it. Health questions get one fixed line saying they are not answered here, then the menu. Replies go out only after an inbound message, inside Meta’s standard response window. STOP turns automated replies off immediately; START turns them back on. The clinic can pause automated replies from Settings. Halo Aid also reads the sender’s username and profile picture to label the thread in the clinic’s inbox. The clinic reads that thread in Halo Aid and keeps replying itself in the Instagram app. No appointment details and no health information are collected in the Instagram thread.
+
+**Data handling, if the form asks.** Stored platform data is the message text, the sender id, the sender username, and the profile picture. Replies are fixed text, not written by a model. Unmatched messages can be sent, after redaction, to OpenAI for intent classification only. Do not answer that platform data is never shared with a processor.
 
 `instagram_business_manage_comments`  
 When someone comments on the clinic’s Feed post asking about appointments, we post a short public reply and may send one private reply with a link to the clinic’s booking page, following Instagram’s private-reply rules (one per comment, within 7 days). We do not use comments for diagnosis or to collect patient data.
@@ -300,13 +312,13 @@ When someone comments on the clinic’s Feed post asking about appointments, we 
 **Prep now (17 Sep 2026)** — already done: M2 verified, deletion callback live, privacy/terms live, paste-justifications written. Do not open Tech Provider Access verification.
 
 0. **First file is `basic` + `messages`.** OAuth no longer requests comments (2026-09-17). Integrations page shows Instagram only (Facebook card hidden, code stays). Comments stay in the repo; add the scope back when that file is submitted.
-1. **Deploy** frontend + backend so the demo is the current product (FAQ + `/book` link, STOP, no in-thread intake). Do not tape the old collect-name bot.
+1. **Deploy** frontend + backend so the demo is the current signpost (fixed menu, link, STOP, no in-thread intake). Do not tape the old hours FAQ or the collect-name bot.
 2. **App Dashboard:** privacy / terms / data-deletion URLs set. Add **tester** roles (your IG + one dummy patient IG). Reviewer must be able to log into Halo Aid — put that login in Review Instructions.
-3. **Dry-run once** (no record): Connect → dummy DM “hours” / “I want to book” → link only. Optional STOP.
-4. **Record** the shot list above (~3–5 min). Dummy only. Say the one clinic-receptionist line.
+3. **Dry-run once** (no record): Connect → dummy DM “hi”, then “1” → menu, then the link. Optional STOP.
+4. **Record** the two shot lists above. Dummy only. Say the one line on the messages tape.
 5. **Submit** Advanced Access for `basic` + `messages`. Paste the two justifications. Clock is weeks.
 
-**Next action:** Deploy current product, then dry-run and tape.
+**Next action:** Paste the two descriptions on the Next screen, then record the two screencasts.
 **Unblocked by:** M2 verified (13 Sep). M1 callback is live enough. Policy URLs are live.
 
 A pass here does **not** unlock a paying clinic. Next gate is **M4**.

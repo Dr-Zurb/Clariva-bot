@@ -14,6 +14,7 @@ import {
 } from '../services/conversation-service';
 import { resolveChannelAdapter } from './channels';
 import { instagramChannelAdapter } from './channels/instagram';
+import { isInstagramGestureOnly } from './channels/instagram/parse-inbound';
 import type { ChannelAdapter, ParseInboundSkip } from './channels/types';
 import { tryAcquireConversationLock, releaseConversationLock, tryAcquireThrottleAck } from '../config/queue';
 import { DEFAULT_RECEPTIONIST_PAUSE_MESSAGE } from './dm/control-gates';
@@ -31,6 +32,7 @@ import type { InstagramWebhookPayload, WebhookProvider } from '../types/webhook'
 import { buildNonTextAckMessage, buildThrottleAckMessage } from '../utils/dm-copy';
 import { getDoctorSettings } from '../services/doctor-settings-service';
 import { buildPublicClinicPageUrl } from '../utils/booking-page-url';
+import { deleteUnsentMessage } from '../services/message-service';
 import { renderInstagramVisitReply } from '../utils/instagram-visit-replies';
 import {
   resolveTurnLanguage,
@@ -66,6 +68,26 @@ async function handleParseInboundSkip(
 ): Promise<void> {
   const { eventId, correlationId, provider, entry0 } = params;
   const pageId = skip.pageId;
+
+  if (skip.reason === 'message_unsent') {
+    if (skip.doctorId && skip.platformMessageId) {
+      await deleteUnsentMessage(skip.doctorId, skip.platformMessageId, correlationId);
+    }
+    logger.info(
+      { eventId, provider, correlationId },
+      'Instagram message unsent; stored copy removed and no reply sent'
+    );
+    await markWebhookProcessed(eventId, provider);
+    await logAuditEvent({
+      correlationId,
+      userId: skip.doctorId,
+      action: 'webhook_processed',
+      resourceType: 'webhook',
+      status: 'success',
+      metadata: { event_id: eventId, provider, status: 'message_unsent' },
+    });
+    return;
+  }
 
   if (skip.reason === 'no_message') {
     const hasMessaging = Array.isArray(entry0?.messaging);
@@ -292,7 +314,13 @@ export async function processInstagramDmWebhook(params: {
       }
     }
 
-    if (!suppressAck) {
+    const gestureOnly = provider === 'instagram' && isInstagramGestureOnly(inbound.attachments);
+    if (gestureOnly) {
+      logger.info(
+        { eventId, provider, correlationId, senderId },
+        'Instagram reaction or sticker; no reply'
+      );
+    } else if (!suppressAck) {
       logger.info(
         { eventId, provider, correlationId, senderId },
         'Non-text message received (attachment/sticker/reaction); sending text-only acknowledgement'

@@ -14,11 +14,21 @@ describe("stripDoctorPrefix", () => {
   it("leaves bare names alone", () => {
     expect(stripDoctorPrefix("Ada Sharma")).toBe("Ada Sharma");
   });
+
+  it("keeps a trailing space so a last name can be typed", () => {
+    expect(stripDoctorPrefix("Ada ")).toBe("Ada ");
+    expect(stripDoctorPrefix("Ada Sharma ")).toBe("Ada Sharma ");
+  });
+
+  it("drops leading spaces that are not part of a name", () => {
+    expect(stripDoctorPrefix("  Ada")).toBe("Ada");
+  });
 });
 
 describe("formatDoctorDisplayName", () => {
   it("prefixes bare names", () => {
     expect(formatDoctorDisplayName("Ada Sharma")).toBe("Dr. Ada Sharma");
+    expect(formatDoctorDisplayName("Ada ")).toBe("Dr. Ada");
   });
 
   it("is idempotent for already-prefixed names", () => {

@@ -70,9 +70,11 @@ export function AuthMethodPicker({ mode }: AuthMethodPickerProps) {
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [practiceName, setPracticeName] = useState("");
   const [specialty, setSpecialty] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [otp, setOtp] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -151,6 +153,14 @@ export function AuthMethodPicker({ mode }: AuthMethodPickerProps) {
       setError(
         `Password is too short (min ${MIN_PASSWORD_LENGTH} characters).`
       );
+      return;
+    }
+    if (mode === "signup" && !confirmPassword) {
+      setError("Please confirm your password.");
+      return;
+    }
+    if (mode === "signup" && password !== confirmPassword) {
+      setError("Passwords do not match.");
       return;
     }
 
@@ -443,6 +453,38 @@ export function AuthMethodPicker({ mode }: AuthMethodPickerProps) {
 
         {mode === "signup" ? (
           <>
+            <div className="space-y-2">
+              <Label htmlFor="auth-confirm-password">Confirm password</Label>
+              <div className="relative">
+                <Input
+                  id="auth-confirm-password"
+                  type={showConfirmPassword ? "text" : "password"}
+                  autoComplete="new-password"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  disabled={loading}
+                  aria-describedby={error ? "auth-error" : undefined}
+                  className="pr-10"
+                />
+                <button
+                  type="button"
+                  className="absolute inset-y-0 right-0 flex items-center px-3 text-muted-foreground hover:text-foreground"
+                  onClick={() => setShowConfirmPassword((v) => !v)}
+                  aria-label={
+                    showConfirmPassword
+                      ? "Hide confirm password"
+                      : "Show confirm password"
+                  }
+                  disabled={loading}
+                >
+                  {showConfirmPassword ? (
+                    <EyeOff className="size-4" aria-hidden />
+                  ) : (
+                    <Eye className="size-4" aria-hidden />
+                  )}
+                </button>
+              </div>
+            </div>
             <div className="space-y-2">
               <Label htmlFor="auth-practice">
                 Practice name{" "}

@@ -6,7 +6,10 @@
  */
 
 import { getSupabaseAdminClient } from '../src/config/database';
-import { subscribeInstagramAccountApps } from '../src/services/instagram-connect-service';
+import {
+  INSTAGRAM_DM_SUBSCRIBED_FIELDS,
+  subscribeInstagramAccountApps,
+} from '../src/services/instagram-connect-service';
 import axios from 'axios';
 
 async function main() {
@@ -59,7 +62,7 @@ async function main() {
       null,
       {
         params: {
-          subscribed_fields: 'messages,comments,messaging_postbacks,message_reactions',
+          subscribed_fields: INSTAGRAM_DM_SUBSCRIBED_FIELDS,
           access_token: token,
         },
         timeout: 10000,

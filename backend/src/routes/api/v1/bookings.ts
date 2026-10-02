@@ -8,6 +8,7 @@
  * GET /api/v1/bookings/slot-page-info - Page metadata (token)
  * GET /api/v1/bookings/public/page-info - Practice header (public slug)
  * GET /api/v1/bookings/public/day-slots - Day slots (public slug)
+ * GET /api/v1/bookings/public/chat-visits - Upcoming visits from this chat (public slug + code)
  * POST /api/v1/bookings/public/checkout - Book without a conversation (public slug)
  * GET /api/v1/bookings/session/snapshot - OPD session snapshot (consultation token; e-task-opd-04)
  * POST /api/v1/bookings/session/early-join/accept | decline - early join (e-task-opd-04)
@@ -24,6 +25,7 @@ import {
   getSlotPageInfoHandler,
   getPublicClinicPageInfoHandler,
   getPublicClinicDaySlotsHandler,
+  getPublicChatVisitsHandler,
   postPublicClinicCheckoutHandler,
 } from '../../../controllers/booking-controller';
 import {
@@ -56,6 +58,7 @@ router.get('/slot-page-info', getSlotPageInfoHandler);
 
 router.get('/public/page-info', publicSessionLimiter, getPublicClinicPageInfoHandler);
 router.get('/public/day-slots', publicSessionLimiter, getPublicClinicDaySlotsHandler);
+router.get('/public/chat-visits', publicSessionLimiter, getPublicChatVisitsHandler);
 router.post('/public/checkout', publicSessionLimiter, postPublicClinicCheckoutHandler);
 router.get('/public/history', publicSessionLimiter, getPublicClinicHistoryHandler);
 router.get('/public/history/medicines', publicSessionLimiter, getPublicClinicMedicineSuggestHandler);

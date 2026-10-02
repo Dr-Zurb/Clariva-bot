@@ -297,14 +297,14 @@ export function renderInstagramVisitReply(input: {
 
   if (!input.includeStopHint) return body;
   const hint = line(input.language, {
-    en: 'Reply STOP to stop these messages.',
+    en: 'Reply STOP to stop these automated replies.',
     hi: {
-      native: 'ये messages बंद करने के लिए STOP reply करें।',
-      latin: 'Ye messages band karne ke liye STOP reply karein.',
+      native: 'ये automated replies बंद करने के लिए STOP reply करें।',
+      latin: 'Ye automated replies band karne ke liye STOP reply karein.',
     },
     pa: {
-      native: 'ਇਹ messages ਬੰਦ ਕਰਨ ਲਈ STOP reply ਕਰੋ।',
-      latin: 'Eh messages band karan layi STOP reply karo.',
+      native: 'ਇਹ automated replies ਬੰਦ ਕਰਨ ਲਈ STOP reply ਕਰੋ।',
+      latin: 'Eh automated replies band karan layi STOP reply karo.',
     },
   });
   return `${body}\n${hint}`;

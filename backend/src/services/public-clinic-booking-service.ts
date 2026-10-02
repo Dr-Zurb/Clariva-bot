@@ -4,8 +4,11 @@
  */
 
 import { getSupabaseAdminClient } from '../config/database';
-import { InternalError, NotFoundError } from '../utils/errors';
+import { InternalError, NotFoundError, UnauthorizedError } from '../utils/errors';
 import { handleSupabaseError } from '../utils/db-helpers';
+import { verifyBookingToken } from '../utils/booking-token';
+import { findConversationById } from './conversation-service';
+import { findVisitPageLink, isVisitPageCode } from './visit-page-link-service';
 import { getDoctorSettings } from './doctor-settings-service';
 import { getDaySlotsWithStatus, type DaySlotWithStatus } from './availability-service';
 import { previewQueueDay } from './opd/opd-queue-service';
@@ -233,5 +236,96 @@ export async function getPublicClinicDaySlots(
     timezone: tz,
     opdMode: resolved.mode,
     ...(queue ? { queue } : {}),
+  };
+}
+
+export type ChatVisitSummary = {
+  /** Visit start, ISO. Not a patient field. */
+  at: string;
+  /** Queue token when the visit is in a queue. Null on a clock-time day. */
+  token: number | null;
+};
+
+/**
+ * Conversation behind a clinic-link code, when it belongs to this practice.
+ * Missing, expired, or another doctor's code is null. The code is not logged.
+ * Same attach rule as public checkout.
+ */
+async function conversationIdForChatCode(
+  code: string,
+  doctorId: string,
+  correlationId: string
+): Promise<string | null> {
+  const raw = code.trim();
+  if (!raw) return null;
+  if (isVisitPageCode(raw)) {
+    const link = await findVisitPageLink(raw, correlationId);
+    if (!link || link.doctorId !== doctorId) return null;
+    const conversation = await findConversationById(link.conversationId, correlationId);
+    if (!conversation || conversation.doctor_id !== doctorId) return null;
+    return link.conversationId;
+  }
+  try {
+    const verified = verifyBookingToken(raw);
+    if (verified.doctorId !== doctorId || verified.appointmentId) return null;
+    const conversation = await findConversationById(verified.conversationId, correlationId);
+    if (!conversation || conversation.doctor_id !== doctorId) return null;
+    return verified.conversationId;
+  } catch (err) {
+    if (err instanceof UnauthorizedError) return null;
+    throw err;
+  }
+}
+
+/**
+ * Upcoming visits booked from this chat. Date and token only — no name, phone, or reason.
+ * An unknown code returns an empty list. An unknown slug is 404.
+ */
+export async function listUpcomingChatVisits(
+  slug: string,
+  code: string,
+  correlationId: string
+): Promise<{ visits: ChatVisitSummary[] }> {
+  const doctorId = await resolveDoctorIdByPublicSlug(slug, correlationId);
+  const conversationId = await conversationIdForChatCode(code, doctorId, correlationId);
+  if (!conversationId) return { visits: [] };
+
+  const admin = getSupabaseAdminClient();
+  if (!admin) {
+    throw new InternalError('Service role client not available');
+  }
+
+  const { data, error } = await admin
+    .from('appointments')
+    .select('id, appointment_date')
+    .eq('doctor_id', doctorId)
+    .eq('conversation_id', conversationId)
+    .in('status', ['pending', 'confirmed'])
+    .gte('appointment_date', new Date().toISOString())
+    .order('appointment_date', { ascending: true })
+    .limit(8);
+  if (error) handleSupabaseError(error, correlationId);
+
+  const rows = (data ?? []) as { id: string; appointment_date: string }[];
+  if (rows.length === 0) return { visits: [] };
+
+  const { data: tokenRows, error: tokenError } = await admin
+    .from('opd_queue_entries')
+    .select('appointment_id, token_number')
+    .in('appointment_id', rows.map((row) => row.id));
+  if (tokenError) handleSupabaseError(tokenError, correlationId);
+
+  const tokenByAppointment = new Map<string, number>();
+  for (const row of (tokenRows ?? []) as { appointment_id?: string; token_number?: number }[]) {
+    if (row.appointment_id && typeof row.token_number === 'number') {
+      tokenByAppointment.set(row.appointment_id, row.token_number);
+    }
+  }
+
+  return {
+    visits: rows.map((row) => ({
+      at: new Date(row.appointment_date).toISOString(),
+      token: tokenByAppointment.get(row.id) ?? null,
+    })),
   };
 }

@@ -6,6 +6,7 @@ import SuccessPage from "../../book/success/page";
 
 const getPublicClinicPageInfo = vi.fn();
 const getPublicClinicDaySlots = vi.fn();
+const getPublicChatVisits = vi.fn();
 const postPublicClinicCheckout = vi.fn();
 
 let search = "";
@@ -17,6 +18,7 @@ vi.mock("@/lib/api", () => ({
   getBookingRedirectUrl: vi.fn(),
   getPublicClinicPageInfo: (...args: unknown[]) => getPublicClinicPageInfo(...args),
   getPublicClinicDaySlots: (...args: unknown[]) => getPublicClinicDaySlots(...args),
+  getPublicChatVisits: (...args: unknown[]) => getPublicChatVisits(...args),
   postPublicClinicCheckout: (...args: unknown[]) => postPublicClinicCheckout(...args),
 }));
 
@@ -48,7 +50,9 @@ describe("Public clinic booking page", () => {
     search = "";
     getPublicClinicPageInfo.mockReset();
     getPublicClinicDaySlots.mockReset();
+    getPublicChatVisits.mockReset();
     postPublicClinicCheckout.mockReset();
+    getPublicChatVisits.mockResolvedValue({ data: { visits: [] } });
     getPublicClinicPageInfo.mockResolvedValue({
       data: {
         doctorId: "11111111-1111-4111-8111-111111111111",
@@ -179,6 +183,24 @@ describe("Public clinic booking page", () => {
     expect(screen.getByText(/Doctor is available/)).toBeInTheDocument();
     expect(screen.getByText(/Average visit is 10 min/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "10:00" })).not.toBeInTheDocument();
+  });
+
+  it("lists a visit booked from this chat", async () => {
+    search = "for=change&c=ABCdef23";
+    getPublicChatVisits.mockResolvedValue({
+      data: { visits: [{ at: "2099-01-15T04:30:00.000Z", token: 4 }] },
+    });
+    render(<PublicClinicBookPage slug="city-clinic" />);
+    expect(await screen.findByRole("heading", { name: "Change or cancel a visit" })).toBeInTheDocument();
+    expect(screen.getByText("15 Jan, token 4")).toBeInTheDocument();
+    expect(screen.queryByText("No upcoming visits from this chat.")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "10:00" })).not.toBeInTheDocument();
+  });
+
+  it("shows the empty change screen when this chat has no upcoming visit", async () => {
+    search = "for=change&c=ABCdef23";
+    render(<PublicClinicBookPage slug="city-clinic" />);
+    expect(await screen.findByText("No upcoming visits from this chat.")).toBeInTheDocument();
   });
 
   it("shows not found for an unknown slug", async () => {

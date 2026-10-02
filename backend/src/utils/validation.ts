@@ -1062,6 +1062,26 @@ export function validatePublicClinicPageQuery(
   return result.data;
 }
 
+/** Upcoming visits for the chat that holds `c`. The code is a capability; do not log it. */
+export const publicChatVisitsQuerySchema = z.object({
+  slug: publicSlugField,
+  c: z.string().trim().min(1).max(2000),
+});
+
+export type PublicChatVisitsQuery = z.infer<typeof publicChatVisitsQuerySchema>;
+
+export function validatePublicChatVisitsQuery(
+  query: Record<string, string | undefined>
+): PublicChatVisitsQuery {
+  const result = publicChatVisitsQuerySchema.safeParse(query);
+  if (!result.success) {
+    const first = result.error.issues[0];
+    const message = first?.message ?? 'Invalid query parameters';
+    throw new ValidationError(message);
+  }
+  return result.data;
+}
+
 /** clk-02: public day slots. Same date rule as the token day-slot query. */
 export const publicClinicDaySlotsQuerySchema = z.object({
   slug: publicSlugField,

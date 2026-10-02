@@ -202,6 +202,9 @@ describe("AuthMethodPicker", () => {
     fireEvent.change(screen.getByLabelText(/^password$/i), {
       target: { value: "secret12" },
     });
+    fireEvent.change(screen.getByLabelText(/^confirm password$/i), {
+      target: { value: "secret12" },
+    });
     fireEvent.change(screen.getByLabelText(/practice name/i), {
       target: { value: "Ada Clinic" },
     });
@@ -255,6 +258,9 @@ describe("AuthMethodPicker", () => {
     fireEvent.change(screen.getByLabelText(/^password$/i), {
       target: { value: "secret12" },
     });
+    fireEvent.change(screen.getByLabelText(/^confirm password$/i), {
+      target: { value: "secret12" },
+    });
     fireEvent.click(screen.getByRole("button", { name: /create account/i }));
 
     await screen.findByLabelText(/verification code/i);
@@ -294,6 +300,9 @@ describe("AuthMethodPicker", () => {
     fireEvent.change(screen.getByLabelText(/^password$/i), {
       target: { value: "secret12" },
     });
+    fireEvent.change(screen.getByLabelText(/^confirm password$/i), {
+      target: { value: "secret12" },
+    });
     fireEvent.click(screen.getByRole("button", { name: /create account/i }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
@@ -322,12 +331,37 @@ describe("AuthMethodPicker", () => {
     fireEvent.change(screen.getByLabelText(/^password$/i), {
       target: { value: "secret12" },
     });
+    fireEvent.change(screen.getByLabelText(/^confirm password$/i), {
+      target: { value: "secret12" },
+    });
     fireEvent.click(screen.getByRole("button", { name: /create account/i }));
 
     await screen.findByLabelText(/verification code/i);
     expect(sendEmailOtp).toHaveBeenCalledWith("stub@example.com", {
       createIfMissing: true,
     });
+  });
+
+  it("signup: refuses to send a code when passwords differ", async () => {
+    render(<AuthMethodPicker mode="signup" />);
+    fireEvent.change(screen.getByLabelText(/^full name$/i), {
+      target: { value: "Ada Sharma" },
+    });
+    fireEvent.change(screen.getByLabelText(/^email$/i), {
+      target: { value: "doc@example.com" },
+    });
+    fireEvent.change(screen.getByLabelText(/^password$/i), {
+      target: { value: "secret12" },
+    });
+    fireEvent.change(screen.getByLabelText(/^confirm password$/i), {
+      target: { value: "secret13" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /create account/i }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /passwords do not match/i
+    );
+    expect(sendEmailOtp).not.toHaveBeenCalled();
   });
 
   it("signup: shows Dr. prefix chrome and no standalone use-a-code link", () => {

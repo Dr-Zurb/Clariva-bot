@@ -19,6 +19,7 @@ import {
   exchangeCodeForShortLivedToken,
   exchangeForLongLivedToken,
   refreshInstagramLongLivedToken,
+  subscribeInstagramAccountApps,
 } from '../../../src/services/instagram-connect-service';
 import * as database from '../../../src/config/database';
 
@@ -364,5 +365,27 @@ describe('Instagram Login OAuth (ilr-18)', () => {
     await expect(
       refreshInstagramLongLivedToken('long-tok', 'corr-rf')
     ).resolves.toBeNull();
+  });
+
+  it('subscribes the Instagram account to messages only', async () => {
+    mockedAxios.post.mockResolvedValueOnce({ data: { success: true } } as never);
+    await expect(subscribeInstagramAccountApps('1789', 'tok', 'corr-sub')).resolves.toBe(true);
+    expect(mockedAxios.post).toHaveBeenCalledWith(
+      'https://graph.instagram.com/v18.0/1789/subscribed_apps',
+      null,
+      expect.objectContaining({
+        params: expect.objectContaining({
+          subscribed_fields: 'messages',
+          access_token: 'tok',
+        }),
+      })
+    );
+  });
+
+  it('returns false when the message subscription is rejected', async () => {
+    (mockedAxios as unknown as { isAxiosError: (payload: unknown) => boolean }).isAxiosError = () =>
+      false;
+    mockedAxios.post.mockRejectedValueOnce(new Error('rejected'));
+    await expect(subscribeInstagramAccountApps('1789', 'tok', 'corr-sub-fail')).resolves.toBe(false);
   });
 });

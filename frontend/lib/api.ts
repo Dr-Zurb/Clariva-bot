@@ -1630,6 +1630,21 @@ export async function getPublicClinicPageInfo(
   );
 }
 
+export interface ChatVisitSummary {
+  at: string;
+  token: number | null;
+}
+
+export async function getPublicChatVisits(
+  slug: string,
+  code: string
+): Promise<ApiSuccess<{ visits: ChatVisitSummary[] }>> {
+  const params = new URLSearchParams({ slug, c: code });
+  return request<{ visits: ChatVisitSummary[] }>(
+    `/api/v1/bookings/public/chat-visits?${params.toString()}`
+  );
+}
+
 export async function getPublicClinicDaySlots(
   slug: string,
   date: string,

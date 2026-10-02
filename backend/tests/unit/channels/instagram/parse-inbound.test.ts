@@ -7,6 +7,7 @@ import type { InstagramWebhookPayload } from '../../../../src/types/webhook';
 import {
   parseInstagramMessage,
   parseInstagramInbound,
+  isInstagramGestureOnly,
   tryResolveSenderFromMessageEdit,
   isValidInstagramSenderId,
 } from '../../../../src/workers/channels/instagram/parse-inbound';
@@ -112,6 +113,42 @@ describe('parseInstagramMessage sender disambiguation (rcp-10)', () => {
     expect(parsed?.text).toBe('');
     expect(parsed?.hasNonTextContent).toBe(true);
     expect(parsed?.attachments?.length).toBeGreaterThan(0);
+  });
+
+  it('marks an unsent message and does not treat it as text', () => {
+    const payload = dmPayloadWithMessaging([
+      {
+        sender: { id: CUSTOMER_ID },
+        recipient: { id: PAGE_ID },
+        timestamp: Math.floor(Date.now() / 1000),
+        message: { mid: 'mid.unsent', is_deleted: true },
+      },
+    ]);
+    expect(parseInstagramMessage(payload)).toEqual({
+      senderId: CUSTOMER_ID,
+      text: '',
+      mid: 'mid.unsent',
+      unsent: true,
+    });
+  });
+
+  it('treats a reaction or sticker as a gesture, and an image as something to acknowledge', () => {
+    expect(isInstagramGestureOnly([{ type: 'reaction', payload: { reaction: 'love' } }])).toBe(true);
+    expect(isInstagramGestureOnly([{ type: 'sticker', payload: { sticker_id: 1 } }])).toBe(true);
+    expect(
+      isInstagramGestureOnly([
+        { type: 'attachment', payload: { type: 'image', payload: { sticker_id: 369239263222822 } } },
+      ])
+    ).toBe(true);
+    expect(
+      isInstagramGestureOnly([{ type: 'attachment', payload: { type: 'image', payload: { url: 'https://cdn.example/a.jpg' } } }])
+    ).toBe(false);
+    expect(
+      isInstagramGestureOnly([
+        { type: 'reaction', payload: {} },
+        { type: 'attachment', payload: { type: 'audio' } },
+      ])
+    ).toBe(false);
   });
 
   it('rejects invalid sender ids in isValidInstagramSenderId', () => {
@@ -256,6 +293,32 @@ describe('parseInstagramInbound skip paths (rcp-10)', () => {
         skip: true,
         reason: 'no_doctor',
         senderId: CUSTOMER_ID,
+      })
+    );
+  });
+
+  it('skips an unsent message with the mid and does not build a reply inbound', async () => {
+    const payload = dmPayloadWithMessaging([
+      {
+        sender: { id: CUSTOMER_ID },
+        recipient: { id: PAGE_ID },
+        timestamp: Math.floor(Date.now() / 1000),
+        message: { mid: 'mid.unsent', is_deleted: true },
+      },
+    ]);
+
+    const result = await parseInstagramInbound(
+      payload,
+      { eventId: 'evt-unsent', correlationId: 'corr-unsent' },
+      'instagram'
+    );
+    expect(result).toEqual(
+      expect.objectContaining({
+        skip: true,
+        reason: 'message_unsent',
+        senderId: CUSTOMER_ID,
+        doctorId: DOCTOR_ID,
+        platformMessageId: 'mid.unsent',
       })
     );
   });

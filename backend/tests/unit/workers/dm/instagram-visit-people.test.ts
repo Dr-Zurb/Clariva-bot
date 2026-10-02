@@ -153,7 +153,7 @@ function turn(
 function expectMenu(reply: string, greet: boolean): void {
   if (greet) {
     expect(reply.startsWith('Hi, please choose from the following:')).toBe(true);
-    expect(reply).toContain('Reply STOP to stop these messages.');
+    expect(reply).toContain('Reply STOP to stop these automated replies.');
   } else {
     expect(reply.startsWith('Please choose from the following:')).toBe(true);
     expect(reply).not.toContain('Hi,');
@@ -163,7 +163,8 @@ function expectMenu(reply: string, greet: boolean): void {
   expect(reply).toContain('2. Change or cancel a visit');
   expect(reply).toContain('3. Check availability');
   expect(reply).not.toContain(LINK);
-  expect(reply).not.toMatch(/automated|consultation|appointment|booking|slot|token|queue/i);
+  const withoutStopHint = reply.replace('Reply STOP to stop these automated replies.', '');
+  expect(withoutStopHint).not.toMatch(/automated|consultation|appointment|booking|slot|token|queue/i);
 }
 
 function expectLink(reply: string, label: string, purpose?: 'times' | 'change'): void {
@@ -270,7 +271,7 @@ describe('instagram replies people actually send', () => {
     const firstHealth = await executeDmTurn(turn('i have chest pain', [], singleFee));
     expect(firstHealth.branch).toBe('emergency_safety');
     expect(firstHealth.reply).toContain('Health questions are not answered');
-    expect(firstHealth.reply).toContain('Reply STOP to stop these messages.');
+    expect(firstHealth.reply).toContain('Reply STOP to stop these automated replies.');
     expect(firstHealth.reply).not.toContain(LINK);
     expect(firstHealth.reply.toLowerCase()).not.toContain('112');
 

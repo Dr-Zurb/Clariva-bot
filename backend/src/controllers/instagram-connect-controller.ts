@@ -186,7 +186,11 @@ export const callbackHandler = asyncHandler(async (req: Request, res: Response) 
     throw err;
   }
 
-  await subscribeInstagramAccountApps(instagramAccountId, longLivedToken, correlationId);
+  const subscribed = await subscribeInstagramAccountApps(
+    instagramAccountId,
+    longLivedToken,
+    correlationId
+  );
 
   await logAuditEvent({
     correlationId,
@@ -197,12 +201,16 @@ export const callbackHandler = asyncHandler(async (req: Request, res: Response) 
     status: 'success',
   });
 
-  const successUrl = buildFrontendConnectRedirect({ connected: '1' });
+  const successUrl = buildFrontendConnectRedirect(
+    subscribed
+      ? { connected: '1' }
+      : { connected: '0', error: 'webhook_subscribe_failed' }
+  );
   if (successUrl) {
     res.redirect(302, successUrl);
     return;
   }
-  res.status(200).json(successResponse({ connected: true }, req));
+  res.status(200).json(successResponse({ connected: true, messagesEnabled: subscribed }, req));
 });
 
 /**

@@ -111,5 +111,8 @@ describe('public clinic slug read', () => {
     expect(routes).toContain(
       "router.get('/public/day-slots', publicSessionLimiter, getPublicClinicDaySlotsHandler)"
     );
+    expect(routes).toContain(
+      "router.get('/public/chat-visits', publicSessionLimiter, getPublicChatVisitsHandler)"
+    );
   });
 });

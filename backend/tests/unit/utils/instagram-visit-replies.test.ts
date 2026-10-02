@@ -55,7 +55,7 @@ describe('instagram visit replies', () => {
         '1. New visit / revisit / follow-up',
         '2. Change or cancel a visit',
         '3. Check availability',
-        'Reply STOP to stop these messages.',
+        'Reply STOP to stop these automated replies.',
       ].join('\n')
     );
     expect(rendered('menu')).not.toMatch(/^Hi/);

@@ -14,6 +14,7 @@ import {
   validatePublicClinicCheckoutBody,
   validatePublicClinicDaySlotsQuery,
   validatePublicClinicPageQuery,
+  validatePublicChatVisitsQuery,
   validateSelectSlotAndPayBody,
   validateSelectSlotBody,
   validateSlotPageInfoQuery,
@@ -42,6 +43,7 @@ import { isDoctorVerified } from '../services/doctor-verification-service';
 import {
   getPublicClinicDaySlots,
   getPublicClinicPageInfo,
+  listUpcomingChatVisits,
 } from '../services/public-clinic-booking-service';
 import { processPublicClinicCheckout } from '../services/public-clinic-checkout-service';
 
@@ -324,6 +326,21 @@ export const getPublicClinicDaySlotsHandler = asyncHandler(async (req: Request, 
     visit: firstQueryString(query, 'visit'),
   });
   const data = await getPublicClinicDaySlots(slug, date, correlationId, visit);
+  res.status(200).json(successResponse(data, req));
+});
+
+/**
+ * GET /api/v1/bookings/public/chat-visits?slug=&c=
+ * Upcoming visits booked from this chat. Date and token only.
+ */
+export const getPublicChatVisitsHandler = asyncHandler(async (req: Request, res: Response) => {
+  const correlationId = req.correlationId || 'unknown';
+  const query = req.query as Record<string, string | string[] | undefined>;
+  const { slug, c } = validatePublicChatVisitsQuery({
+    slug: firstQueryString(query, 'slug'),
+    c: firstQueryString(query, 'c'),
+  });
+  const data = await listUpcomingChatVisits(slug, c, correlationId);
   res.status(200).json(successResponse(data, req));
 });
 

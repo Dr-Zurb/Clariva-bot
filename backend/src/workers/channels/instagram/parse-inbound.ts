@@ -31,7 +31,27 @@ export type ParsedInstagramDmPayload = {
   mid?: string;
   hasNonTextContent?: boolean;
   attachments?: InboundAttachment[];
+  /** Person unsent this message. Do not reply. */
+  unsent?: boolean;
 };
+
+function payloadHasSticker(value: unknown): boolean {
+  if (!value || typeof value !== 'object') return false;
+  const record = value as Record<string, unknown>;
+  if (record.type === 'sticker' || record.sticker_id != null) return true;
+  if (record.payload != null) return payloadHasSticker(record.payload);
+  return false;
+}
+
+function attachmentIsGesture(attachment: InboundAttachment): boolean {
+  if (attachment.type === 'reaction' || attachment.type === 'sticker') return true;
+  return payloadHasSticker(attachment.payload);
+}
+
+/** True when every attachment is a reaction or sticker. Images, audio, and files are not. */
+export function isInstagramGestureOnly(attachments: InboundAttachment[] | undefined): boolean {
+  return !!attachments?.length && attachments.every(attachmentIsGesture);
+}
 
 function classifyMessageAttachments(msg: Record<string, unknown>): InboundAttachment[] | undefined {
   const attachments: InboundAttachment[] = [];
@@ -110,9 +130,17 @@ export function parseInstagramMessage(payload: InstagramWebhookPayload): ParsedI
       if (pageIds.includes(senderId)) continue;
       // Incoming message (new or edited)
       if (m.message) {
-        const text = m.message.text ?? '';
-        const mid = m.message.mid;
         const msg = m.message as Record<string, unknown>;
+        const mid = typeof msg.mid === 'string' ? msg.mid : m.message.mid;
+        if (msg.is_deleted === true) {
+          return {
+            senderId: String(senderId),
+            text: '',
+            mid,
+            unsent: true,
+          };
+        }
+        const text = m.message.text ?? '';
         const hasNonTextContent =
           !text.trim() &&
           (Array.isArray(msg.attachments) ||
@@ -160,6 +188,15 @@ export function parseInstagramMessage(payload: InstagramWebhookPayload): ParsedI
       if (v.is_self === true) continue;
       if (c.field === 'messages' && v.message) {
         if (v.message.is_self === true) continue;
+        const msg = v.message as { mid?: string; text?: string; is_deleted?: boolean; is_self?: boolean };
+        if (msg.is_deleted === true) {
+          return {
+            senderId: String(v.sender.id),
+            text: '',
+            mid: msg.mid,
+            unsent: true,
+          };
+        }
         const text = v.message.text ?? '';
         const mid = v.message.mid;
         return { senderId: String(v.sender.id), text, mid };
@@ -355,10 +392,24 @@ export async function parseInstagramInbound(
     return skipResult({ skip: true, reason: 'no_message' });
   }
 
-  const { senderId, mid, hasNonTextContent, attachments } = parsed;
-  let { text } = parsed;
+  const { senderId, mid, hasNonTextContent, attachments, unsent, text } = parsed;
   const pageIds = getInstagramPageIds(instagramPayload);
   const pageId = getInstagramPageId(instagramPayload) ?? undefined;
+
+  if (unsent) {
+    const doctorId = pageIds.length
+      ? await getDoctorIdByPageIds(pageIds, ctx.correlationId)
+      : null;
+    return skipResult({
+      skip: true,
+      reason: 'message_unsent',
+      senderId,
+      pageId,
+      pageIds,
+      ...(doctorId ? { doctorId } : {}),
+      ...(mid ? { platformMessageId: mid } : {}),
+    });
+  }
 
   if (!text?.trim() && hasNonTextContent) {
     const doctorId = pageIds.length

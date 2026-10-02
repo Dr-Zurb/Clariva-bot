@@ -8,10 +8,12 @@ import {
   getDaySlots,
   getPublicClinicDaySlots,
   getPublicClinicPageInfo,
+  getPublicChatVisits,
   postPublicClinicCheckout,
   selectSlotAndPay,
   type BookingPageCatalogApi,
   type ConsultationModalityApi,
+  type ChatVisitSummary,
   type DaySlotWithStatus,
   type OpdModeApi,
   type QueueDayPreview,
@@ -117,6 +119,7 @@ function BookPageContent({ slug }: { slug?: string }) {
   const [dayModes, setDayModes] = useState<Record<string, OpdModeApi>>({});
   const [pageError, setPageError] = useState<string | null>(null);
   const [pageLoading, setPageLoading] = useState(true);
+  const [chatVisits, setChatVisits] = useState<ChatVisitSummary[]>([]);
 
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [slots, setSlots] = useState<DaySlotWithStatus[]>([]);
@@ -190,10 +193,18 @@ function BookPageContent({ slug }: { slug?: string }) {
     const loadPage = isSlug
       ? getPublicClinicPageInfo(slug!.trim())
       : getSlotPageInfo(token);
+    const loadVisits =
+      isSlug && purpose === "change" && conversationToken
+        ? getPublicChatVisits(slug!.trim(), conversationToken).catch(() => ({
+            data: { visits: [] as ChatVisitSummary[] },
+          }))
+        : Promise.resolve({ data: { visits: [] as ChatVisitSummary[] } });
 
-    loadPage
-      .then((res) => {
+    Promise.all([loadPage, loadVisits])
+      .then(([res, visitsRes]) => {
         if (cancelled) return;
+        setChatVisits(visitsRes.data.visits ?? []);
+        if ("timezone" in res.data && res.data.timezone) setTimezone(res.data.timezone);
         setPracticeName(res.data.practiceName || "Book Appointment");
         setMode(res.data.mode ?? "book");
         setOpdMode(res.data.opdMode ?? "slot");
@@ -286,7 +297,7 @@ function BookPageContent({ slug }: { slug?: string }) {
     return () => {
       cancelled = true;
     };
-  }, [token, dateOptions, isSlug, slug]);
+  }, [token, dateOptions, isSlug, slug, purpose, conversationToken]);
 
   useEffect(() => {
     if (!serviceCatalog || !selectedServiceKey) {
@@ -533,7 +544,14 @@ function BookPageContent({ slug }: { slug?: string }) {
   }
 
   if (purpose === "change" && mode !== "reschedule") {
-    return <ChangeVisitScreen practiceName={practiceName} newVisitHref={newVisitHref} />;
+    return (
+      <ChangeVisitScreen
+        practiceName={practiceName}
+        newVisitHref={newVisitHref}
+        timezone={timezone}
+        visits={chatVisits}
+      />
+    );
   }
 
   const clinic = clinicDisplayName(practiceName);

@@ -409,6 +409,14 @@ No `conversationId`, patient id, name, phone, reason, or chat booking hints.
 
 Token routes `slot-page-info` and `day-slots` stay token-only.
 
+### GET `/api/v1/bookings/public/chat-visits?slug=&c=`
+
+**Auth:** Public slug, plus `c` (the short clinic-link code or the signed chat token). Same rate limit as the other public slug reads. `c` is a capability. Do not log it.
+
+**Success `data`:** `{ visits }` where each visit is `{ at, token }`. `at` is the visit start as an ISO timestamp. `token` is the queue number, or `null` on a clock-time day. Only pending or confirmed visits that have not started, for the conversation that code belongs to, and only when that conversation is this practice's. An unknown, expired, or other-practice code returns `{ visits: [] }`. An unknown slug is **404**.
+
+No name, phone, reason, appointment id, or actions.
+
 ### POST `/api/v1/bookings/public/checkout` (clk-03)
 
 **Auth:** Public slug. No booking token. Same rate limit as the slug reads. Reschedule stays on `POST /api/v1/bookings/select-slot-and-pay`.
