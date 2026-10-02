@@ -8,6 +8,8 @@ import { InternalError, NotFoundError } from '../utils/errors';
 import { handleSupabaseError } from '../utils/db-helpers';
 import { getDoctorSettings } from './doctor-settings-service';
 import { getDaySlotsWithStatus, type DaySlotWithStatus } from './availability-service';
+import { previewQueueDay } from './opd/opd-queue-service';
+import type { QueueDayPreview } from './opd/opd-eta';
 import { resolveModesForDates, resolveSessionDayMode } from './opd/opd-mode-service';
 import { isDoctorVerified } from './doctor-verification-service';
 import { getActiveServiceCatalog } from '../utils/service-catalog-helpers';
@@ -202,7 +204,12 @@ export async function getPublicClinicDaySlots(
   date: string,
   correlationId: string,
   visit?: 'in_clinic' | 'video' | 'voice' | 'text'
-): Promise<{ slots: DaySlotWithStatus[]; timezone: string; opdMode: OpdMode }> {
+): Promise<{
+  slots: DaySlotWithStatus[];
+  timezone: string;
+  opdMode: OpdMode;
+  queue?: QueueDayPreview;
+}> {
   const doctorId = await resolveDoctorIdByPublicSlug(slug, correlationId);
   const settings = await getDoctorSettings(doctorId);
   const timezone = settings?.timezone ?? 'Asia/Kolkata';
@@ -217,5 +224,14 @@ export async function getPublicClinicDaySlots(
     admin != null
       ? await resolveSessionDayMode(admin, doctorId, date)
       : { mode: settings?.opd_mode ?? ('slot' as const) };
-  return { slots, timezone: tz, opdMode: resolved.mode };
+  const queue =
+    resolved.mode === 'queue'
+      ? await previewQueueDay({ doctorId, date, timezone: tz, correlationId })
+      : null;
+  return {
+    slots,
+    timezone: tz,
+    opdMode: resolved.mode,
+    ...(queue ? { queue } : {}),
+  };
 }

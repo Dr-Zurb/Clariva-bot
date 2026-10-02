@@ -19,6 +19,7 @@ import {
   validateSlotPageInfoQuery,
 } from '../utils/validation';
 import { getDaySlotsWithStatus } from '../services/availability-service';
+import { previewQueueDay } from '../services/opd/opd-queue-service';
 import {
   processRescheduleSlotSelection,
   processSlotSelection,
@@ -81,8 +82,19 @@ export const getDaySlotsHandler = asyncHandler(async (req: Request, res: Respons
       ? await resolveSessionDayMode(admin, doctorId, date)
       : { mode: doctorSettings?.opd_mode ?? ('slot' as const) };
   const opdMode = resolved.mode;
+  const queue =
+    opdMode === 'queue'
+      ? await previewQueueDay({
+          doctorId,
+          date,
+          timezone: tz,
+          correlationId,
+        })
+      : null;
 
-  res.status(200).json(successResponse({ slots, timezone: tz, opdMode }, req));
+  res.status(200).json(
+    successResponse({ slots, timezone: tz, opdMode, ...(queue ? { queue } : {}) }, req)
+  );
 });
 
 /**

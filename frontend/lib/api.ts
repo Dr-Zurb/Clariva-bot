@@ -1541,10 +1541,18 @@ export interface DaySlotWithStatus {
   status: "available" | "booked";
 }
 
+export interface QueueDayPreview {
+  windows: Array<{ start: string; end: string }>;
+  nextToken: number;
+  avgMinutes: number;
+  expectedAt: string;
+}
+
 export interface DaySlotsData {
   slots: DaySlotWithStatus[];
   timezone: string;
   opdMode?: OpdModeApi;
+  queue?: QueueDayPreview;
 }
 
 export interface SelectSlotData {

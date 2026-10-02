@@ -142,6 +142,45 @@ describe("Public clinic booking page", () => {
     );
   });
 
+  it("shows the queue window and token, and hides the clock grid", async () => {
+    getPublicClinicPageInfo.mockResolvedValue({
+      data: {
+        doctorId: "11111111-1111-4111-8111-111111111111",
+        practiceName: "City Clinic",
+        timezone: "Asia/Kolkata",
+        mode: "book",
+        opdMode: "queue",
+        bookingAllowed: true,
+      },
+    });
+    getPublicClinicDaySlots.mockResolvedValue({
+      data: {
+        timezone: "Asia/Kolkata",
+        opdMode: "queue",
+        slots: [
+          {
+            start: "2099-01-15T04:30:00.000Z",
+            end: "2099-01-15T04:45:00.000Z",
+            status: "available",
+          },
+        ],
+        queue: {
+          windows: [
+            { start: "2099-01-15T03:30:00.000Z", end: "2099-01-15T07:30:00.000Z" },
+          ],
+          nextToken: 4,
+          avgMinutes: 10,
+          expectedAt: "2099-01-15T04:00:00.000Z",
+        },
+      },
+    });
+    render(<PublicClinicBookPage slug="city-clinic" />);
+    expect(await screen.findByText(/Your token would be 4/)).toBeInTheDocument();
+    expect(screen.getByText(/Doctor is available/)).toBeInTheDocument();
+    expect(screen.getByText(/Average visit is 10 min/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "10:00" })).not.toBeInTheDocument();
+  });
+
   it("shows not found for an unknown slug", async () => {
     const missing = new Error("Booking page not found") as Error & { status?: number };
     missing.status = 404;

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   getSlotPageInfo,
   getDaySlots,
@@ -14,6 +14,7 @@ import {
   type ConsultationModalityApi,
   type DaySlotWithStatus,
   type OpdModeApi,
+  type QueueDayPreview,
 } from "@/lib/api";
 import {
   formatCurrencyINR,
@@ -74,6 +75,15 @@ function formatSlotTime(iso: string, timezone: string): string {
   });
 }
 
+function formatQueueClock(iso: string, timezone: string): string {
+  return formatTime(iso, {
+    timeZone: timezone,
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  });
+}
+
 function formatDateLabel(dateStr: string): string {
   const d = new Date(dateStr + "T12:00:00");
   const today = new Date();
@@ -110,8 +120,10 @@ function BookPageContent({ slug }: { slug?: string }) {
 
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [slots, setSlots] = useState<DaySlotWithStatus[]>([]);
+  const [queueDay, setQueueDay] = useState<QueueDayPreview | null>(null);
   const [timezone, setTimezone] = useState("Asia/Kolkata");
   const [slotsLoading, setSlotsLoading] = useState(false);
+  const slotsRequestRef = useRef(0);
   const [selectedSlot, setSelectedSlot] = useState<DaySlotWithStatus | null>(
     null
   );
@@ -300,8 +312,10 @@ function BookPageContent({ slug }: { slug?: string }) {
     (date: string) => {
       if (!isSlug && !token) return;
       if (isSlug && !slug?.trim()) return;
+      const requestId = ++slotsRequestRef.current;
       setSlotsLoading(true);
       setSlots([]);
+      setQueueDay(null);
       setSelectedSlot(null);
       const visit = selectedModality ?? undefined;
       const loadSlots = isSlug
@@ -309,7 +323,9 @@ function BookPageContent({ slug }: { slug?: string }) {
         : getDaySlots(token, date, visit);
       loadSlots
         .then((res) => {
+          if (requestId !== slotsRequestRef.current) return;
           setSlots(res.data.slots);
+          setQueueDay(res.data.queue ?? null);
           setTimezone(res.data.timezone);
           if (res.data.opdMode) {
             setOpdMode(res.data.opdMode);
@@ -317,9 +333,12 @@ function BookPageContent({ slug }: { slug?: string }) {
           }
         })
         .catch(() => {
+          if (requestId !== slotsRequestRef.current) return;
           setSlots([]);
+          setQueueDay(null);
         })
         .finally(() => {
+          if (requestId !== slotsRequestRef.current) return;
           setSlotsLoading(false);
         });
     },
@@ -703,6 +722,25 @@ function BookPageContent({ slug }: { slug?: string }) {
 
           {slotsLoading ? (
             <p className="mt-3 text-sm text-gray-500">Loading…</p>
+          ) : isQueueBook && queueDay && queueDay.windows.length > 0 ? (
+            <div className="mt-3 space-y-2 text-sm text-gray-700">
+              <p>
+                Doctor is available{" "}
+                {queueDay.windows
+                  .map(
+                    (window) =>
+                      `${formatQueueClock(window.start, timezone)}–${formatQueueClock(window.end, timezone)}`
+                  )
+                  .join(", ")}
+                .
+              </p>
+              <p>Your token would be {queueDay.nextToken}.</p>
+              <p>
+                Average visit is {Math.round(queueDay.avgMinutes)} min. Expected around{" "}
+                {formatQueueClock(queueDay.expectedAt, timezone)}.
+              </p>
+              {availableCount === 0 ? <p>This visit is not open in that queue.</p> : null}
+            </div>
           ) : slots.length === 0 ? (
             <p className="mt-3 text-sm text-gray-500">
               {isQueueBook
@@ -711,9 +749,7 @@ function BookPageContent({ slug }: { slug?: string }) {
             </p>
           ) : isQueueBook ? (
             <p className="mt-3 text-sm text-gray-600">
-              {availableCount > 0
-                ? "You’re joining the queue for this day. Tap Continue to confirm."
-                : "No openings left on this day. Try another date."}
+              You’re joining the queue for this day. Tap Continue to confirm.
             </p>
           ) : (
             <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">

@@ -10,7 +10,12 @@ import type { AppointmentStatus } from '../../types';
 import type { OpdQueueEntryStatus } from '../../types/database';
 import { handleSupabaseError, validateOwnership } from '../../utils/db-helpers';
 import { InternalError, NotFoundError, ValidationError } from '../../utils/errors';
-import { computeEtaMinutesFromRollingAverage } from './opd-eta';
+import {
+  buildQueueDayPreview,
+  computeEtaMinutesFromRollingAverage,
+  type QueueDayPreview,
+} from './opd-eta';
+import { getAvailabilityWindowsForDate } from '../availability-service';
 import { recordOpdQueueReinsertTotal } from './opd-metrics';
 
 const ROLLING_SAMPLE_SIZE = 20;
@@ -242,6 +247,31 @@ export async function syncOpdQueueEntryOnAppointmentStatus(
   if (error) {
     handleSupabaseError(error, correlationId);
   }
+}
+
+/**
+ * What a person would get if they joined this queue day. No PHI.
+ * Null when the doctor has no window that day.
+ */
+export async function previewQueueDay(input: {
+  doctorId: string;
+  date: string;
+  timezone: string;
+  correlationId: string;
+}): Promise<QueueDayPreview | null> {
+  const windows = await getAvailabilityWindowsForDate(
+    input.doctorId,
+    input.date,
+    input.timezone
+  );
+  const nextToken = await getNextTokenNumber(input.doctorId, input.date, input.correlationId);
+  const avgSeconds = await getRollingAverageConsultationSeconds(input.doctorId, input.correlationId);
+  return buildQueueDayPreview({
+    windows,
+    nextToken,
+    avgConsultationSeconds: avgSeconds,
+    coldStartMinutes: env.OPD_QUEUE_DEFAULT_CONSULT_MINUTES,
+  });
 }
 
 /**

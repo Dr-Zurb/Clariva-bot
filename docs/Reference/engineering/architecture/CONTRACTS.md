@@ -405,7 +405,7 @@ No `conversationId`, patient id, name, phone, reason, or chat booking hints.
 
 **Auth:** Same public slug and rate limit. `date` is `YYYY-MM-DD`.
 
-**Success `data`:** `{ slots, timezone, opdMode }` — the same day-slot payload as `GET /api/v1/bookings/day-slots` for that doctor and date.
+**Success `data`:** `{ slots, timezone, opdMode, queue? }` — the same day-slot payload as `GET /api/v1/bookings/day-slots` for that doctor and date. When `opdMode` is `queue`, `queue` is `{ windows: [{ start, end }], nextToken, avgMinutes, expectedAt }`. `windows` are the doctor's open hours for that day. `nextToken` is the place the next person would take. `expectedAt` is that token's time from the window start and the average visit. Slot days omit `queue`. The person does not pick a clock time on a queue day.
 
 Token routes `slot-page-info` and `day-slots` stay token-only.
 

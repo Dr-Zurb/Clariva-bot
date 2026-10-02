@@ -265,6 +265,33 @@ export async function getDaySlotsWithStatus(
   return { slots, timezone };
 }
 
+/** The doctor's open windows for a day, not the chopped slots. */
+export async function getAvailabilityWindowsForDate(
+  doctorId: string,
+  date: string,
+  timezone: string,
+  visit?: AvailabilityVisitType
+): Promise<Array<{ start: string; end: string }>> {
+  const admin = getSupabaseAdminClient();
+  if (!admin) return [];
+  const rows = (await fetchAvailabilityForDay(
+    admin,
+    doctorId,
+    getDayOfWeek(date, timezone)
+  )) as Availability[];
+  return rows
+    .filter((row) => windowAllowsVisit(row, visit))
+    .map((row) => {
+      const [startHour, startMinute] = parseTime(row.start_time);
+      const [endHour, endMinute] = parseTime(row.end_time);
+      return {
+        start: localTimeToUtc(date, startHour, startMinute, timezone).toISOString(),
+        end: localTimeToUtc(date, endHour, endMinute, timezone).toISOString(),
+      };
+    })
+    .sort((a, b) => a.start.localeCompare(b.start));
+}
+
 function getDayOfWeek(dateStr: string, timezone?: string): number {
   if (!timezone) {
     const d = new Date(dateStr + 'T12:00:00Z');
