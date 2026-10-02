@@ -1,0 +1,24 @@
+/** First screen of /d/:slug. The chat adds `for`. A missing flag is a new visit. */
+
+export type BookingPagePurpose = "visit" | "times" | "change";
+
+export function bookingPagePurpose(forParam: string | null | undefined): BookingPagePurpose {
+  if (forParam === "times") return "times";
+  if (forParam === "change") return "change";
+  return "visit";
+}
+
+export function bookingPageTitle(purpose: BookingPagePurpose, reschedule: boolean): string {
+  if (reschedule) return "Reschedule Appointment";
+  if (purpose === "times") return "Availability";
+  if (purpose === "change") return "Change or cancel a visit";
+  return "New visit";
+}
+
+/** Same page, without `for`, so the change screen can open a new visit. */
+export function newVisitPath(path: string, search: string): string {
+  const params = new URLSearchParams(search.startsWith("?") ? search.slice(1) : search);
+  params.delete("for");
+  const q = params.toString();
+  return q ? `${path}?${q}` : path;
+}

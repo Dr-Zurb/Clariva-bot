@@ -24,18 +24,23 @@ export function buildPublicClinicPageUrl(publicSlug: string | null | undefined):
   return `${origin}/d/${slug}`;
 }
 
+/** Which first screen the clinic page opens. Omitted means a new visit. */
+export type BookingPageFor = 'times' | 'change';
+
 export function buildBookingPageUrl(
   conversationId: string,
   doctorId: string,
-  publicSlug?: string | null
+  publicSlug?: string | null,
+  purpose?: BookingPageFor
 ): string {
   const token = generateBookingToken(conversationId, doctorId);
   const slug = publicSlug?.trim() ?? '';
+  const forQuery = purpose === 'times' || purpose === 'change' ? `&for=${purpose}` : '';
   if (slug && isPublicSlugShape(slug)) {
     const origin = bookingPageBase().replace(/\/book$/, '');
-    return `${origin}/d/${slug}?c=${token}`;
+    return `${origin}/d/${slug}?c=${token}${forQuery}`;
   }
-  return `${bookingPageBase()}?token=${token}`;
+  return `${bookingPageBase()}?token=${token}${forQuery}`;
 }
 
 /**

@@ -31,6 +31,11 @@ import {
   resolvePublicClinicIntake,
   type PublicBookingIntakeField,
 } from "@/lib/public-booking-intake";
+import {
+  bookingPagePurpose,
+  bookingPageTitle,
+  newVisitPath,
+} from "@/lib/booking-page-purpose";
 
 const DAYS_AHEAD = 14;
 
@@ -85,6 +90,11 @@ function BookPageContent({ slug }: { slug?: string }) {
   const isSlug = Boolean(slug?.trim());
   const token = isSlug ? "" : (searchParams?.get("token") ?? "");
   const conversationToken = isSlug ? (searchParams?.get("c")?.trim() ?? "") : "";
+  const purpose = bookingPagePurpose(searchParams?.get("for"));
+  const newVisitHref = newVisitPath(
+    isSlug && slug?.trim() ? `/d/${slug.trim()}` : "/book",
+    searchParams?.toString() ?? ""
+  );
 
   const [practiceName, setPracticeName] = useState<string>("");
   const [mode, setMode] = useState<"book" | "reschedule">("book");
@@ -494,6 +504,28 @@ function BookPageContent({ slug }: { slug?: string }) {
     );
   }
 
+  if (purpose === "change" && mode !== "reschedule") {
+    return (
+      <main className="min-h-screen bg-gray-50 p-4">
+        <div className="mx-auto max-w-md">
+          <h1 className="text-xl font-semibold text-gray-900">
+            {bookingPageTitle("change", false)}
+          </h1>
+          {practiceName ? (
+            <p className="mt-1 text-sm text-gray-600">{practiceName}</p>
+          ) : null}
+          <p className="mt-4 text-sm text-gray-700">No upcoming visits from this chat.</p>
+          <Link
+            href={newVisitHref}
+            className="mt-6 inline-block text-sm font-medium text-blue-700 underline"
+          >
+            New visit
+          </Link>
+        </div>
+      </main>
+    );
+  }
+
   if (queueSuccess) {
     return (
       <main className="min-h-screen bg-gray-50 p-4">
@@ -528,8 +560,11 @@ function BookPageContent({ slug }: { slug?: string }) {
     <main className="min-h-screen bg-gray-50 p-4">
       <div className="mx-auto max-w-md">
         <h1 className="text-xl font-semibold text-gray-900">
-          {mode === "reschedule" ? "Reschedule Appointment" : practiceName || "Book Appointment"}
+          {bookingPageTitle(purpose, mode === "reschedule")}
         </h1>
+        {mode !== "reschedule" && practiceName ? (
+          <p className="mt-1 text-sm text-gray-600">{practiceName}</p>
+        ) : null}
         <p className="mt-1 text-sm text-gray-600">
           {mode === "reschedule"
             ? opdMode === "queue"

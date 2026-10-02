@@ -22,7 +22,12 @@ jest.mock('../../../../src/services/automated-messaging-opt-out', () => {
 });
 
 jest.mock('../../../../src/utils/booking-page-url', () => ({
-  buildBookingPageUrl: jest.fn(() => 'https://example.com/d/clinic'),
+  buildBookingPageUrl: jest.fn(
+    (_conversationId: string, _doctorId: string, _slug?: string | null, purpose?: string) =>
+      purpose === 'times' || purpose === 'change'
+        ? `https://example.com/d/clinic?for=${purpose}`
+        : 'https://example.com/d/clinic'
+  ),
   buildPublicClinicPageUrl: jest.fn(() => 'https://example.com/d/clinic'),
 }));
 
@@ -152,8 +157,9 @@ function expectMenu(reply: string, greet: boolean): void {
   expect(reply).not.toMatch(/automated|consultation|appointment|booking|slot|token|queue/i);
 }
 
-function expectLink(reply: string, label: string): void {
-  expect(reply).toBe(`${label} ${LINK}`);
+function expectLink(reply: string, label: string, purpose?: 'times' | 'change'): void {
+  const href = purpose ? `${LINK}?for=${purpose}` : LINK;
+  expect(reply).toBe(`${label} ${href}`);
   expect(reply).not.toContain('Hi,');
   expect(reply).not.toContain('STOP');
   expect(reply).not.toMatch(/automated|consultation/i);
@@ -206,12 +212,14 @@ describe('instagram replies people actually send', () => {
 
     for (const text of ['2', '2nd', 'option 2', 'change', 'reschedule', 'change my visit', 'pls cancel', 'cancel appointment', 'change or cancel']) {
       const result = await handleInstagramVisitTurn(turn(text, prior, singleFee));
-      expectLink(result.reply, 'Change or cancel a visit:');
+      expectLink(result.reply, 'Change or cancel a visit:', 'change');
     }
+    const viewed = await handleInstagramVisitTurn(turn('my visit', prior, singleFee));
+    expectLink(viewed.reply, 'View visits:', 'change');
 
     for (const text of ['3', '3rd', '3.', 'availability', 'check availability', 'timings', 'any slots today?', 'are you available today?', 'what time do you open', 'time kya hai', 'time batao']) {
       const result = await handleInstagramVisitTurn(turn(text, prior, singleFee));
-      expectLink(result.reply, 'Availability:');
+      expectLink(result.reply, 'Availability:', 'times');
     }
   });
 

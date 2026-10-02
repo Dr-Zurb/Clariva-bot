@@ -2,7 +2,7 @@
  * Instagram-only signpost. Facebook keeps the stage router.
  */
 
-import { buildBookingPageUrl } from '../../../utils/booking-page-url';
+import { buildBookingPageUrl, type BookingPageFor } from '../../../utils/booking-page-url';
 import { isTeleconsultCatalogAuthoritative } from '../../../utils/consultation-fees';
 import { instagramAddressToShare } from '../../../utils/instagram-faq-copy';
 import {
@@ -43,6 +43,12 @@ function branchFor(kind: InstagramVisitKind): DmHandlerBranch {
   }
 }
 
+function bookingPurpose(kind: InstagramVisitKind): BookingPageFor | undefined {
+  if (kind === 'times') return 'times';
+  if (kind === 'change' || kind === 'cancel' || kind === 'view') return 'change';
+  return undefined;
+}
+
 function isFirstAutomatedReply(ctx: DmTurnContext): boolean {
   return !ctx.recentMessages.some(
     (message) => message.sender_type === 'system' || message.sender_type === 'doctor'
@@ -66,7 +72,8 @@ export async function handleInstagramVisitTurn(ctx: DmTurnContext): Promise<DmTu
   const url = buildBookingPageUrl(
     ctx.conversation.id,
     ctx.doctorId,
-    ctx.doctorSettings?.public_slug
+    ctx.doctorSettings?.public_slug,
+    bookingPurpose(kind)
   );
   const firstReply = isFirstAutomatedReply(ctx);
   const reply = renderInstagramVisitReply({

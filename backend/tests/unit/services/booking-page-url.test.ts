@@ -35,6 +35,18 @@ describe('booking page URL', () => {
     }
   });
 
+  it('adds for=times or for=change without dropping the chat token', async () => {
+    const { buildBookingPageUrl, verifyBookingToken } = await loadUrls();
+    const times = new URL(buildBookingPageUrl(CONV, DOC, 'city-clinic', 'times'));
+    const change = new URL(buildBookingPageUrl(CONV, DOC, 'city-clinic', 'change'));
+    expect(times.searchParams.get('for')).toBe('times');
+    expect(change.searchParams.get('for')).toBe('change');
+    expect(verifyBookingToken(times.searchParams.get('c') ?? '').conversationId).toBe(CONV);
+    expect(verifyBookingToken(change.searchParams.get('c') ?? '').conversationId).toBe(CONV);
+    const plain = new URL(buildBookingPageUrl(CONV, DOC, 'city-clinic'));
+    expect(plain.searchParams.get('for')).toBeNull();
+  });
+
   it('keeps reschedule on /book?token=', async () => {
     const { buildReschedulePageUrl, verifyBookingToken } = await loadUrls();
     const url = new URL(buildReschedulePageUrl(CONV, DOC, APPT));
