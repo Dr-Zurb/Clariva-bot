@@ -3252,9 +3252,9 @@ export function buildConsentRevokeSuccessMessage(input: ConsentLanguageOnlyInput
 }
 
 const RECEPTIONIST_PAUSE_DEFAULT_COPY: Readonly<Record<StaticMessageLocale, string>> = {
-  en: 'Thanks for your message. Our team will reply from this inbox personally when they can. Automated scheduling is paused right now - we appreciate your patience.',
-  hi: 'Aapke message ke liye dhanyavaad. Hamari team jab ho sake is inbox se personally reply karegi. Automated scheduling abhi pause hai — aapke sabr ke liye dhanyavaad.',
-  pa: 'Tuhade message layi dhanyavaad. Sadi team jadon ho sake is inbox ton personally reply karegi. Automated scheduling hun pause hai — tuhade sabr layi dhanyavaad.',
+  en: 'Automated messages are paused here.',
+  hi: 'Yahan automated messages pause hain.',
+  pa: 'Ithe automated messages pause han.',
 };
 
 export function buildReceptionistPauseDefaultMessage(input: ConsentLanguageOnlyInput): string {
@@ -3503,9 +3503,9 @@ export function buildPatientMatchConfirmMessage(input: PatientMatchConfirmMessag
 }
 
 const FOLLOW_UP_SERVICE_CONFIRM_UNCLEAR_COPY: Readonly<Record<StaticMessageLocale, string>> = {
-  en: 'Please reply **Yes** or **No** — is this visit a follow-up for the same service?',
-  hi: 'Please **Yes** ya **No** reply karein — kya yeh visit same service ke liye follow-up hai?',
-  pa: 'Please **Yes** ya **No** reply karo — ki eh visit same service layi follow-up hai?',
+  en: 'Say book if you want the booking page.',
+  hi: 'Booking page chahiye ho to book likhein.',
+  pa: 'Booking page chahidi hove ta book likho.',
 };
 
 export function buildFollowUpServiceConfirmUnclearMessage(input: ConsentLanguageOnlyInput): string {
@@ -3523,9 +3523,9 @@ export function buildPatientMatchConfirmUnclearMessage(input: ConsentLanguageOnl
 }
 
 const TELECONSULT_CHANNEL_PICK_COPY: Readonly<Record<StaticMessageLocale, string>> = {
-  en: 'Right now we offer **teleconsult** only (text, voice, or video) — which works best for you?',
-  hi: 'Abhi hum sirf **teleconsult** offer karte hain (text, voice, ya video) — aapke liye kaunsa best hai?',
-  pa: 'Hun asi sirf **teleconsult** offer karde haan (text, voice, ya video) — tuhade layi kehra best hai?',
+  en: 'Appointments are online. I can help with timings or a booking link.',
+  hi: 'Appointments online hain. Main timings ya booking link mein madad kar sakta hoon.',
+  pa: 'Appointments online han. Main timings ja booking link vich madad kar sakda haan.',
 };
 
 export function buildTeleconsultChannelPickMessage(input: ConsentLanguageOnlyInput): string {
@@ -3709,68 +3709,68 @@ const COMMENT_PROACTIVE_DM_TEMPLATES: Readonly<
 > = {
   en: {
     book_appointment: {
-      ack: 'You expressed interest in booking.',
-      cta: "Reply here if you'd like to schedule.",
+      ack: 'I can send the booking page.',
+      cta: 'Reply here and I will send the link.',
     },
     check_availability: {
-      ack: 'You asked about availability.',
-      cta: "Reply here if you'd like to schedule a consultation.",
+      ack: 'I can help with timings.',
+      cta: 'Reply here for timings.',
     },
     pricing_inquiry: {
-      ack: 'You asked about pricing.',
-      cta: "Reply here if you'd like more details.",
+      ack: 'I can help with the appointment fee.',
+      cta: 'Reply here for the fee.',
     },
     general_inquiry: {
-      ack: 'You had a question.',
-      cta: "Reply here if you'd like to connect.",
+      ack: "I'm the receptionist.",
+      cta: 'Reply here for timings, the appointment fee, or a booking link.',
     },
     medical_query: {
-      ack: 'Our doctor may be able to help with your query.',
-      cta: "If you'd like to schedule a consultation, reply here.",
+      ack: "I'm the receptionist.",
+      cta: 'I can help with timings, availability, or a booking link.',
     },
   },
   hi: {
     book_appointment: {
-      ack: 'Aapne booking mein interest dikhaya.',
-      cta: 'Schedule karna ho to yahan reply karein.',
+      ack: 'Main booking page bhej sakta hoon.',
+      cta: 'Yahan reply karein, main link bhej dunga.',
     },
     check_availability: {
-      ack: 'Aapne availability ke baare mein pucha.',
-      cta: 'Consultation schedule karna ho to yahan reply karein.',
+      ack: 'Main timings mein madad kar sakta hoon.',
+      cta: 'Timings ke liye yahan reply karein.',
     },
     pricing_inquiry: {
-      ack: 'Aapne pricing ke baare mein pucha.',
-      cta: 'Aur details chahiye hon to yahan reply karein.',
+      ack: 'Main appointment fee mein madad kar sakta hoon.',
+      cta: 'Fee ke liye yahan reply karein.',
     },
     general_inquiry: {
-      ack: 'Aapka ek sawaal tha.',
-      cta: 'Connect karna ho to yahan reply karein.',
+      ack: 'Main receptionist hoon.',
+      cta: 'Timings, appointment fee, ya booking link ke liye yahan reply karein.',
     },
     medical_query: {
-      ack: 'Hamare doctor aapke query mein madad kar sakte hain.',
-      cta: 'Consultation schedule karna ho to yahan reply karein.',
+      ack: 'Main receptionist hoon.',
+      cta: 'Main timings, availability, ya booking link mein madad kar sakta hoon.',
     },
   },
   pa: {
     book_appointment: {
-      ack: 'Tusi booking vich interest dikhaya.',
-      cta: 'Schedule karna hove ta ithe reply karo.',
+      ack: 'Main booking page bhej sakda haan.',
+      cta: 'Ithe reply karo, main link bhej dunga.',
     },
     check_availability: {
-      ack: 'Tusi availability baare puchya.',
-      cta: 'Consultation schedule karna hove ta ithe reply karo.',
+      ack: 'Main timings vich madad kar sakda haan.',
+      cta: 'Timings layi ithe reply karo.',
     },
     pricing_inquiry: {
-      ack: 'Tusi pricing baare puchya.',
-      cta: 'Hor details chahidiyan hon ta ithe reply karo.',
+      ack: 'Main appointment fee vich madad kar sakda haan.',
+      cta: 'Fee layi ithe reply karo.',
     },
     general_inquiry: {
-      ack: 'Tuhada ik sawaal si.',
-      cta: 'Connect karna hove ta ithe reply karo.',
+      ack: 'Main receptionist haan.',
+      cta: 'Timings, appointment fee, ja booking link layi ithe reply karo.',
     },
     medical_query: {
-      ack: 'Sade doctor tuhade query vich madad kar sakde ne.',
-      cta: 'Consultation schedule karna hove ta ithe reply karo.',
+      ack: 'Main receptionist haan.',
+      cta: 'Main timings, availability, ja booking link vich madad kar sakda haan.',
     },
   },
 };
@@ -3781,10 +3781,14 @@ const COMMENT_PROACTIVE_DM_TEMPLATES: Readonly<
  */
 export function buildCommentProactiveDmMessage(input: CommentProactiveDmMessageInput): string {
   const locale = toStaticLocale(input.language);
-  const practiceName = input.practiceName?.trim() || 'Our practice';
-  const specialty = input.specialty?.trim() || '';
+  const rawPractice = input.practiceName?.trim() || '';
+  const practiceName =
+    rawPractice && !/\b(dr\.?|doctor)\b/i.test(rawPractice) && !/डॉक्टर|ਡਾਕਟਰ/.test(rawPractice)
+      ? rawPractice
+      : '';
   const address = input.addressSummary?.trim() || '';
-  const detailsBlock = `\n\n${practiceName}${specialty ? ` - ${specialty}` : ''}${address ? `. ${address}` : ''}`;
+  const details = [practiceName, address].filter((part) => part.length > 0).join('. ');
+  const detailsBlock = details ? `\n\n${details}` : '';
 
   const table = COMMENT_PROACTIVE_DM_TEMPLATES[locale];
   const t = table[input.intent] ?? table.general_inquiry!;

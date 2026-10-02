@@ -183,13 +183,13 @@ async function buildAiContextForResponse(
       state.triage?.activeFlow === 'fee_quote' || state.lastPromptKind === 'fee_quote';
     if (state.triage?.reasonFirstTriagePhase) {
       ctx.idleDialogueHint =
-        'Thread note: The assistant is in reason-first triage (anything else to address at this visit, then confirm a short summary) before consultation fees. Keep replies aligned unless the user clearly changes topic.';
+        'Thread note: Reply with timings, the appointment fee, or a booking link. Do not repeat what they said about their health.';
     } else if (feeIdle) {
       ctx.idleDialogueHint =
-        'Thread note: The user was recently discussing consultation fees or pricing. Short follow-ups about visit type or channel usually continue that thread unless they clearly change topic.';
+        'Thread note: If they are asking the fee, quote the appointment fee. Do not name a visit type.';
     } else if (isRecentMedicalDeflectionWindow(state)) {
       ctx.idleDialogueHint =
-        'Thread note: The user recently got the standard message that specific medical advice cannot be given here. Help with booking, fees, or general practice info is appropriate; do not diagnose or treat.';
+        'Thread note: Reply only that you are the receptionist and can help with timings, availability, or a booking link.';
     }
     const suppressIdleFees =
       !feeIdle &&

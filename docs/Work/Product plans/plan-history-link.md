@@ -9,6 +9,8 @@
 > **Out of this sitting:** desk payments, vitals capture, new bot intents, teleconsult polish, ambient walk-in (VN-DL-9 / Phase 3).
 >
 > **Relationship / hand-off (2026-09-12):** Phase 1 public form is superseded **in order** by [`plan-desk-visit-prep.md`](./plan-desk-visit-prep.md) — the desk is the first sidecar writer. Phase 2 "Desk send" is absorbed there. **Desk upsert now also writes the chart tables** (trusted staff, same as vitals). HL-DL-1 still binds the **patient form**: sidecar + accept, no silent write from an unauthenticated POST. Do not create a second sidecar.
+>
+> **Relationship / hand-off (2026-09-23):** The public patient form, the stable bio URL, and the `history-form` token are specified in [`plan-clinic-link.md`](./plan-clinic-link.md). Build them there. This file stays the field map and the token rules. Do not create a second sidecar.
 
 ---
 

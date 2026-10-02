@@ -1558,6 +1558,7 @@ export interface SelectSlotAndPayData {
   mode?: "book" | "reschedule";
   opdMode?: OpdModeApi;
   tokenNumber?: number;
+  prepPath?: string;
 }
 
 /** mca-13 / mca-14: owned-page intake on select-slot-and-pay */
@@ -1669,6 +1670,151 @@ export async function postPublicClinicCheckout(
     throw err;
   }
   return json as ApiSuccess<SelectSlotAndPayData>;
+}
+
+export interface PublicHistoryItem {
+  name: string;
+  durationValue?: number;
+  durationUnit?: "days" | "months" | "years";
+}
+
+export interface PublicHistoryList {
+  none: boolean;
+  items: PublicHistoryItem[];
+}
+
+export interface PublicHistoryRead {
+  listsEditable: boolean;
+  listsHidden: boolean;
+  alreadySent: boolean;
+  consultationType: "video" | "voice" | "in_clinic" | "text" | null;
+  chips: {
+    since?: string;
+    course?: "better" | "same" | "worse";
+    tried?: string;
+    aim?: "new_problem" | "follow_up" | "reports" | "refill";
+  } | null;
+  allergies?: PublicHistoryList;
+  medicines?: PublicHistoryList;
+  conditions?: PublicHistoryList;
+}
+
+export async function getPublicClinicHistory(
+  token: string
+): Promise<ApiSuccess<PublicHistoryRead>> {
+  const params = new URLSearchParams({ token });
+  return request<PublicHistoryRead>(
+    `/api/v1/bookings/public/history?${params.toString()}`
+  );
+}
+
+export async function postPublicClinicHistory(body: {
+  token: string;
+  noticeVersion: string;
+  allergies: PublicHistoryList;
+  medicines: PublicHistoryList;
+  conditions: PublicHistoryList;
+  chips?: PublicHistoryRead["chips"];
+}): Promise<ApiSuccess<{ listsStored: boolean; chipsSaved: boolean }>> {
+  const res = await fetch(`${requireApiBaseUrl()}/api/v1/bookings/public/history`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    cache: "no-store",
+  });
+  const json = (await res.json().catch(() => ({}))) as
+    | ApiSuccess<{ listsStored: boolean; chipsSaved: boolean }>
+    | ApiError;
+  if (!res.ok || isApiError(json)) {
+    const message = isApiError(json) ? json.error.message : "Request failed";
+    const err = new Error(message) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
+  return json;
+}
+
+export async function suggestPublicClinicMedicines(
+  token: string,
+  q: string
+): Promise<ApiSuccess<{ suggestions: Array<{ label: string; hint: string | null }> }>> {
+  const params = new URLSearchParams({ token, q });
+  return request(`/api/v1/bookings/public/history/medicines?${params.toString()}`);
+}
+
+export async function getPublicMedicineCatalog(token: string): Promise<
+  ApiSuccess<{
+    drugs: Array<{
+      id: string;
+      genericName: string;
+      brandNames: string[];
+      strength: string | null;
+    }>;
+  }>
+> {
+  const params = new URLSearchParams({ token });
+  return request(`/api/v1/bookings/public/history/medicines?${params.toString()}`);
+}
+
+export async function getPublicClinicPhotos(
+  token: string
+): Promise<
+  ApiSuccess<{
+    photos: Array<{ id: string; documentType: string; downloadUrl: string }>;
+    canRemove: boolean;
+  }>
+> {
+  const params = new URLSearchParams({ token });
+  return request(`/api/v1/bookings/public/history/photos?${params.toString()}`);
+}
+
+export async function postPublicClinicPhoto(
+  token: string,
+  documentType: string,
+  body: Blob,
+  contentType: string
+): Promise<ApiSuccess<{ documentId: string }>> {
+  const params = new URLSearchParams({ token, documentType });
+  const res = await fetch(
+    `${requireApiBaseUrl()}/api/v1/bookings/public/history/photos?${params.toString()}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": contentType },
+      body,
+      cache: "no-store",
+    }
+  );
+  const json = (await res.json().catch(() => ({}))) as
+    | ApiSuccess<{ documentId: string }>
+    | ApiError;
+  if (!res.ok || isApiError(json)) {
+    const message = isApiError(json) ? json.error.message : "Request failed";
+    const err = new Error(message) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
+  return json;
+}
+
+export async function deletePublicClinicPhoto(
+  token: string,
+  documentId: string
+): Promise<ApiSuccess<{ deleted: boolean }>> {
+  const params = new URLSearchParams({ token });
+  const res = await fetch(
+    `${requireApiBaseUrl()}/api/v1/bookings/public/history/photos/${documentId}?${params.toString()}`,
+    { method: "DELETE", cache: "no-store" }
+  );
+  const json = (await res.json().catch(() => ({}))) as
+    | ApiSuccess<{ deleted: boolean }>
+    | ApiError;
+  if (!res.ok || isApiError(json)) {
+    const message = isApiError(json) ? json.error.message : "Request failed";
+    const err = new Error(message) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
+  }
+  return json;
 }
 
 /**
@@ -1892,6 +2038,15 @@ export async function getOpdSessionSnapshot(
   const params = new URLSearchParams({ token: consultationToken });
   return request<OpdSessionSnapshotData>(
     `/api/v1/bookings/session/snapshot?${params.toString()}`
+  );
+}
+
+export async function getSessionPrepLink(
+  consultationToken: string
+): Promise<ApiSuccess<{ prepPath: string }>> {
+  const params = new URLSearchParams({ token: consultationToken });
+  return request<{ prepPath: string }>(
+    `/api/v1/bookings/session/prep-link?${params.toString()}`
   );
 }
 

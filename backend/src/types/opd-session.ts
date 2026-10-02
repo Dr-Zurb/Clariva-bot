@@ -30,6 +30,8 @@ export interface PatientOpdSnapshot {
   appointmentId: string;
   status: AppointmentStatus;
   opdMode: OpdMode;
+  /** Visit modality. Not a prep token. */
+  consultationType?: 'video' | 'voice' | 'in_clinic' | 'text' | null;
   /** Client polling hint (seconds); also exposed via Cache-Control max-age */
   suggestedPollSeconds: number;
   /** Minutes past scheduled start while still waiting (pending/confirmed, consult not started) */

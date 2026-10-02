@@ -26,6 +26,7 @@ export interface PatientOpdSnapshot {
   appointmentId: string;
   status: "pending" | "confirmed" | "cancelled" | "completed" | "no_show";
   opdMode: OpdMode;
+  consultationType?: "video" | "voice" | "in_clinic" | "text" | null;
   suggestedPollSeconds: number;
   delayMinutes?: number | null;
   doctorBusyWith?: DoctorBusyWith;

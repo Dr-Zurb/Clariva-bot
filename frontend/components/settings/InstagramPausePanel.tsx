@@ -1,5 +1,7 @@
 "use client";
 
+import { useEffect } from "react";
+
 import { FieldLabel } from "@/components/ui/FieldLabel";
 import { SaveButton } from "@/components/ui/SaveButton";
 import { settingsFieldClassName } from "@/components/settings/SettingsPageShell";
@@ -52,6 +54,14 @@ export function InstagramPausePanel({ token }: InstagramPausePanelProps) {
     await save(payload);
   }
 
+  useEffect(() => {
+    if (!form) return;
+    if (window.location.hash !== "#receptionist-pause") return;
+    document.getElementById("receptionist-pause")?.scrollIntoView({
+      block: "start",
+    });
+  }, [form]);
+
   if (isLoading || !form) {
     return (
       <div
@@ -84,7 +94,8 @@ export function InstagramPausePanel({ token }: InstagramPausePanelProps) {
   return (
     <form
       onSubmit={(e) => void handleSubmit(e)}
-      className="space-y-3 rounded-lg border border-amber-500/30 bg-amber-500/5 p-4"
+      id="receptionist-pause"
+      className="scroll-mt-6 space-y-3 rounded-lg border border-amber-500/30 bg-amber-500/5 p-4"
       aria-labelledby="ig-pause-heading"
     >
       <h3 id="ig-pause-heading" className="text-sm font-semibold text-foreground">

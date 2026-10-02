@@ -1,6 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import PatientVideoWaitingRoom from "@/components/consultation/PatientVideoWaitingRoom";
+import { ARRIVAL_LINES } from "@/lib/arrival-line";
 
 vi.mock("@/components/consultation/VideoConsultPreCall", () => ({
   default: ({
@@ -56,6 +57,8 @@ describe("PatientVideoWaitingRoom (crc-10)", () => {
       screen.getByRole("heading", { name: "Waiting room" })
     ).toBeInTheDocument();
     expect(screen.getByText(/Stay on this page/i)).toBeInTheDocument();
+    expect(screen.getByText(ARRIVAL_LINES.video)).toBeInTheDocument();
+    expect(screen.queryByText(ARRIVAL_LINES.voice)).not.toBeInTheDocument();
     expect(screen.getByTestId("video-consult-precall")).toBeInTheDocument();
     expect(
       screen.getByTestId("video-consult-lobby-header")
@@ -75,6 +78,7 @@ describe("PatientVideoWaitingRoom (crc-10)", () => {
     expect(
       screen.queryByTestId("video-consult-precall")
     ).not.toBeInTheDocument();
+    expect(screen.getByText(ARRIVAL_LINES.video)).toBeInTheDocument();
     expect(screen.getByTestId("video-lobby-ready")).toBeInTheDocument();
     expect(screen.getByText(/No extra tap needed/i)).toBeInTheDocument();
   });

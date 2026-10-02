@@ -378,7 +378,7 @@ describe('bookingEntryStage', () => {
     expect(result.branch).toBe('booking_start_link_first');
     expect(result.nextState.step).toBe('awaiting_slot_selection');
     expect(result.reply).toContain('https://example.com/book');
-    expect(result.reply).not.toMatch(/full name|age|gender|mobile|reason for visit|i agree/i);
+    expect(result.reply).not.toMatch(/\b(full name|age|gender|mobile|reason for visit|i agree)\b/i);
     expect(ctx.runGenerateResponse).not.toHaveBeenCalled();
   });
 });

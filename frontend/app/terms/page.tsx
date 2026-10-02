@@ -12,7 +12,7 @@ export default function TermsPage() {
       <h1 className="text-3xl font-bold tracking-tight text-foreground">
         Terms of Service
       </h1>
-      <p className="mt-2 text-sm text-muted-foreground">Last updated: August 2026</p>
+      <p className="mt-2 text-sm text-muted-foreground">Last updated: October 2026</p>
 
       <div className="mt-8 space-y-8 text-foreground/80">
         <section className="space-y-3">
@@ -56,11 +56,10 @@ export default function TermsPage() {
             answers practice questions, and hands off to your doctor.
           </p>
           <p>
-            <strong className="text-foreground">In an emergency, do not use this
-            service.</strong> Call <strong className="text-foreground">112</strong>{" "}
-            or <strong className="text-foreground">108</strong>, or go to the nearest
-            hospital. The assistant does not triage and does not assess how serious
-            your condition is.
+            <strong className="text-foreground">This service is for scheduled
+            visits only. It is not an emergency service.</strong> If you need urgent
+            help, do not wait for an appointment. The assistant does not triage and
+            does not assess how serious your condition is.
           </p>
         </section>
 

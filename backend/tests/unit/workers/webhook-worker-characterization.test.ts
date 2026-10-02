@@ -343,7 +343,7 @@ describe('RBH-02 webhook worker characterization', () => {
       expect(aiService.generateResponse).not.toHaveBeenCalled();
       expect(mockSendMessage).toHaveBeenCalledWith(
         '987654321012345',
-        expect.stringContaining('Automated scheduling is paused'),
+        expect.stringContaining('Automated messages are paused here.'),
         'corr-pause',
         'doctor-token'
       );

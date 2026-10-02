@@ -6,20 +6,37 @@
  * POST /api/v1/bookings/select-slot-and-pay - Create appointment + payment link (unified flow)
  * GET /api/v1/bookings/redirect-url - Instagram DM URL for success page (token, allows expired)
  * GET /api/v1/bookings/slot-page-info - Page metadata (token)
+ * GET /api/v1/bookings/public/page-info - Practice header (public slug)
+ * GET /api/v1/bookings/public/day-slots - Day slots (public slug)
+ * POST /api/v1/bookings/public/checkout - Book without a conversation (public slug)
  * GET /api/v1/bookings/session/snapshot - OPD session snapshot (consultation token; e-task-opd-04)
  * POST /api/v1/bookings/session/early-join/accept | decline - early join (e-task-opd-04)
  *
  * No auth required; token is the auth.
  */
 
-import { Router } from 'express';
+import express, { Router } from 'express';
 import {
   getDaySlotsHandler,
   selectSlotHandler,
   selectSlotAndPayHandler,
   getRedirectUrlHandler,
   getSlotPageInfoHandler,
+  getPublicClinicPageInfoHandler,
+  getPublicClinicDaySlotsHandler,
+  postPublicClinicCheckoutHandler,
 } from '../../../controllers/booking-controller';
+import {
+  getPublicClinicHistoryHandler,
+  getPublicClinicMedicineSuggestHandler,
+  postPublicClinicHistoryHandler,
+} from '../../../controllers/public-clinic-history-controller';
+import {
+  deletePublicClinicPhotoHandler,
+  getPublicClinicPhotosHandler,
+  postPublicClinicPhotoHandler,
+} from '../../../controllers/public-clinic-photo-controller';
+import { getSessionPrepLinkHandler } from '../../../controllers/public-clinic-prep-link-controller';
 import {
   getSessionSnapshotHandler,
   acceptEarlyJoinHandler,
@@ -37,7 +54,30 @@ router.post('/select-slot-and-pay', selectSlotAndPayHandler);
 router.get('/redirect-url', getRedirectUrlHandler);
 router.get('/slot-page-info', getSlotPageInfoHandler);
 
+router.get('/public/page-info', publicSessionLimiter, getPublicClinicPageInfoHandler);
+router.get('/public/day-slots', publicSessionLimiter, getPublicClinicDaySlotsHandler);
+router.post('/public/checkout', publicSessionLimiter, postPublicClinicCheckoutHandler);
+router.get('/public/history', publicSessionLimiter, getPublicClinicHistoryHandler);
+router.get('/public/history/medicines', publicSessionLimiter, getPublicClinicMedicineSuggestHandler);
+router.post('/public/history', publicSessionLimiter, postPublicClinicHistoryHandler);
+router.post(
+  '/public/history/photos',
+  publicSessionLimiter,
+  express.raw({
+    type: ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'],
+    limit: '10mb',
+  }),
+  postPublicClinicPhotoHandler
+);
+router.get('/public/history/photos', publicSessionLimiter, getPublicClinicPhotosHandler);
+router.delete(
+  '/public/history/photos/:documentId',
+  publicSessionLimiter,
+  deletePublicClinicPhotoHandler
+);
+
 router.get('/session/snapshot', publicSessionLimiter, getSessionSnapshotHandler);
+router.get('/session/prep-link', publicSessionLimiter, getSessionPrepLinkHandler);
 router.post('/session/early-join/accept', publicSessionLimiter, acceptEarlyJoinHandler);
 router.post('/session/early-join/decline', publicSessionLimiter, declineEarlyJoinHandler);
 router.post('/session/lobby-heartbeat', publicSessionLimiter, lobbyHeartbeatHandler);

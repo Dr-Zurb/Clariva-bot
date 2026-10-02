@@ -6,6 +6,9 @@ import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import {
   getSlotPageInfo,
   getDaySlots,
+  getPublicClinicDaySlots,
+  getPublicClinicPageInfo,
+  postPublicClinicCheckout,
   selectSlotAndPay,
   type BookingPageCatalogApi,
   type ConsultationModalityApi,
@@ -18,16 +21,18 @@ import {
   formatTime,
 } from "@/lib/format-date";
 import { formatLocalIsoDate } from "@/lib/dates";
+import {
+  AFTER_BOOKING_URGENCY_NOTICE,
+  SCHEDULED_VISIT_NOTICE,
+} from "@/lib/booking-visit-notices";
 import { BOOKING_AUDIO_RECORDING_DISCLOSURE } from "@/lib/recording-audio-disclosure";
 import {
   resolvePublicBookingIntake,
+  resolvePublicClinicIntake,
   type PublicBookingIntakeField,
 } from "@/lib/public-booking-intake";
 
 const DAYS_AHEAD = 14;
-
-const BOOKING_PAGE_EMERGENCY_NOTE =
-  "If your symptoms get worse or feel like an emergency before your visit, don't wait — call 112 or 108, or go to the nearest hospital right away.";
 
 const MODALITY_LABEL: Record<ConsultationModalityApi, string> = {
   text: "Text chat",
@@ -75,9 +80,11 @@ function formatDateLabel(dateStr: string): string {
   });
 }
 
-function BookPageContent() {
+function BookPageContent({ slug }: { slug?: string }) {
   const searchParams = useSearchParams();
-  const token = searchParams?.get("token") ?? "";
+  const isSlug = Boolean(slug?.trim());
+  const token = isSlug ? "" : (searchParams?.get("token") ?? "");
+  const conversationToken = isSlug ? (searchParams?.get("c")?.trim() ?? "") : "";
 
   const [practiceName, setPracticeName] = useState<string>("");
   const [mode, setMode] = useState<"book" | "reschedule">("book");
@@ -115,8 +122,11 @@ function BookPageContent() {
 
   const [patientName, setPatientName] = useState("");
   const [patientPhone, setPatientPhone] = useState("");
+  const [patientAge, setPatientAge] = useState("");
+  const [patientSex, setPatientSex] = useState("");
   const [reasonForVisit, setReasonForVisit] = useState("");
   const [consentGranted, setConsentGranted] = useState(false);
+  const [scheduledVisitAccepted, setScheduledVisitAccepted] = useState(false);
   const [intakeFieldError, setIntakeFieldError] = useState<{
     field: PublicBookingIntakeField;
     message: string;
@@ -134,8 +144,13 @@ function BookPageContent() {
   }, []);
 
   useEffect(() => {
-    if (!token || token.trim() === "") {
+    if (!isSlug && (!token || token.trim() === "")) {
       setPageError("Invalid or expired link. Please start from the chat.");
+      setPageLoading(false);
+      return;
+    }
+    if (isSlug && !slug?.trim()) {
+      setPageError("This booking page was not found.");
       setPageLoading(false);
       return;
     }
@@ -144,7 +159,11 @@ function BookPageContent() {
     setPageError(null);
     setPageLoading(true);
 
-    getSlotPageInfo(token)
+    const loadPage = isSlug
+      ? getPublicClinicPageInfo(slug!.trim())
+      : getSlotPageInfo(token);
+
+    loadPage
       .then((res) => {
         if (cancelled) return;
         setPracticeName(res.data.practiceName || "Book Appointment");
@@ -169,12 +188,13 @@ function BookPageContent() {
         const sc = res.data.serviceCatalog ?? null;
         setServiceCatalog(sc);
 
-        const locked = res.data.servicePickerLocked === true;
+        const tokenInfo = "conversationId" in res.data ? res.data : null;
+        const locked = tokenInfo?.servicePickerLocked === true;
         setServicePickerLocked(locked);
 
-        const sugKey = res.data.suggestedCatalogServiceKey?.trim().toLowerCase();
-        const sugId = res.data.suggestedCatalogServiceId?.trim();
-        const sugMod = res.data.suggestedConsultationModality;
+        const sugKey = tokenInfo?.suggestedCatalogServiceKey?.trim().toLowerCase();
+        const sugId = tokenInfo?.suggestedCatalogServiceId?.trim();
+        const sugMod = tokenInfo?.suggestedConsultationModality;
 
         if (sc && (sugKey || sugId)) {
           const svc = sc.services.find(
@@ -218,18 +238,24 @@ function BookPageContent() {
       })
       .catch((err) => {
         if (cancelled) return;
-        setPageError(
-          err?.status === 401
-            ? "Invalid or expired link. Please start from the chat."
-            : "Something went wrong. Please try again or return to the chat."
-        );
+        if (isSlug && err?.status === 404) {
+          setPageError("This booking page was not found.");
+        } else if (isSlug) {
+          setPageError("Something went wrong. Please try again.");
+        } else {
+          setPageError(
+            err?.status === 401
+              ? "Invalid or expired link. Please start from the chat."
+              : "Something went wrong. Please try again or return to the chat."
+          );
+        }
         setPageLoading(false);
       });
 
     return () => {
       cancelled = true;
     };
-  }, [token, dateOptions]);
+  }, [token, dateOptions, isSlug, slug]);
 
   useEffect(() => {
     if (!serviceCatalog || !selectedServiceKey) {
@@ -253,11 +279,16 @@ function BookPageContent() {
 
   const fetchSlots = useCallback(
     (date: string) => {
-      if (!token) return;
+      if (!isSlug && !token) return;
+      if (isSlug && !slug?.trim()) return;
       setSlotsLoading(true);
       setSlots([]);
       setSelectedSlot(null);
-      getDaySlots(token, date)
+      const visit = selectedModality ?? undefined;
+      const loadSlots = isSlug
+        ? getPublicClinicDaySlots(slug!.trim(), date, visit)
+        : getDaySlots(token, date, visit);
+      loadSlots
         .then((res) => {
           setSlots(res.data.slots);
           setTimezone(res.data.timezone);
@@ -272,14 +303,14 @@ function BookPageContent() {
           setSlotsLoading(false);
         });
     },
-    [token]
+    [token, isSlug, slug, selectedModality]
   );
 
   useEffect(() => {
-    if (selectedDate && token) {
+    if (selectedDate && (token || isSlug)) {
       fetchSlots(selectedDate);
     }
-  }, [selectedDate, token, fetchSlots]);
+  }, [selectedDate, token, isSlug, fetchSlots]);
 
   /** Queue + booking: first available slot on the chosen day backs the join request. */
   useEffect(() => {
@@ -301,17 +332,37 @@ function BookPageContent() {
       patientPhone,
       reasonForVisit,
       consentGranted,
+      patientAge,
+      patientSex,
     }),
-    [patientName, patientPhone, reasonForVisit, consentGranted]
+    [patientName, patientPhone, reasonForVisit, consentGranted, patientAge, patientSex]
   );
   const intakeReady =
-    mode !== "book" || resolvePublicBookingIntake(intakeDraft).ok;
+    mode !== "book" ||
+    (isSlug
+      ? resolvePublicClinicIntake(intakeDraft).ok
+      : resolvePublicBookingIntake(intakeDraft).ok);
+  const visitTermsReady = mode !== "book" || scheduledVisitAccepted;
 
   const handleSave = useCallback(async () => {
-    if (!selectedSlot || !token || saving || !catalogPickComplete) return;
+    if (!selectedSlot || saving || !catalogPickComplete) return;
+    if (mode === "book" && !scheduledVisitAccepted) return;
+    if (!isSlug && !token) return;
+    if (isSlug && !slug?.trim()) return;
     let resolvedIntake: ReturnType<typeof resolvePublicBookingIntake> | null =
       null;
-    if (mode === "book") {
+    let clinicIntake: ReturnType<typeof resolvePublicClinicIntake> | null = null;
+    if (mode === "book" && isSlug) {
+      clinicIntake = resolvePublicClinicIntake(intakeDraft);
+      if (!clinicIntake.ok) {
+        setIntakeFieldError({
+          field: clinicIntake.field,
+          message: clinicIntake.message,
+        });
+        return;
+      }
+      setIntakeFieldError(null);
+    } else if (mode === "book") {
       resolvedIntake = resolvePublicBookingIntake(intakeDraft);
       if (!resolvedIntake.ok) {
         setIntakeFieldError({
@@ -333,6 +384,35 @@ function BookPageContent() {
               consultationModality: selectedModality ?? undefined,
             }
           : undefined;
+      if (isSlug) {
+        if (!clinicIntake?.ok) return;
+        const res = await postPublicClinicCheckout({
+          slug: slug!.trim(),
+          slotStart: selectedSlot.start,
+          patientName: clinicIntake.value.patientName,
+          patientPhone: clinicIntake.value.patientPhone,
+          patientAge: clinicIntake.value.patientAge,
+          patientSex: clinicIntake.value.patientSex,
+          reasonForVisit: clinicIntake.value.reasonForVisit,
+          consentGranted: true,
+          ...catalogPayload,
+          ...(conversationToken ? { conversationToken } : {}),
+        });
+        const { paymentUrl, redirectUrl, tokenNumber, opdMode: resMode, prepPath } = res.data;
+        if (prepPath?.startsWith("/book/prep?t=")) {
+          sessionStorage.setItem("clinicPrepPath", prepPath);
+        }
+        if (paymentUrl) {
+          window.location.href = paymentUrl;
+          return;
+        }
+        if ((resMode ?? opdMode) === "queue" && tokenNumber != null) {
+          setQueueSuccess({ tokenNumber, redirectUrl });
+          return;
+        }
+        window.location.href = "/book/success";
+        return;
+      }
       const res = await selectSlotAndPay(
         token,
         selectedSlot.start,
@@ -365,7 +445,9 @@ function BookPageContent() {
         setSaveError(
           status === 409
             ? "This time was just taken. Please pick another."
-            : "Something went wrong. Please try again or return to the chat."
+            : isSlug
+          ? "Something went wrong. Please try again."
+          : "Something went wrong. Please try again or return to the chat."
         );
       }
     } finally {
@@ -374,6 +456,9 @@ function BookPageContent() {
   }, [
     selectedSlot,
     token,
+    isSlug,
+    slug,
+    conversationToken,
     saving,
     opdMode,
     mode,
@@ -383,6 +468,7 @@ function BookPageContent() {
     selectedServiceId,
     selectedModality,
     intakeDraft,
+    scheduledVisitAccepted,
   ]);
 
   const availableCount = slots.filter((s) => s.status === "available").length;
@@ -423,15 +509,15 @@ function BookPageContent() {
             . Wait times are approximate (around order of arrival, not a fixed
             clock time).
           </p>
-          <p className="mt-4 text-sm text-gray-700">{BOOKING_PAGE_EMERGENCY_NOTE}</p>
+          <p className="mt-4 text-sm text-gray-700">{AFTER_BOOKING_URGENCY_NOTICE}</p>
           <button
             type="button"
             className="mt-6 w-full rounded-lg bg-blue-600 px-4 py-3 text-base font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
             onClick={() => {
-              window.location.href = queueSuccess.redirectUrl;
+              window.location.href = isSlug ? "/book/success" : queueSuccess.redirectUrl;
             }}
           >
-            Continue to Instagram
+            {isSlug ? "Continue" : "Continue to Instagram"}
           </button>
         </div>
       </main>
@@ -453,9 +539,7 @@ function BookPageContent() {
               ? "Choose a day to join the queue. You’ll get a token number — wait times are approximate."
               : "Select a date and time for your appointment."}
         </p>
-        <p className="mt-4 rounded-md border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700">
-          {BOOKING_PAGE_EMERGENCY_NOTE}
-        </p>
+        <p className="mt-3 text-sm text-gray-700">{SCHEDULED_VISIT_NOTICE}</p>
 
         {serviceCatalog && mode === "book" && serviceCatalog.services.length > 0 && (
           <section className="mt-6 space-y-4" aria-labelledby="svc-heading">
@@ -554,7 +638,7 @@ function BookPageContent() {
         {/* Date picker */}
         <section className="mt-6" aria-labelledby="date-heading">
           <h2 id="date-heading" className="text-sm font-medium text-gray-700">
-            Select a date
+            {isSlug ? "Next opening" : "Select a date"}
           </h2>
           <div className="mt-2 flex flex-wrap gap-2">
             {dateOptions.map((d) => (
@@ -688,6 +772,62 @@ function BookPageContent() {
                 </p>
               ) : null}
             </div>
+            {isSlug ? (
+              <>
+                <div>
+                  <label htmlFor="book-age" className="text-xs text-gray-500">
+                    Age
+                  </label>
+                  <input
+                    id="book-age"
+                    type="text"
+                    inputMode="numeric"
+                    autoComplete="off"
+                    value={patientAge}
+                    onChange={(e) => {
+                      setPatientAge(e.target.value);
+                      if (intakeFieldError?.field === "patientAge") {
+                        setIntakeFieldError(null);
+                      }
+                    }}
+                    aria-invalid={intakeFieldError?.field === "patientAge"}
+                    className="mt-1 block w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                  {intakeFieldError?.field === "patientAge" ? (
+                    <p className="mt-1 text-xs text-red-600" role="alert">
+                      {intakeFieldError.message}
+                    </p>
+                  ) : null}
+                </div>
+                <div>
+                  <label htmlFor="book-sex" className="text-xs text-gray-500">
+                    Sex
+                  </label>
+                  <select
+                    id="book-sex"
+                    value={patientSex}
+                    onChange={(e) => {
+                      setPatientSex(e.target.value);
+                      if (intakeFieldError?.field === "patientSex") {
+                        setIntakeFieldError(null);
+                      }
+                    }}
+                    aria-invalid={intakeFieldError?.field === "patientSex"}
+                    className="mt-1 block w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="">Select</option>
+                    <option value="female">Female</option>
+                    <option value="male">Male</option>
+                    <option value="other">Other</option>
+                  </select>
+                  {intakeFieldError?.field === "patientSex" ? (
+                    <p className="mt-1 text-xs text-red-600" role="alert">
+                      {intakeFieldError.message}
+                    </p>
+                  ) : null}
+                </div>
+              </>
+            ) : null}
             <div>
               <label htmlFor="book-reason" className="text-xs text-gray-500">
                 Reason for visit
@@ -746,8 +886,9 @@ function BookPageContent() {
                 className="mt-1 h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-2 focus:ring-blue-500"
               />
               <label htmlFor="book-consent" className="text-xs text-gray-700">
-                I agree that this clinic may store my name, phone number, and
-                reason for visit to complete this booking.{" "}
+                {isSlug
+                  ? "I agree that this clinic may store my name, age, sex, phone number, and reason for visit to complete this booking. "
+                  : "I agree that this clinic may store my name, phone number, and reason for visit to complete this booking. "}
                 <Link
                   href="/privacy"
                   className="text-blue-700 underline underline-offset-2 hover:text-blue-800"
@@ -767,6 +908,29 @@ function BookPageContent() {
           </section>
         ) : null}
 
+        {mode === "book" ? (
+          <div className="mt-6 flex items-start gap-2">
+            <input
+              id="book-visit-terms"
+              type="checkbox"
+              checked={scheduledVisitAccepted}
+              onChange={(e) => setScheduledVisitAccepted(e.target.checked)}
+              className="mt-1 h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-2 focus:ring-blue-500"
+            />
+            <label htmlFor="book-visit-terms" className="text-xs text-gray-700">
+              I understand this booking is for a scheduled visit, not emergency
+              care, and I agree to the{" "}
+              <Link
+                href="/terms"
+                className="text-blue-700 underline underline-offset-2 hover:text-blue-800"
+              >
+                Terms of Service
+              </Link>
+              .
+            </label>
+          </div>
+        ) : null}
+
         {/* Save button */}
         <div className="mt-6">
           <button
@@ -777,7 +941,8 @@ function BookPageContent() {
               saving ||
               availableCount === 0 ||
               !catalogPickComplete ||
-              !intakeReady
+              !intakeReady ||
+              !visitTermsReady
             }
             className="w-full rounded-lg bg-blue-600 px-4 py-3 text-base font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
           >
@@ -797,6 +962,22 @@ function BookPageContent() {
         </div>
       </div>
     </main>
+  );
+}
+
+export function PublicClinicBookPage({ slug }: { slug: string }) {
+  return (
+    <Suspense
+      fallback={
+        <main className="min-h-screen bg-gray-50 p-4">
+          <div className="mx-auto max-w-md">
+            <p className="text-center text-gray-600">Loading…</p>
+          </div>
+        </main>
+      }
+    >
+      <BookPageContent slug={slug} />
+    </Suspense>
   );
 }
 

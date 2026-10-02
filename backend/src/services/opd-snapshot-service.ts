@@ -101,7 +101,7 @@ export async function buildPatientOpdSnapshot(
   const { data: apt, error } = await admin
     .from('appointments')
     .select(
-      'id, doctor_id, patient_id, appointment_date, status, opd_early_invite_expires_at, opd_early_invite_response, opd_session_delay_minutes'
+      'id, doctor_id, patient_id, appointment_date, status, consultation_type, opd_early_invite_expires_at, opd_early_invite_response, opd_session_delay_minutes'
     )
     .eq('id', appointmentId)
     .maybeSingle();
@@ -164,10 +164,17 @@ export async function buildPatientOpdSnapshot(
   const delayMinutes =
     doctorDelay != null && doctorDelay > 0 ? doctorDelay : computedDelay ?? null;
 
+  const rawType = apt.consultation_type;
+  const consultationType =
+    rawType === 'video' || rawType === 'voice' || rawType === 'in_clinic' || rawType === 'text'
+      ? rawType
+      : null;
+
   const base: PatientOpdSnapshot = {
     appointmentId: apt.id,
     status: apt.status,
     opdMode,
+    consultationType,
     suggestedPollSeconds: SUGGESTED_POLL_SECONDS,
     delayMinutes: delayMinutes ?? null,
     doctorBusyWith,

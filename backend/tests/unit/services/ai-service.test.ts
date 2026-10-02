@@ -801,7 +801,7 @@ describe('AI Service', () => {
       expect(systemContent).toContain('Thread note: user was in fee discussion.');
     });
 
-    it('includes returningPatientSummary in system prompt without raw PHI (rcp-21)', async () => {
+    it('does not put returning-patient history into the Instagram reply prompt', async () => {
       const mockCreate = jest.fn<() => Promise<{ choices: { message: { content: string } }[]; usage?: { total_tokens?: number } }>>().mockResolvedValue({
         choices: [{ message: { content: 'ok' } }],
         usage: { total_tokens: 10 },
@@ -827,10 +827,8 @@ describe('AI Service', () => {
         (firstCall?.[0] as { messages: { role: string; content: unknown }[] }).messages[0]
           .content,
       );
-      expect(systemContent).toContain(
-        'returning patient: prior_visits=2, last_service=[follow_up], recency=[within_3_months]'
-      );
-      expect(systemContent).toContain('tone only');
+      expect(systemContent).not.toContain('prior_visits=2');
+      expect(systemContent).not.toContain('last_service');
       expect(systemContent).not.toContain('Priya');
       expect(systemContent).not.toContain('+91');
     });

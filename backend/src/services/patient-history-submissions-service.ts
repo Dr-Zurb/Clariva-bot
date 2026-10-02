@@ -27,6 +27,7 @@ import {
   listMedications,
   upsertAllergySectionNotes,
 } from './patient-chart-service';
+import type { PatientConditionAgoUnit } from '../types/patient-chart';
 import type {
   AcceptHistorySubmissionInput,
   AcceptHistorySubmissionResult,
@@ -102,6 +103,19 @@ function publicSubmission(row: SubmissionRow): PatientHistorySubmission {
     submitted_at: row.submitted_at,
     updated_at: row.updated_at,
   };
+}
+
+function chartDuration(item: {
+  durationValue?: number | null;
+  durationUnit?: string | null;
+}): { value: number; unit: PatientConditionAgoUnit } | null {
+  const unit = item.durationUnit;
+  const value = item.durationValue;
+  if (unit !== 'days' && unit !== 'months' && unit !== 'years') return null;
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 1) return null;
+  const max = unit === 'days' ? 365 : unit === 'months' ? 1200 : 120;
+  if (value > max) return null;
+  return { value, unit };
 }
 
 function namesEqual(a: string, b: string): boolean {
@@ -713,6 +727,7 @@ async function acceptMedicineItem(
   const match = existing.find((rowMed) => namesEqual(rowMed.drug_name, item.name));
   let outcome: HistoryAcceptOutcome = 'merged';
   if (!match) {
+    const duration = chartDuration(item);
     await createMedication(
       appointment.patient_id as string,
       {
@@ -720,6 +735,9 @@ async function acceptMedicineItem(
         dose: item.dose ?? null,
         status: 'active',
         source: 'self',
+        ...(duration
+          ? { startedAgoValue: duration.value, startedAgoUnit: duration.unit }
+          : {}),
       },
       correlationId,
       doctorId
@@ -765,9 +783,15 @@ async function acceptConditionItem(
   const match = existing.find((rowCondition) => namesEqual(rowCondition.condition, item.name));
   let outcome: HistoryAcceptOutcome = 'merged';
   if (!match) {
+    const duration = chartDuration(item);
     await createChronicCondition(
       appointment.patient_id as string,
-      { condition: item.name },
+      {
+        condition: item.name,
+        ...(duration
+          ? { diagnosedAgoValue: duration.value, diagnosedAgoUnit: duration.unit }
+          : {}),
+      },
       correlationId,
       doctorId
     );

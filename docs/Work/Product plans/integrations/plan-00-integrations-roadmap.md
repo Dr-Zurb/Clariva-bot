@@ -215,6 +215,8 @@ Instagram launch-readiness          →  P1a WA outbound  →  P1b WA inbound   
 
 **Outcome:** A channel Clariva controls — embeddable or link-in-bio mini-chat — same AI receptionist, no Meta dependency for that traffic.
 
+The bio **booking** link is not this chat. It is the public clinic page in [`plan-clinic-link.md`](../plan-clinic-link.md) (2026-09-23): a form that books, then optional prep. This P3 stays the deferred conversational widget.
+
 **Likely work:**
 
 - Patient-facing chat surface (web) → same conversation/patient identity model with `platform = 'web'` (type expansion)

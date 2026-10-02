@@ -209,6 +209,8 @@ export function ConditionTimingField({
 
 export interface RelativeAgoFieldProps {
   label: string;
+  /** Full question above the chips. The short label stays the cockpit row. */
+  prompt?: string;
   agoValue: number | null;
   agoUnit: PatientConditionAgoUnit | null;
   disabled?: boolean;
@@ -218,12 +220,28 @@ export interface RelativeAgoFieldProps {
 
 export function RelativeAgoField({
   label,
+  prompt,
   agoValue,
   agoUnit,
   disabled = false,
   testIdPrefix,
   onChange,
 }: RelativeAgoFieldProps) {
+  if (prompt) {
+    return (
+      <div className="space-y-1" data-testid={`${testIdPrefix}-relative`}>
+        <p className="text-xs font-medium text-foreground/80">{prompt}</p>
+        <RelativeAgoInline
+          value={agoValue}
+          unit={agoUnit}
+          disabled={disabled}
+          ariaLabel={prompt}
+          testIdPrefix={testIdPrefix}
+          onChange={onChange}
+        />
+      </div>
+    );
+  }
   return (
     <ChartEditorFieldRow label={label} testId={`${testIdPrefix}-relative`}>
       <RelativeAgoInline

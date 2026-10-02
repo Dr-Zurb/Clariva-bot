@@ -638,7 +638,7 @@ export type RxFormAction =
   | { type: "UPDATE_DIAGNOSIS"; id: string; patch: Partial<DiagnosisRow> }
   | { type: "REMOVE_DIAGNOSIS"; id: string }
   | { type: "SAVE_START" }
-  | { type: "SAVE_SUCCESS"; lastSavedAt: string }
+  | { type: "SAVE_SUCCESS"; lastSavedAt: string; keepDirty?: boolean }
   | { type: "SAVE_ERROR"; error: string }
   | { type: "SUBMIT_START" }
   | { type: "SUBMIT_SUCCESS" }
@@ -652,6 +652,22 @@ export type RxFormAction =
    * stay edits.
    */
   | { type: "SEED_FIELDS"; patch: Partial<RxFormFields> };
+
+const NON_EDIT_ACTIONS = new Set<RxFormAction["type"]>([
+  "SAVE_START",
+  "SAVE_SUCCESS",
+  "SAVE_ERROR",
+  "SUBMIT_START",
+  "SUBMIT_SUCCESS",
+  "SUBMIT_ERROR",
+  "RESET",
+  "SEED_FIELDS",
+]);
+
+/** Doctor edits bump the autosave generation. Seeds and save bookkeeping do not. */
+function actionEditsRx(type: RxFormAction["type"]): boolean {
+  return !NON_EDIT_ACTIONS.has(type);
+}
 
 export const EMPTY_RX_MEDICINE: RxMedicine = {
   medicineName: "",
@@ -2582,7 +2598,9 @@ export function rxFormReducer(
       return {
         ...state,
         isSaving: false,
-        isDirty: false,
+        // An edit that landed after this save started must stay dirty.
+        // Clearing it here also disables autosave and drops that write.
+        isDirty: action.keepDirty ? true : false,
         lastSavedAt: action.lastSavedAt,
       };
     case "SAVE_ERROR":
@@ -2673,7 +2691,7 @@ export function RxFormProvider({
   onPrescriptionCreated,
   children,
 }: RxFormProviderProps): JSX.Element {
-  const [reducerState, dispatch] = useReducer(rxFormReducer, {
+  const [reducerState, dispatchAction] = useReducer(rxFormReducer, {
     fields: hydrateRxFormFields(initialFields),
     isDirty: false,
     isSaving: false,
@@ -2681,6 +2699,12 @@ export function RxFormProvider({
     lastSavedAt: null,
     submitError: null,
   });
+  /** Bumps on every doctor edit so a finished save can see newer keystrokes. */
+  const editSeqRef = useRef(0);
+  const dispatch = useCallback((action: RxFormAction) => {
+    if (actionEditsRx(action.type)) editSeqRef.current += 1;
+    dispatchAction(action);
+  }, []);
 
   const state: RxFormState = useMemo(
     () => ({ ...reducerState, consultationType }),
@@ -2759,26 +2783,39 @@ export function RxFormProvider({
     [state.fields, entryMode]
   );
 
-  const persistSnapshot = useCallback(async () => {
+  const persistSnapshot = useCallback(async (
+    _snapshot: string,
+    ctx?: { signal?: AbortSignal },
+  ) => {
+    const seqAtStart = editSeqRef.current;
     dispatch({ type: "SAVE_START" });
     try {
       const payload = buildRxPayload(fieldsRef.current, {
         consultationType: consultationTypeRef.current,
       });
+      const signal = ctx?.signal;
       const existingId = prescriptionIdRef.current;
       if (existingId) {
-        await updatePrescription(token, existingId, payload);
+        await updatePrescription(token, existingId, payload, { signal });
       } else {
-        const res = await createPrescription(token, {
-          appointmentId,
-          patientId: patientId ?? undefined,
-          type: entryMode,
-          ...payload,
-        });
+        const res = await createPrescription(
+          token,
+          {
+            appointmentId,
+            patientId: patientId ?? undefined,
+            type: entryMode,
+            ...payload,
+          },
+          { signal },
+        );
         prescriptionIdRef.current = res.data.prescription.id;
         onPrescriptionCreated(res.data.prescription);
       }
-      dispatch({ type: "SAVE_SUCCESS", lastSavedAt: new Date().toISOString() });
+      dispatch({
+        type: "SAVE_SUCCESS",
+        lastSavedAt: new Date().toISOString(),
+        keepDirty: editSeqRef.current !== seqAtStart,
+      });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unknown error";
       dispatch({ type: "SAVE_ERROR", error: message });

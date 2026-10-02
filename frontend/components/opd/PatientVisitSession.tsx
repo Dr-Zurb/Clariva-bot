@@ -5,6 +5,7 @@ import {
   acceptOpdEarlyJoin,
   declineOpdEarlyJoin,
   getOpdSessionSnapshot,
+  getSessionPrepLink,
   postLobbyHeartbeat,
 } from "@/lib/api";
 import type { PatientOpdSnapshot } from "@/types/opd-session";
@@ -23,6 +24,8 @@ import EarlyInviteBanner from "./EarlyInviteBanner";
 import PrimaryCta from "./PrimaryCta";
 import TurnSoonBanner from "./TurnSoonBanner";
 import { formatDateTime, formatTime } from "@/lib/format-date";
+import { arrivalLine } from "@/lib/arrival-line";
+import { SharePrepLink } from "@/components/book/SharePrepLink";
 
 interface PatientVisitSessionProps {
   consultationToken: string;
@@ -242,6 +245,17 @@ export default function PatientVisitSession({
                 {snapshot.status}
               </span>
             </p>
+            {arrivalLine(snapshot.consultationType) ? (
+              <p className="text-sm font-medium text-gray-900">
+                {arrivalLine(snapshot.consultationType)}
+              </p>
+            ) : null}
+            <SharePrepLink
+              resolveUrl={async () => {
+                const res = await getSessionPrepLink(consultationToken);
+                return new URL(res.data.prepPath, window.location.origin).toString();
+              }}
+            />
 
             {snapshot.doctorBusyWith === "other_patient" ? (
               <div

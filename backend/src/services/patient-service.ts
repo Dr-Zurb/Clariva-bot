@@ -17,7 +17,7 @@ import {
   ValidationError,
 } from '../utils/errors';
 import { handleSupabaseError } from '../utils/db-helpers';
-import { logDataAccess, logDataModification, logAuditEvent } from '../utils/audit-logger';
+import { logConsentEvent, logDataAccess, logDataModification, logAuditEvent } from '../utils/audit-logger';
 import { findPossiblePatientMatches, type PossiblePatientMatch } from './patient-matching-service';
 import {
   ageYearsFromIsoDate,
@@ -1372,6 +1372,67 @@ export async function createPatientForBooking(
   }
 
   await logDataModification(correlationId, undefined as any, 'create', 'patient', patient.id);
+
+  return patient as Patient;
+}
+
+export type PublicClinicSex = 'male' | 'female' | 'other';
+
+/**
+ * Row written for /d/:slug. Not book-for-other and not the desk.
+ * date_of_birth stays unset. Age is stored on patients.age.
+ */
+export function buildPublicClinicPatientInsert(
+  doctorId: string,
+  data: { name: string; phone: string; age: number; sex: PublicClinicSex },
+  now: Date
+): InsertPatient {
+  return {
+    name: data.name.trim(),
+    phone: data.phone.trim(),
+    age: data.age,
+    gender: data.sex,
+    doctor_id: doctorId,
+    platform: null,
+    platform_external_id: null,
+    consent_status: 'granted',
+    consent_granted_at: now,
+    consent_method: 'owned_booking_page',
+    registered_via: 'public_clinic',
+  };
+}
+
+/**
+ * Create the patient for a public clinic link. No conversation. No platform.
+ */
+export async function createPatientForPublicClinic(
+  doctorId: string,
+  data: { name: string; phone: string; age: number; sex: PublicClinicSex },
+  correlationId: string
+): Promise<Patient> {
+  const supabaseAdmin = getSupabaseAdminClient();
+  if (!supabaseAdmin) {
+    throw new InternalError('Service role client not available');
+  }
+
+  const insertData = buildPublicClinicPatientInsert(doctorId, data, new Date());
+  const { data: patient, error } = await supabaseAdmin
+    .from('patients')
+    .insert(insertData)
+    .select()
+    .single();
+
+  if (error || !patient) {
+    handleSupabaseError(error, correlationId);
+  }
+
+  await logDataModification(correlationId, undefined as any, 'create', 'patient', patient.id);
+  void logConsentEvent({
+    correlationId,
+    patientId: patient.id,
+    status: 'granted',
+    method: 'owned_booking_page',
+  });
 
   return patient as Patient;
 }

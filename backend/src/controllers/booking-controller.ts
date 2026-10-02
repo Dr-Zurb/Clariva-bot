@@ -11,6 +11,9 @@ import { successResponse } from '../utils/response';
 import { verifyBookingToken, verifyBookingTokenAllowExpired } from '../utils/booking-token';
 import {
   validateDaySlotsQuery,
+  validatePublicClinicCheckoutBody,
+  validatePublicClinicDaySlotsQuery,
+  validatePublicClinicPageQuery,
   validateSelectSlotAndPayBody,
   validateSelectSlotBody,
   validateSlotPageInfoQuery,
@@ -35,6 +38,11 @@ import {
 } from '../utils/slot-page-booking-hints';
 import { evaluatePublicBookingPaymentGate } from '../utils/public-booking-payment-gate';
 import { isDoctorVerified } from '../services/doctor-verification-service';
+import {
+  getPublicClinicDaySlots,
+  getPublicClinicPageInfo,
+} from '../services/public-clinic-booking-service';
+import { processPublicClinicCheckout } from '../services/public-clinic-checkout-service';
 
 /**
  * GET /api/v1/bookings/day-slots?token=X&date=YYYY-MM-DD
@@ -49,7 +57,10 @@ export const getDaySlotsHandler = asyncHandler(async (req: Request, res: Respons
     date: typeof query.date === 'string' ? query.date : Array.isArray(query.date) ? query.date[0] : undefined,
   };
 
-  const { token, date } = validateDaySlotsQuery(normalized);
+  const { token, date, visit } = validateDaySlotsQuery({
+    ...normalized,
+    visit: typeof query.visit === 'string' ? query.visit : undefined,
+  });
   const { doctorId } = verifyBookingToken(token);
 
   const doctorSettings = await getDoctorSettings(doctorId);
@@ -61,7 +72,7 @@ export const getDaySlotsHandler = asyncHandler(async (req: Request, res: Respons
     doctorId,
     date,
     correlationId,
-    { timezone, slotIntervalMinutes: slotInterval, minAdvanceHours }
+    { timezone, slotIntervalMinutes: slotInterval, minAdvanceHours, visitType: visit }
   );
 
   const admin = getSupabaseAdminClient();
@@ -264,4 +275,90 @@ export const getRedirectUrlHandler = asyncHandler(async (req: Request, res: Resp
 
   const redirectUrl = await getRedirectUrlForDoctor(doctorId);
   res.status(200).json(successResponse({ redirectUrl }, req));
+});
+
+function firstQueryString(
+  query: Record<string, string | string[] | undefined>,
+  key: string
+): string | undefined {
+  const value = query[key];
+  return typeof value === 'string' ? value : Array.isArray(value) ? value[0] : undefined;
+}
+
+/**
+ * GET /api/v1/bookings/public/page-info?slug=
+ * Practice header for /d/:slug. No conversation and no patient fields.
+ */
+export const getPublicClinicPageInfoHandler = asyncHandler(async (req: Request, res: Response) => {
+  const correlationId = req.correlationId || 'unknown';
+  const query = req.query as Record<string, string | string[] | undefined>;
+  const { slug } = validatePublicClinicPageQuery({
+    slug: firstQueryString(query, 'slug'),
+  });
+  const data = await getPublicClinicPageInfo(slug, correlationId);
+  res.status(200).json(successResponse(data, req));
+});
+
+/**
+ * GET /api/v1/bookings/public/day-slots?slug=&date=
+ * Day slots for the practice the slug resolves. Same payload as the token day-slot read.
+ */
+export const getPublicClinicDaySlotsHandler = asyncHandler(async (req: Request, res: Response) => {
+  const correlationId = req.correlationId || 'unknown';
+  const query = req.query as Record<string, string | string[] | undefined>;
+  const { slug, date, visit } = validatePublicClinicDaySlotsQuery({
+    slug: firstQueryString(query, 'slug'),
+    date: firstQueryString(query, 'date'),
+    visit: firstQueryString(query, 'visit'),
+  });
+  const data = await getPublicClinicDaySlots(slug, date, correlationId, visit);
+  res.status(200).json(successResponse(data, req));
+});
+
+/**
+ * POST /api/v1/bookings/public/checkout
+ * Creates a patient and appointment for the slug. No conversation token.
+ */
+export const postPublicClinicCheckoutHandler = asyncHandler(async (req: Request, res: Response) => {
+  const correlationId = req.correlationId || 'unknown';
+  const body = validatePublicClinicCheckoutBody(req.body);
+  try {
+    const result = await processPublicClinicCheckout(body, correlationId);
+    res.status(200).json(
+      successResponse(
+        {
+          paymentUrl: result.paymentUrl,
+          redirectUrl: result.redirectUrl,
+          appointmentId: result.appointmentId,
+          mode: 'book',
+          opdMode: result.opdMode,
+          ...(result.tokenNumber != null ? { tokenNumber: result.tokenNumber } : {}),
+          ...(result.prepPath ? { prepPath: result.prepPath } : {}),
+        },
+        req
+      )
+    );
+  } catch (err) {
+    if (err instanceof ConflictError) {
+      const message =
+        err.message && err.message.trim().length > 0
+          ? err.message
+          : 'This slot was just taken. Please pick another.';
+      const isSessionCap =
+        message.toLowerCase().includes('maximum appointments') ||
+        message.toLowerCase().includes('reached the maximum');
+      res.status(409).json(
+        errorResponse(
+          {
+            code: isSessionCap ? 'OPD_SESSION_FULL' : 'CONFLICT',
+            message,
+            statusCode: 409,
+          },
+          req
+        )
+      );
+      return;
+    }
+    throw err;
+  }
 });

@@ -262,6 +262,8 @@ export interface DoctorSettingsRow {
   appointment_fee_currency: string | null;
   country: string | null;
   practice_name: string | null;
+  /** migration 241. Public booking path segment. Null until the settings read fills it. */
+  public_slug?: string | null;
   timezone: string;
   slot_interval_minutes: number;
   max_advance_booking_days: number;

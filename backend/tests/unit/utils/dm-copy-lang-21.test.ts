@@ -44,7 +44,7 @@ describe('lang-21 consent / pause copy', () => {
       "Done. I've removed your personal information from our records. Is there anything else I can help with?"
     );
     expect(buildReceptionistPauseDefaultMessage({ language: 'en' })).toBe(
-      'Thanks for your message. Our team will reply from this inbox personally when they can. Automated scheduling is paused right now - we appreciate your patience.'
+      'Automated messages are paused here.'
     );
   });
 

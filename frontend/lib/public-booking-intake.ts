@@ -21,9 +21,13 @@ export type PublicBookingIntakeReady = {
   consentGranted: true;
 };
 
+export type PublicClinicSex = "male" | "female" | "other";
+
 export type PublicBookingIntakeField =
   | "patientName"
   | "patientPhone"
+  | "patientAge"
+  | "patientSex"
   | "reasonForVisit"
   | "consentGranted";
 
@@ -93,6 +97,47 @@ export function resolvePublicBookingIntake(
       patientPhone,
       reasonForVisit,
       consentGranted: true,
+    },
+  };
+}
+
+export type PublicClinicIntakeDraft = PublicBookingIntakeDraft & {
+  patientAge: string;
+  patientSex: string;
+};
+
+export type PublicClinicIntakeReady = PublicBookingIntakeReady & {
+  patientAge: number;
+  patientSex: PublicClinicSex;
+};
+
+/** Slug checkout. Age and sex are required. Does not log the values. */
+export function resolvePublicClinicIntake(
+  draft: PublicClinicIntakeDraft
+): { ok: true; value: PublicClinicIntakeReady } | { ok: false; field: PublicBookingIntakeField; message: string } {
+  const base = resolvePublicBookingIntake(draft);
+  if (!base.ok) return base;
+
+  const age = Number.parseInt(draft.patientAge.trim(), 10);
+  if (!draft.patientAge.trim() || Number.isNaN(age) || age < 1 || age > 120) {
+    return {
+      ok: false,
+      field: "patientAge",
+      message: "Please provide a valid age (1-120)",
+    };
+  }
+
+  const sex = draft.patientSex.trim();
+  if (sex !== "male" && sex !== "female" && sex !== "other") {
+    return { ok: false, field: "patientSex", message: "Sex is required" };
+  }
+
+  return {
+    ok: true,
+    value: {
+      ...base.value,
+      patientAge: age,
+      patientSex: sex,
     },
   };
 }

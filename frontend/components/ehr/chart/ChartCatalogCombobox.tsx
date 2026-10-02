@@ -7,6 +7,8 @@ import { cn } from "@/lib/utils";
 export interface ChartCatalogOption {
   value: string;
   label: string;
+  /** Secondary line, such as the generic beside a brand the patient typed. */
+  hint?: string;
 }
 
 export type ChartCatalogCommit =
@@ -14,7 +16,7 @@ export type ChartCatalogCommit =
   | { kind: "custom"; text: string };
 
 type ComboboxRow =
-  | { kind: "catalog"; value: string; label: string }
+  | { kind: "catalog"; value: string; label: string; hint?: string }
   | { kind: "custom"; text: string };
 
 function buildRows(
@@ -29,6 +31,7 @@ function buildRows(
     kind: "catalog",
     value: opt.value,
     label: opt.label,
+    ...(opt.hint ? { hint: opt.hint } : {}),
   }));
   if (trimmed && !catalogMatch) {
     rows.push({ kind: "custom", text: trimmed });
@@ -49,6 +52,8 @@ export interface ChartCatalogComboboxProps {
   resolveCatalog: (query: string) => string | undefined;
   customLabel?: (text: string) => string;
   onCommit: (payload: ChartCatalogCommit) => void;
+  /** Fired as the patient types, so a remote catalog can replace `catalogOptions`. */
+  onQueryChange?: (query: string) => void;
   /**
    * When true (e.g. AI / near-miss suggest panel is open), close the list and
    * forward Enter / Escape to the overlay instead of committing from the input.
@@ -72,6 +77,7 @@ export function ChartCatalogCombobox({
   resolveCatalog,
   customLabel = (text) => `Add "${text}"`,
   onCommit,
+  onQueryChange,
   suggestOverlayActive = false,
   onSuggestEnter,
   onSuggestEscape,
@@ -117,7 +123,8 @@ export function ChartCatalogCombobox({
     setQuery("");
     setHighlighted(0);
     setOpen(false);
-  }, []);
+    onQueryChange?.("");
+  }, [onQueryChange]);
 
   const commitRow = useCallback(
     (row: ComboboxRow) => {
@@ -166,11 +173,12 @@ export function ChartCatalogCombobox({
         setOpen(false);
         setQuery("");
         setHighlighted(0);
+        onQueryChange?.("");
       }
     };
     document.addEventListener("mousedown", onDoc);
     return () => document.removeEventListener("mousedown", onDoc);
-  }, [open]);
+  }, [onQueryChange, open]);
 
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (disabled) return;
@@ -192,6 +200,7 @@ export function ChartCatalogCombobox({
       setOpen(false);
       setQuery("");
       setHighlighted(0);
+      onQueryChange?.("");
       return;
     }
     if (e.key === "Enter") {
@@ -237,6 +246,7 @@ export function ChartCatalogCombobox({
         onChange={(e) => {
           if (suggestOverlayActive) return;
           setQuery(e.target.value);
+          onQueryChange?.(e.target.value);
           setOpen(true);
           setHighlighted(0);
         }}
@@ -263,6 +273,7 @@ export function ChartCatalogCombobox({
           {rows.map((row, index) => {
             const active = index === highlighted;
             const label = row.kind === "catalog" ? row.label : customLabel(row.text);
+            const hint = row.kind === "catalog" ? row.hint : undefined;
             return (
               <li
                 key={row.kind === "catalog" ? row.value : `custom-${row.text}`}
@@ -277,7 +288,14 @@ export function ChartCatalogCombobox({
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => commitRow(row)}
               >
-                {label}
+                {hint ? (
+                  <span className="flex items-baseline justify-between gap-3">
+                    <span className="text-foreground">{label}</span>
+                    <span className="shrink-0 text-[10px] text-muted-foreground">{hint}</span>
+                  </span>
+                ) : (
+                  label
+                )}
               </li>
             );
           })}

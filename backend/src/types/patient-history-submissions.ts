@@ -17,6 +17,8 @@ export interface HistoryAllergyItem {
 export interface HistoryMedicineItem {
   name: string;
   dose?: string | null;
+  durationValue?: number | null;
+  durationUnit?: 'days' | 'months' | 'years' | null;
   accepted_at?: string | null;
   accepted_by?: string | null;
 }
@@ -25,6 +27,8 @@ export interface HistoryConditionItem {
   name: string;
   code?: string | null;
   codeTitle?: string | null;
+  durationValue?: number | null;
+  durationUnit?: 'days' | 'months' | 'years' | null;
   accepted_at?: string | null;
   accepted_by?: string | null;
 }

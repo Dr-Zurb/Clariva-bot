@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { FieldLabel } from "@/components/ui/FieldLabel";
 import { Input } from "@/components/ui/input";
 import { SaveButton } from "@/components/ui/SaveButton";
@@ -31,6 +32,7 @@ const COMMON_TIMEZONES = [
 
 type PracticeInfoForm = {
   practice_name: string;
+  public_slug: string;
   timezone: string;
   specialty: string;
   qualifications: string;
@@ -47,6 +49,7 @@ function shareAddressOnInstagram(s: DoctorSettings): boolean {
 function toForm(s: DoctorSettings): PracticeInfoForm {
   return {
     practice_name: s.practice_name ?? "",
+    public_slug: s.public_slug ?? "",
     timezone: s.timezone?.trim() || "UTC",
     specialty: s.specialty ?? "",
     qualifications: s.qualifications ?? "",
@@ -63,6 +66,7 @@ interface PracticeInfoClientProps {
  * Settings → Practice info (settings-refresh · sr-02). Currency lives on Pricing.
  */
 export function PracticeInfoClient({ token }: PracticeInfoClientProps) {
+  const [copied, setCopied] = useState(false);
   const {
     form,
     setForm,
@@ -79,8 +83,10 @@ export function PracticeInfoClient({ token }: PracticeInfoClientProps) {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!form) return;
+    const slug = form.public_slug.trim().toLowerCase();
     const payload: PatchDoctorSettingsPayload = {
       practice_name: form.practice_name.trim() || null,
+      ...(slug ? { public_slug: slug } : {}),
       timezone: form.timezone.trim() || "UTC",
       specialty: form.specialty.trim() || null,
       qualifications: form.qualifications.trim() || null,
@@ -88,6 +94,20 @@ export function PracticeInfoClient({ token }: PracticeInfoClientProps) {
       share_address_on_instagram: form.share_address_on_instagram,
     };
     await save(payload);
+  }
+
+  const bookingPath = form?.public_slug?.trim()
+    ? `/d/${form.public_slug.trim().toLowerCase()}`
+    : "";
+
+  async function copyBookingLink() {
+    if (!bookingPath || typeof window === "undefined") return;
+    try {
+      await navigator.clipboard.writeText(`${window.location.origin}${bookingPath}`);
+      setCopied(true);
+    } catch {
+      setCopied(false);
+    }
   }
 
   return (
@@ -121,6 +141,42 @@ export function PracticeInfoClient({ token }: PracticeInfoClientProps) {
               maxLength={200}
               className="mt-1"
             />
+          </div>
+          <div>
+            <FieldLabel
+              htmlFor="public_slug"
+              tooltip="The link patients open from your bio. Lowercase letters, numbers, and hyphens."
+            >
+              Booking link
+            </FieldLabel>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {bookingPath
+                ? bookingPath
+                : "Save practice info once and this link is created for you."}
+            </p>
+            <div className="mt-2 flex gap-2">
+              <Input
+                id="public_slug"
+                type="text"
+                value={form.public_slug}
+                onChange={(e) => {
+                  setCopied(false);
+                  setForm((p) => ({ ...p, public_slug: e.target.value }));
+                }}
+                maxLength={48}
+                spellCheck={false}
+                autoCapitalize="none"
+                className="mt-0"
+              />
+              <button
+                type="button"
+                onClick={() => void copyBookingLink()}
+                disabled={!bookingPath}
+                className="shrink-0 rounded-md border border-border px-3 text-sm text-foreground disabled:opacity-50"
+              >
+                {copied ? "Copied" : "Copy"}
+              </button>
+            </div>
           </div>
           <div>
             <FieldLabel

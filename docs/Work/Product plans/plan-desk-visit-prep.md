@@ -64,6 +64,8 @@ That plan's Phase 1 is the patient-facing public form and Phase 2 is "desk send"
 
 > **Hand-off to record at promote:** `plan-history-link.md` needs one line marking its Phase 1 public form as *superseded in order* by this program, and its Phase 2 "Desk send" as *absorbed here*. Do not create a second sidecar table under any circumstances.
 
+The patient-facing second writer is [`plan-clinic-link.md`](./plan-clinic-link.md) (2026-09-23). It inserts the same sidecar with `source = 'patient'` and does not call the desk upsert. Desk write-through stays staff-only.
+
 ---
 
 ## Decision lock (DVP-DL-1 … DVP-DL-14)

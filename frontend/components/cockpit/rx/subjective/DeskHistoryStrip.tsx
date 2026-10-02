@@ -9,8 +9,10 @@ import {
   notifyHistorySubmissionChanged,
 } from "@/lib/api/patient-history-submissions";
 import { queryKeys } from "@/lib/query/keys";
+import { formatConditionAgoSummary } from "@/components/ehr/chart/ConditionTimingField";
 import type {
   HistoryAcceptField,
+  HistoryMedicineItem,
   PatientHistorySubmission,
 } from "@/types/patient-history-submissions";
 
@@ -25,6 +27,10 @@ function useOptionalQueryClient() {
 function itemLabel(name: string, extra?: string | null): string {
   const trimmed = extra?.trim();
   return trimmed ? `${name} (${trimmed})` : name;
+}
+
+function howLongLabel(item: Pick<HistoryMedicineItem, "durationValue" | "durationUnit">): string | null {
+  return formatConditionAgoSummary(item.durationValue, item.durationUnit);
 }
 
 function AcceptCard({
@@ -239,7 +245,10 @@ export function DeskHistoryStrip() {
               {submission.medicines.items.map((item, index) => (
                 <AcceptCard
                   key={`${item.name}-${index}`}
-                  label={itemLabel(item.name, item.dose)}
+                  label={itemLabel(
+                    item.name,
+                    [howLongLabel(item), item.dose?.trim()].filter(Boolean).join(", ") || null,
+                  )}
                   accepted={Boolean(item.accepted_at)}
                   acceptedLabel="On chart"
                   busy={busyKey === `medicines-${index}`}
@@ -260,7 +269,7 @@ export function DeskHistoryStrip() {
               {submission.conditions.items.map((item, index) => (
                 <AcceptCard
                   key={`${item.name}-${index}`}
-                  label={item.name}
+                  label={itemLabel(item.name, howLongLabel(item))}
                   accepted={Boolean(item.accepted_at)}
                   acceptedLabel="On chart"
                   busy={busyKey === `conditions-${index}`}

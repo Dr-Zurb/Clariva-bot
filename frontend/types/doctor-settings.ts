@@ -133,6 +133,8 @@ export interface DoctorSettings {
   appointment_fee_currency: string | null;
   country: string | null;
   practice_name: string | null;
+  /** Public booking path segment. Null until settings fills it. */
+  public_slug?: string | null;
   timezone: string;
   slot_interval_minutes: number;
   max_advance_booking_days: number;
@@ -321,6 +323,7 @@ export interface DoctorSettings {
 /** Partial update payload for PATCH */
 export type PatchDoctorSettingsPayload = Partial<{
   practice_name: string | null;
+  public_slug?: string;
   timezone: string;
   slot_interval_minutes: number;
   max_advance_booking_days: number;

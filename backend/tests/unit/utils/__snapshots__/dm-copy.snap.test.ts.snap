@@ -498,7 +498,7 @@ exports[`dm-copy snapshots lang-21 / consent revoke success 1`] = `"Done. I've r
 
 exports[`dm-copy snapshots lang-21 / locale hi / consent denied (Roman hi arm) 1`] = `"Koi baat nahi. Maine aapki koi bhi information save nahi ki. Dobara try karna ho to kabhi bhi 'book appointment' likhein."`;
 
-exports[`dm-copy snapshots lang-21 / receptionist pause default 1`] = `"Thanks for your message. Our team will reply from this inbox personally when they can. Automated scheduling is paused right now - we appreciate your patience."`;
+exports[`dm-copy snapshots lang-21 / receptionist pause default 1`] = `"Automated messages are paused here."`;
 
 exports[`dm-copy snapshots lang-22 / book-for-other dual intro 1`] = `"I'll help you book for you and your **mother**. Let's take them one at a time — your **mother** first, then you. Please share their details:"`;
 
@@ -528,14 +528,14 @@ exports[`dm-copy snapshots lang-22 / returning follow-up confirm 1`] = `"Say boo
 
 exports[`dm-copy snapshots lang-22 / self-book nudge 1`] = `"Would you like to book one for yourself now?"`;
 
-exports[`dm-copy snapshots lang-22 / teleconsult channel pick 1`] = `"Right now we offer **teleconsult** only (text, voice, or video) — which works best for you?"`;
+exports[`dm-copy snapshots lang-22 / teleconsult channel pick 1`] = `"Appointments are online. I can help with timings or a booking link."`;
 
 exports[`dm-copy snapshots lang-23 / comment proactive booking 1`] = `
-"You expressed interest in booking.
+"I can send the booking page.
 
 Demo Clinic
 
-Reply here if you'd like to schedule."
+Reply here and I will send the link."
 `;
 
 exports[`dm-copy snapshots lang-23 / fallback reply 1`] = `"Thanks for your message. We'll get back to you soon."`;

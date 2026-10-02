@@ -92,17 +92,24 @@ import { validateOwnership } from '../utils/db-helpers';
 import { handleSupabaseError } from '../utils/db-helpers';
 import { logDataAccess, logDataModification, logAuditEvent } from '../utils/audit-logger';
 import {
+  ConflictError,
   DoctorNotVerifiedError,
   InternalError,
   NotFoundError,
   ValidationError,
 } from '../utils/errors';
+import {
+  fallbackPublicSlug,
+  isPublicSlugShape,
+  resolvePublicSlug,
+  slugBaseFromPracticeName,
+} from '../utils/public-clinic-slug';
 import { parseLayoutTreeNode, parsePaneTreeV3 } from '../api/routes/cockpit-layout-presets';
 import { isDoctorVerified } from './doctor-verification-service';
 
 const SELECT_COLUMNS =
   'doctor_id, appointment_fee_minor, appointment_fee_currency, country, ' +
-  'practice_name, timezone, slot_interval_minutes, max_advance_booking_days, min_advance_hours, business_hours_summary, ' +
+  'practice_name, public_slug, timezone, slot_interval_minutes, max_advance_booking_days, min_advance_hours, business_hours_summary, ' +
   'cancellation_policy_hours, max_appointments_per_day, booking_buffer_minutes, ' +
   'welcome_message, specialty, social_enquiries, address_summary, share_address_on_instagram, consultation_types, service_offerings_json, service_catalog_templates_json, default_notes, ' +
   'payment_collection_mode, ' +
@@ -164,6 +171,7 @@ const DEFAULT_SETTINGS: DoctorSettingsRow = {
   appointment_fee_currency: null,
   country: null,
   practice_name: null,
+  public_slug: null,
   timezone: 'Asia/Kolkata',
   slot_interval_minutes: 15,
   max_advance_booking_days: 90,
@@ -270,6 +278,66 @@ const DEFAULT_SETTINGS: DoctorSettingsRow = {
   updated_at: '',
 };
 
+type SlugAdmin = NonNullable<ReturnType<typeof getSupabaseAdminClient>>;
+
+async function slugsTakenByOthers(
+  supabase: SlugAdmin,
+  doctorId: string,
+  base: string,
+  correlationId: string
+): Promise<Set<string>> {
+  const { data, error } = await supabase
+    .from('doctor_settings')
+    .select('public_slug')
+    .neq('doctor_id', doctorId)
+    .or(`public_slug.eq.${base},public_slug.like.${base}-%`);
+  if (error) {
+    handleSupabaseError(error, correlationId);
+  }
+  const taken = new Set<string>();
+  for (const row of data ?? []) {
+    const slug = (row as { public_slug?: string | null }).public_slug;
+    if (slug) taken.add(slug);
+  }
+  return taken;
+}
+
+/** Fill a missing slug. Does not rename a slug the practice already has. */
+async function materializePublicSlug(
+  row: DoctorSettingsRow,
+  correlationId: string
+): Promise<DoctorSettingsRow> {
+  if (row.public_slug?.trim() || !row.doctor_id) return row;
+  const supabase = getSupabaseAdminClient();
+  if (!supabase) return row;
+
+  const base = slugBaseFromPracticeName(row.practice_name) ?? fallbackPublicSlug(row.doctor_id);
+  const taken = await slugsTakenByOthers(supabase, row.doctor_id, base, correlationId);
+  const decision = resolvePublicSlug({
+    doctorId: row.doctor_id,
+    practiceName: row.practice_name,
+    currentSlug: null,
+    requested: undefined,
+    takenByOthers: taken,
+  });
+  if (!decision.ok) return row;
+
+  const { data, error } = await supabase
+    .from('doctor_settings')
+    .update({ public_slug: decision.slug })
+    .eq('doctor_id', row.doctor_id)
+    .is('public_slug', null)
+    .select('public_slug')
+    .maybeSingle();
+  if (error) {
+    if (error.code === '23505') return row;
+    handleSupabaseError(error, correlationId);
+  }
+  if (!data) return row;
+  const saved = (data as { public_slug?: string | null }).public_slug;
+  return saved ? { ...row, public_slug: saved } : row;
+}
+
 /**
  * Get doctor settings by doctor ID (service role).
  * Returns null if no row exists.
@@ -294,7 +362,13 @@ export async function getDoctorSettings(doctorId: string): Promise<DoctorSetting
   }
   const row = data as unknown as DoctorSettingsRow;
   const materialized = await ensureSingleFeeCatalogMaterialized(row);
-  return normalizeDoctorSettingsApiRow(materialized);
+  let withSlug = materialized;
+  try {
+    withSlug = await materializePublicSlug(materialized, 'getDoctorSettings');
+  } catch {
+    withSlug = materialized;
+  }
+  return normalizeDoctorSettingsApiRow(withSlug);
 }
 
 /**
@@ -376,7 +450,8 @@ export async function getDoctorSettingsForUser(
   }
   const row = data as unknown as DoctorSettingsRow;
   const materialized = await ensureSingleFeeCatalogMaterialized(row);
-  const normalized = normalizeDoctorSettingsApiRow(materialized);
+  const withSlug = await materializePublicSlug(materialized, correlationId);
+  const normalized = normalizeDoctorSettingsApiRow(withSlug);
   return attachBrandingPreviewUrls(normalized, doctorId, correlationId);
 }
 
@@ -1005,6 +1080,8 @@ export async function appendMatcherHintsOnDoctorCatalogOffering(
 /** Payload for partial update of doctor settings. */
 export interface UpdateDoctorSettingsPayload {
   practice_name?: string | null;
+  /** migration 241. Omit to keep or generate. A taken slug is a conflict. */
+  public_slug?: string | null;
   timezone?: string;
   slot_interval_minutes?: number;
   max_advance_booking_days?: number;
@@ -1488,6 +1565,7 @@ export async function updateDoctorSettings(
   const updateData: Record<string, unknown> = {};
   const allowedKeys: (keyof UpdateDoctorSettingsPayload)[] = [
     'practice_name',
+    'public_slug',
     'timezone',
     'slot_interval_minutes',
     'max_advance_booking_days',
@@ -1593,7 +1671,7 @@ export async function updateDoctorSettings(
     .from('doctor_settings')
     .select(
       'doctor_id, catalog_mode, appointment_fee_minor, consultation_types, ' +
-        'practice_name, service_offerings_json'
+        'practice_name, public_slug, service_offerings_json'
     )
     .eq('doctor_id', doctorId)
     .maybeSingle();
@@ -1653,6 +1731,47 @@ export async function updateDoctorSettings(
   });
   if (singleFeeSync.didSync) {
     updateData.service_offerings_json = singleFeeSync.newServiceOfferingsJson;
+  }
+
+  const slugRow = existingRowRaw as {
+    public_slug?: string | null;
+    practice_name?: string | null;
+  } | null;
+  const practiceNameForSlug =
+    'practice_name' in payload ? (payload.practice_name ?? null) : (slugRow?.practice_name ?? null);
+  const currentSlug = slugRow?.public_slug?.trim() ? slugRow.public_slug : null;
+  const requestedSlug = 'public_slug' in payload ? payload.public_slug : undefined;
+  if (requestedSlug !== undefined || !currentSlug) {
+    const explicit =
+      requestedSlug != null && requestedSlug.trim() !== ''
+        ? requestedSlug.trim().toLowerCase()
+        : null;
+    const base =
+      explicit && isPublicSlugShape(explicit)
+        ? explicit
+        : (slugBaseFromPracticeName(practiceNameForSlug) ?? fallbackPublicSlug(doctorId));
+    const taken =
+      explicit && !isPublicSlugShape(explicit)
+        ? new Set<string>()
+        : await slugsTakenByOthers(supabase, doctorId, base, correlationId);
+    const decision = resolvePublicSlug({
+      doctorId,
+      practiceName: practiceNameForSlug,
+      currentSlug,
+      requested: requestedSlug,
+      takenByOthers: taken,
+    });
+    if (!decision.ok) {
+      if (decision.reason === 'taken') {
+        throw new ConflictError('That booking link is already used by another practice.');
+      }
+      throw new ValidationError(
+        'Booking link must be 3–48 characters: lowercase letters, numbers, and hyphens'
+      );
+    }
+    if (decision.changed) {
+      updateData.public_slug = decision.slug;
+    }
   }
 
   if (Object.keys(updateData).length === 0) {

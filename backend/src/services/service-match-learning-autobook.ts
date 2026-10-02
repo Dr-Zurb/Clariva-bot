@@ -155,7 +155,11 @@ export async function tryApplyLearningPolicyAutobook(params: {
   });
   nextState = mergeSlotStepAfterStaffResolution(nextState);
 
-  const bookingUrl = buildBookingPageUrl(params.conversationId, params.doctorId);
+  const bookingUrl = buildBookingPageUrl(
+    params.conversationId,
+    params.doctorId,
+    settings?.public_slug
+  );
   const language = await getConversationLanguage(params.conversationId, params.correlationId);
   const replyText = formatBookingLinkDm({
     language,

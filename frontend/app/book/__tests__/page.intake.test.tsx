@@ -52,8 +52,13 @@ describe("Book page intake (mca-14)", () => {
     expect(
       screen.getByRole("textbox", { name: "Reason for visit" })
     ).toBeInTheDocument();
-    const consent = screen.getByRole("checkbox");
+    const consent = screen.getByRole("checkbox", { name: /store my name/i });
+    const visitTerms = screen.getByRole("checkbox", { name: /scheduled visit/i });
     expect(consent).not.toBeChecked();
+    expect(visitTerms).not.toBeChecked();
+    expect(
+      screen.getByText("For scheduled visits only. This is not an emergency service.")
+    ).toBeInTheDocument();
 
     const continueBtn = screen.getByRole("button", {
       name: /continue to payment/i,
@@ -83,7 +88,7 @@ describe("Book page intake (mca-14)", () => {
     fireEvent.change(screen.getByRole("textbox", { name: "Reason for visit" }), {
       target: { value: "Follow-up" },
     });
-    fireEvent.click(screen.getByRole("checkbox"));
+    fireEvent.click(screen.getByRole("checkbox", { name: /store my name/i }));
 
     const timeBtn = await screen.findByRole("button", { name: "10:00" });
     fireEvent.click(timeBtn);
@@ -91,6 +96,8 @@ describe("Book page intake (mca-14)", () => {
     const continueBtn = screen.getByRole("button", {
       name: /continue to payment/i,
     });
+    expect(continueBtn).toBeDisabled();
+    fireEvent.click(screen.getByRole("checkbox", { name: /scheduled visit/i }));
     await waitFor(() => expect(continueBtn).not.toBeDisabled());
     fireEvent.click(continueBtn);
 

@@ -251,7 +251,9 @@ describe('serviceMatchStage', () => {
 
     const result = await serviceMatchStage.handle(ctx);
     expect(result.branch).toBe('returning_followup_confirm_accept');
-    expect(result.nextState.step).toBe('consent');
+    expect(result.nextState.step).toBe('awaiting_slot_selection');
+    expect(result.reply).toContain('Finish on this page');
+    expect(result.reply).not.toMatch(/\ballerg|\bmedicin|\bdoctor\b/i);
     expect(result.nextState.serviceMatch?.catalogServiceKey).toBe('follow_up');
     expect(result.nextState.serviceMatch?.serviceSelectionFinalized).toBe(true);
   });
@@ -287,6 +289,8 @@ describe('serviceMatchStage', () => {
     const result = await serviceMatchStage.handle(ctx);
     expect(result.branch).toBe('returning_followup_confirm_decline');
     expect(matchServiceCatalogOffering).toHaveBeenCalled();
-    expect(result.nextState.step).toBe('consent');
+    expect(result.nextState.step).toBe('awaiting_slot_selection');
+    expect(result.reply).toContain('Finish on this page');
+    expect(result.reply).not.toMatch(/\bheadache\b|\ballerg|\bdoctor\b/i);
   });
 });

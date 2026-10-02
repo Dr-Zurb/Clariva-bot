@@ -20,6 +20,7 @@ import {
   formatAppointmentTimeEnGB,
   resolveClinicBranding,
 } from "@/lib/clinic/branding";
+import { ARRIVAL_LINES } from "@/lib/arrival-line";
 
 export interface PatientVideoWaitingRoomProps {
   scheduledStartAt: string | null;
@@ -63,6 +64,7 @@ export default function PatientVideoWaitingRoom({
           Stay on this page. We&apos;ll open the call as soon as the doctor
           starts the session.
         </p>
+        <p className="text-center text-sm font-medium text-gray-900">{ARRIVAL_LINES.video}</p>
         <LobbyWaitContext snapshot={snapshot} />
         <LobbyConnectionProbe />
         {deviceCheckDone ? (

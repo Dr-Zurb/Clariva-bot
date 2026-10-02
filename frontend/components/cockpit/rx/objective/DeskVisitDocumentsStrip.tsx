@@ -320,14 +320,12 @@ export function DeskVisitDocumentsStrip({
   if (documents.length === 0) return null;
 
   const canExtract = Boolean(!disabled && shell && rxForm);
+  const staffDocs = documents.filter((doc) => doc.source !== "patient");
+  const patientDocs = documents.filter((doc) => doc.source === "patient");
 
-  return (
-    <div className="space-y-2">
-      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-        From staff
-      </p>
+  const renderList = (docs: VisitDocument[], allowExtract: boolean) => (
       <ul className="space-y-2">
-        {documents.map((doc) => {
+        {docs.map((doc) => {
           const extractable = doc.pages.filter(isExtractablePage);
           const extractingThisDoc = extractingDocId === doc.id;
           return (
@@ -339,7 +337,7 @@ export function DeskVisitDocumentsStrip({
                 <p className="text-sm font-medium text-foreground">
                   {documentHeading(doc)}
                 </p>
-                {canExtract && extractable.length > 1 ? (
+                {allowExtract && extractable.length > 1 ? (
                   <button
                     type="button"
                     className="shrink-0 rounded-md border border-border px-2 py-0.5 text-xs font-medium text-foreground hover:border-primary/60 hover:bg-muted/40 disabled:opacity-50"
@@ -372,7 +370,7 @@ export function DeskVisitDocumentsStrip({
                           <FileText className="h-4 w-4" />
                         )}
                       </button>
-                      {canExtract && isExtractablePage(page) ? (
+                      {allowExtract && isExtractablePage(page) ? (
                         <button
                           type="button"
                           className="mt-0.5 w-12 border-t border-border px-0 py-0.5 text-[10px] font-medium hover:bg-muted/60 disabled:opacity-50"
@@ -395,6 +393,26 @@ export function DeskVisitDocumentsStrip({
           );
         })}
       </ul>
+  );
+
+  return (
+    <div className="space-y-2">
+      {staffDocs.length > 0 ? (
+        <>
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            From staff
+          </p>
+          {renderList(staffDocs, canExtract)}
+        </>
+      ) : null}
+      {patientDocs.length > 0 ? (
+        <>
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            From the patient
+          </p>
+          {renderList(patientDocs, false)}
+        </>
+      ) : null}
 
       {extractError ? (
         <p role="alert" aria-live="polite" className="text-xs text-destructive">

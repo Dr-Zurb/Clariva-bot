@@ -12,7 +12,6 @@ import {
   isTeleconsultCatalogAuthoritative,
   userExplicitlyWantsToBookNow,
 } from '../../../utils/consultation-fees';
-import { buildTeleconsultChannelPickMessage } from '../../../utils/dm-copy';
 import {
   mergeBooking,
   mergeServiceMatch,
@@ -102,13 +101,9 @@ export const bookingEntryStage = {
         appointment_fee_currency: doctorSettings?.appointment_fee_currency ?? null,
       });
       if (teleOnly && pick === 'in_clinic') {
-        replyText = buildTeleconsultChannelPickMessage({ language: ctx.turnLanguage });
-        state = {
-          ...state,
-          lastIntent: intentResult.intent,
-          lastPromptKind: 'consultation_channel_pick',
-          updatedAt: new Date().toISOString(),
-        };
+        const readyOnline = applyLinkFirstBooking(state, ctx, intentResult.intent);
+        state = readyOnline.state;
+        replyText = readyOnline.replyText;
       } else {
         const nextModality: 'text' | 'voice' | 'video' | undefined =
           pick === 'in_clinic' ? undefined : pick;

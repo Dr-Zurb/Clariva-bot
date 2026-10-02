@@ -18,6 +18,7 @@ import {
 } from '../utils/dm-copy';
 import { getConnectionStatus } from './instagram-connect-service';
 import { getDoctorSettings } from './doctor-settings-service';
+import { isSlotOpenForVisit } from './availability-service';
 import type { DoctorSettingsRow } from '../types/doctor-settings';
 import {
   mergeBooking,
@@ -37,6 +38,9 @@ import {
   findServiceOfferingByServiceId,
   getActiveServiceCatalog,
 } from '../utils/service-catalog-helpers';
+import { buildBookingPageUrl, buildReschedulePageUrl } from '../utils/booking-page-url';
+
+export { buildBookingPageUrl, buildReschedulePageUrl };
 import {
   quoteConsultationVisit,
   type ConsultationModality,
@@ -50,7 +54,7 @@ import {
 import { createPaymentLink } from './payment-service';
 import { getDoctorGatewayPublicStatus } from './doctor-gateway-credentials-service';
 import { resolvePayableAmountMinor } from '../utils/prepaid-bookings';
-import { verifyBookingToken, generateBookingToken } from '../utils/booking-token';
+import { verifyBookingToken } from '../utils/booking-token';
 import { sendAppointmentRescheduledToDoctor } from './notification-service';
 import { logger } from '../config/logger';
 import {
@@ -127,29 +131,6 @@ function formatSlotForDisplay(slotStart: string, timezone: string): string {
     minute: '2-digit',
   });
   return formatter.format(d);
-}
-
-/**
- * Build booking page URL with token.
- */
-export function buildBookingPageUrl(conversationId: string, doctorId: string): string {
-  const baseUrl = env.BOOKING_PAGE_URL?.trim() || 'https://example.com/book';
-  const token = generateBookingToken(conversationId, doctorId);
-  return `${baseUrl.replace(/\/$/, '')}?token=${token}`;
-}
-
-/**
- * Build reschedule page URL with token including appointmentId.
- * Same base URL as booking; token encodes reschedule mode.
- */
-export function buildReschedulePageUrl(
-  conversationId: string,
-  doctorId: string,
-  appointmentId: string
-): string {
-  const baseUrl = env.BOOKING_PAGE_URL?.trim() || 'https://example.com/book';
-  const token = generateBookingToken(conversationId, doctorId, { appointmentId });
-  return `${baseUrl.replace(/\/$/, '')}?token=${token}`;
 }
 
 /** SFU-05: amount resolution for booking-page checkout (catalog quote vs legacy fee). */
@@ -559,10 +540,23 @@ export async function processSlotSelection(
   const doctorSettings = await getDoctorSettings(doctorId);
   const timezone = doctorSettings?.timezone ?? 'Asia/Kolkata';
   const dateStr = formatSlotForDisplay(slotStart, timezone);
+  const state = await getConversationState(conversationId, correlationId);
+  const visit = state.booking?.consultationType;
+  if (visit === 'in_clinic' || visit === 'video' || visit === 'voice' || visit === 'text') {
+    const open = await isSlotOpenForVisit({
+      doctorId,
+      slotStartIso: slotStart,
+      visit,
+      timezone,
+      correlationId,
+      slotIntervalMinutes: doctorSettings?.slot_interval_minutes,
+    });
+    if (!open) {
+      throw new ValidationError('That time is not open for this visit.');
+    }
+  }
 
   await saveSlotSelection(conversationId, doctorId, slotStart, correlationId);
-
-  const state = await getConversationState(conversationId, correlationId);
   const newState = mergeBooking(
     setStage({ ...state, updatedAt: new Date().toISOString() }, 'awaiting_slot_selection'),
     {
@@ -577,6 +571,42 @@ export async function processSlotSelection(
 
   const redirectUrl = await getRedirectUrlForDoctor(doctorId);
   return { success: true, redirectUrl };
+}
+
+/**
+ * The conversation write token checkout already does after the appointment exists.
+ * Slug checkout calls this only when `?c=` matches this doctor.
+ */
+export async function recordTokenCheckoutOnConversation(params: {
+  conversationId: string;
+  doctorId: string;
+  patientId: string;
+  slotStart: string;
+  state: ConversationState;
+  effectiveState: ConversationState;
+  correlationId: string;
+}): Promise<void> {
+  await saveSlotSelection(
+    params.conversationId,
+    params.doctorId,
+    params.slotStart,
+    params.correlationId
+  );
+  const newState = mergeBookingForOther(
+    mergeBooking(
+      mergeServiceMatch(
+        setStage({ ...params.state, updatedAt: new Date().toISOString() }, 'responded'),
+        {
+          catalogServiceKey: params.effectiveState.serviceMatch?.catalogServiceKey,
+          catalogServiceId: params.effectiveState.serviceMatch?.catalogServiceId,
+          consultationModality: params.effectiveState.serviceMatch?.consultationModality,
+        }
+      ),
+      { slotToConfirm: undefined, lastBookingPatientId: params.patientId }
+    ),
+    { bookingForPatientId: undefined }
+  );
+  await updateConversationState(params.conversationId, newState, params.correlationId);
 }
 
 export interface ProcessSlotSelectionAndPayResult {
@@ -692,6 +722,28 @@ export async function processSlotSelectionAndPay(
     await updateConversationState(conversationId, effectiveState, correlationId);
   }
 
+  const timezone = doctorSettings?.timezone ?? 'Asia/Kolkata';
+  const bookedVisit =
+    effectiveState.booking?.consultationType ?? options?.consultationModality;
+  if (
+    bookedVisit === 'in_clinic' ||
+    bookedVisit === 'video' ||
+    bookedVisit === 'voice' ||
+    bookedVisit === 'text'
+  ) {
+    const open = await isSlotOpenForVisit({
+      doctorId,
+      slotStartIso: slotStart,
+      visit: bookedVisit,
+      timezone,
+      correlationId,
+      slotIntervalMinutes: doctorSettings?.slot_interval_minutes,
+    });
+    if (!open) {
+      throw new ValidationError('That time is not open for this visit.');
+    }
+  }
+
   const dateStr = slotStart.slice(0, 10);
   const alreadyHasAppointment = await hasAppointmentOnDate(
     doctorId,
@@ -799,22 +851,15 @@ export async function processSlotSelectionAndPay(
 
   if (!amountMinor || amountMinor <= 0) {
     await ensurePatientMrnIfEligible(patient.id, correlationId);
-    await saveSlotSelection(conversationId, doctorId, slotStart, correlationId);
-    const newState = mergeBookingForOther(
-      mergeBooking(
-        mergeServiceMatch(
-          setStage({ ...state, updatedAt: new Date().toISOString() }, 'responded'),
-          {
-            catalogServiceKey: effectiveState.serviceMatch?.catalogServiceKey,
-            catalogServiceId: effectiveState.serviceMatch?.catalogServiceId,
-            consultationModality: effectiveState.serviceMatch?.consultationModality,
-          }
-        ),
-        { slotToConfirm: undefined, lastBookingPatientId: patient.id }
-      ),
-      { bookingForPatientId: undefined }
-    );
-    await updateConversationState(conversationId, newState, correlationId);
+    await recordTokenCheckoutOnConversation({
+      conversationId,
+      doctorId,
+      patientId: patient.id,
+      slotStart,
+      state,
+      effectiveState,
+      correlationId,
+    });
     return {
       paymentUrl: null,
       redirectUrl,
@@ -856,22 +901,15 @@ export async function processSlotSelectionAndPay(
     correlationId
   );
 
-  await saveSlotSelection(conversationId, doctorId, slotStart, correlationId);
-  const newState = mergeBookingForOther(
-    mergeBooking(
-      mergeServiceMatch(
-        setStage({ ...state, updatedAt: new Date().toISOString() }, 'responded'),
-        {
-          catalogServiceKey: effectiveState.serviceMatch?.catalogServiceKey,
-          catalogServiceId: effectiveState.serviceMatch?.catalogServiceId,
-          consultationModality: effectiveState.serviceMatch?.consultationModality,
-        }
-      ),
-      { slotToConfirm: undefined, lastBookingPatientId: patient.id }
-    ),
-    { bookingForPatientId: undefined }
-  );
-  await updateConversationState(conversationId, newState, correlationId);
+  await recordTokenCheckoutOnConversation({
+    conversationId,
+    doctorId,
+    patientId: patient.id,
+    slotStart,
+    state,
+    effectiveState,
+    correlationId,
+  });
 
   return {
     paymentUrl: paymentResult.url,

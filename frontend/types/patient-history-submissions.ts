@@ -10,6 +10,8 @@ export type HistoryAllergyItem = {
 export type HistoryMedicineItem = {
   name: string;
   dose?: string | null;
+  durationValue?: number | null;
+  durationUnit?: "days" | "months" | "years" | null;
   accepted_at?: string | null;
   accepted_by?: string | null;
 };
@@ -18,6 +20,8 @@ export type HistoryConditionItem = {
   name: string;
   code?: string | null;
   codeTitle?: string | null;
+  durationValue?: number | null;
+  durationUnit?: "days" | "months" | "years" | null;
   accepted_at?: string | null;
   accepted_by?: string | null;
 };

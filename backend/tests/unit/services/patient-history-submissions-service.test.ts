@@ -544,6 +544,35 @@ describe('acceptHistorySubmissionItem', () => {
     expect(createAllergy).not.toHaveBeenCalled();
   });
 
+  it('copies how long onto a new chart medicine', async () => {
+    mockAcceptDb({
+      submission: {
+        ...NAMED_SUBMISSION,
+        medicines: {
+          none: false,
+          items: [{ name: 'Amlodac 5mg', durationValue: 5, durationUnit: 'years' }],
+        },
+      },
+      updated: NAMED_SUBMISSION,
+    });
+
+    await acceptHistorySubmissionItem(APT_ID, DOCTOR_ID, { field: 'medicines', index: 0 }, 'cid');
+
+    expect(createMedication).toHaveBeenCalledWith(
+      PATIENT_ID,
+      {
+        drugName: 'Amlodac 5mg',
+        dose: null,
+        status: 'active',
+        source: 'self',
+        startedAgoValue: 5,
+        startedAgoUnit: 'years',
+      },
+      'cid',
+      DOCTOR_ID
+    );
+  });
+
   it('writes a medicine as active self-reported', async () => {
     mockAcceptDb({
       submission: NAMED_SUBMISSION,

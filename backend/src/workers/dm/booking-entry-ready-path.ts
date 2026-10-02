@@ -101,7 +101,7 @@ export function applyReadyPatientBookingPath(input: ApplyReadyPatientBookingPath
     };
   }
 
-  const slotLink = buildBookingPageUrl(conversationId, doctorId);
+  const slotLink = buildBookingPageUrl(conversationId, doctorId, doctorSettings?.public_slug);
   return {
     state: mergeTriage(
       mergeBooking(
@@ -134,14 +134,18 @@ export function applyLeadPlusBookingLink(
 }
 
 /**
- * Same `/book` URL without “get an appointment.”
+ * Same booking URL without “get an appointment.”
  * Answers a question whose details live on the page. Does not start a booking,
  * so the next message is not told to open the link.
  */
 export function applyLeadPlusPageLink(
   input: ApplyReadyPatientBookingPathInput & { lead: string }
 ): { state: ConversationState; replyText: string } {
-  const slotLink = buildBookingPageUrl(input.conversationId, input.doctorId);
+  const slotLink = buildBookingPageUrl(
+    input.conversationId,
+    input.doctorId,
+    input.doctorSettings?.public_slug
+  );
   const page = formatClinicPageLinkDm({
     language: input.language,
     slotLink,

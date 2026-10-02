@@ -52,6 +52,10 @@ describe('lang-22 booking / staff / funnel copy', () => {
     expect(formatBookingLinkDm({ language: 'en', slotLink: URL, doctorSettings: SLOT })).toBe(
       `Open this link to get an appointment: ${URL}\n\nFinish on this page.`
     );
+    const slugUrl = 'https://book.example/d/city-clinic?c=1';
+    expect(formatBookingLinkDm({ language: 'en', slotLink: slugUrl, doctorSettings: SLOT })).toBe(
+      `Open this link to get an appointment: ${slugUrl}\n\nFinish on this page.`
+    );
     expect(formatRescheduleLinkDm({ language: 'en', url: URL, doctorSettings: QUEUE })).toBe(
       `Pick a new day for your visit: [Reschedule](${URL})`
     );
@@ -177,13 +181,13 @@ describe('lang-22 booking / staff / funnel copy', () => {
       'We found 2 records: 1. Riya (30), 2. Amit (28). Which one? Reply 1 or 2, or No for new patient.'
     );
     expect(buildFollowUpServiceConfirmUnclearMessage({ language: 'en' })).toBe(
-      'Please reply **Yes** or **No** — is this visit a follow-up for the same service?'
+      'Say book if you want the booking page.'
     );
     expect(buildPatientMatchConfirmUnclearMessage({ language: 'en' })).toBe(
       'Please reply Yes to use the existing record, or No to create a new patient. Reply 1 or 2 if we found multiple matches.'
     );
     expect(buildTeleconsultChannelPickMessage({ language: 'en' })).toBe(
-      'Right now we offer **teleconsult** only (text, voice, or video) — which works best for you?'
+      'Appointments are online. I can help with timings or a booking link.'
     );
     expect(buildBookForOtherDualIntroMessage({ language: 'en', relation: 'son' })).toBe(
       "I'll help you book for you and your **son**. Let's take them one at a time — your **son** first, then you. Please share their details:"

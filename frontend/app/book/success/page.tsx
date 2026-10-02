@@ -3,6 +3,7 @@
 import { useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 import { getBookingRedirectUrl } from "@/lib/api";
+import { AFTER_BOOKING_URGENCY_NOTICE } from "@/lib/booking-visit-notices";
 
 const REDIRECT_DELAY_MS = 1500;
 
@@ -13,10 +14,15 @@ function SuccessPageContent() {
   const [redirectUrl, setRedirectUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [bookedFromClinicLink, setBookedFromClinicLink] = useState(false);
+  const [prepPath, setPrepPath] = useState<string | null>(null);
+  const [skippedPrep, setSkippedPrep] = useState(false);
 
   useEffect(() => {
     if (!token || token.trim() === "") {
-      setError("Invalid or expired link. Please return to the chat.");
+      const stored = window.sessionStorage.getItem("clinicPrepPath");
+      if (stored && stored.startsWith("/book/prep?t=")) setPrepPath(stored);
+      setBookedFromClinicLink(true);
       setLoading(false);
       return;
     }
@@ -60,6 +66,37 @@ function SuccessPageContent() {
     );
   }
 
+  if (bookedFromClinicLink) {
+    return (
+      <main className="min-h-screen bg-gray-50 p-4">
+        <div className="mx-auto max-w-md rounded-lg border border-green-200 bg-green-50 p-6 text-center">
+          <p className="text-lg font-medium text-green-800">Your visit is booked.</p>
+          <p className="mt-2 text-sm text-green-700">{AFTER_BOOKING_URGENCY_NOTICE}</p>
+          {prepPath && !skippedPrep ? (
+            <div className="mt-6 grid grid-cols-2 gap-3">
+              <button
+                type="button"
+                className="rounded-lg border border-green-700 bg-white px-4 py-3 text-sm font-medium text-green-800"
+                onClick={() => {
+                  window.sessionStorage.removeItem("clinicPrepPath");
+                  setSkippedPrep(true);
+                }}
+              >
+                Skip
+              </button>
+              <a
+                href={prepPath}
+                className="rounded-lg border border-green-700 bg-white px-4 py-3 text-sm font-medium text-green-800"
+              >
+                Continue
+              </a>
+            </div>
+          ) : null}
+        </div>
+      </main>
+    );
+  }
+
   if (error) {
     return (
       <main className="min-h-screen bg-gray-50 p-4">
@@ -82,6 +119,7 @@ function SuccessPageContent() {
         <p className="text-lg font-medium text-green-800">
           Payment successful! Your appointment is confirmed.
         </p>
+        <p className="mt-2 text-sm text-green-700">{AFTER_BOOKING_URGENCY_NOTICE}</p>
         <p className="mt-2 text-sm text-green-700">
           Redirecting you to the chat…
         </p>

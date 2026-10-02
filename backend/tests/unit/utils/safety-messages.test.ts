@@ -11,6 +11,7 @@ import {
   messageSignalsSelfHarm,
   parsePlausibleBloodPressurePairs,
   recentThreadHasAssistantEmergencyEscalation,
+  guardMetaOutboundReply,
   resolveSafetyMessage,
   stripBookingSafetyNetLines,
   userMessageSignalsPostEmergencyStability,
@@ -405,5 +406,19 @@ describe('safety-messages (RBH-15)', () => {
         expect(out.reply.startsWith(improvisedCrisisNoNumbers.trim())).toBe(true);
       }
     });
+  });
+});
+
+describe('guardMetaOutboundReply', () => {
+  it('keeps an appointment-fee sentence and strips consultation wording', () => {
+    expect(guardMetaOutboundReply('The consultation fee is ₹500.', 'en')).toBe(
+      'The appointment fee is ₹500.'
+    );
+  });
+
+  it('replaces a doctor or emergency-number sentence with the receptionist line', () => {
+    expect(guardMetaOutboundReply('The doctor can help. Call 112.', 'en')).toBe(
+      MEDICAL_QUERY_RESPONSE_EN
+    );
   });
 });

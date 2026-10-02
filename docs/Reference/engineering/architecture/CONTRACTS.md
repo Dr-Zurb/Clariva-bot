@@ -381,6 +381,109 @@ Response: X-Correlation-ID: 550e8400-e29b-41d4-a716-446655440000
 
 **Omitted** when staff review still blocks alignment (`pendingStaffServiceReview` without finalization), when `serviceSelectionFinalized` is not true, when `consultationType` is `in_clinic`, or when the suggested key is not in the token-scoped `serviceCatalog` (e.g. stale state after catalog edit).
 
+### GET `/api/v1/bookings/public/page-info?slug=` (clk-02)
+
+**Auth:** Public slug on `doctor_settings.public_slug`. No booking token. Rate limit matches other public patient routes (100 / 15 min / IP).
+
+**Success `data`:**
+
+| Field | Type | Meaning |
+|--------|------|---------|
+| `doctorId` | uuid | The practice the slug resolved. Unknown slug is **404**, not another practice. |
+| `practiceName` | string | Practice name, or `Halo Aid` when blank. |
+| `timezone` | string | Practice timezone. |
+| `mode` | `book` | Always book. Reschedule stays on the token page. |
+| `opdMode` | `slot` \| `queue` | That practice’s mode for today in its timezone. |
+| `bookingAllowed` | boolean | `false` only when the doctor is not license-verified. |
+| `bookingBlockedReason` | `doctor_not_verified` | Present when `bookingAllowed` is `false`. |
+| `serviceCatalog` | object | Same catalog shape as the token page, when the practice has an active catalog. |
+
+No `conversationId`, patient id, name, phone, reason, or chat booking hints.
+
+### GET `/api/v1/bookings/public/day-slots?slug=&date=`
+
+**Auth:** Same public slug and rate limit. `date` is `YYYY-MM-DD`.
+
+**Success `data`:** `{ slots, timezone, opdMode }` — the same day-slot payload as `GET /api/v1/bookings/day-slots` for that doctor and date.
+
+Token routes `slot-page-info` and `day-slots` stay token-only.
+
+### POST `/api/v1/bookings/public/checkout` (clk-03)
+
+**Auth:** Public slug. No booking token. Same rate limit as the slug reads. Reschedule stays on `POST /api/v1/bookings/select-slot-and-pay`.
+
+**Body:**
+
+| Field | Type | Meaning |
+|--------|------|---------|
+| `slug` | string | Practice slug. Unknown slug is **404**. |
+| `slotStart` | ISO datetime | Slot start. Past times are **400**. |
+| `patientName` | string | Required. |
+| `patientPhone` | string | Required. |
+| `patientAge` | number | 1–120. Stored on `patients.age`. `date_of_birth` stays null. |
+| `patientSex` | `male` \| `female` \| `other` | Stored on `patients.gender`. |
+| `reasonForVisit` | string | Required. Stored on the appointment. Not sent to the payment description. |
+| `consentGranted` | `true` | Required. Consent method `owned_booking_page`. |
+| `catalogServiceKey` | string | Optional. Required when the practice catalog has more than one service. |
+| `catalogServiceId` | uuid | Optional catalog id. |
+| `consultationModality` | `text` \| `voice` \| `video` | Optional. Required when the chosen service has more than one mode. |
+| `conversationToken` | string | Optional. The `?c=` booking token. When it verifies for this slug's doctor and is not a reschedule token, the appointment's `conversation_id` is set and the token checkout's conversation confirmation runs. Missing, expired, or other-doctor tokens still book with `conversation_id` null and add nothing about the other practice. A reschedule token for this doctor is **400** and does not create a second appointment. |
+
+**Success `data`:** `{ paymentUrl, redirectUrl, appointmentId, mode: "book", opdMode, tokenNumber?, prepPath? }`. `prepPath` is a relative `/book/prep?t=` history-form link for the same session. The booking SMS carries the absolute form of that link. One SMS. The reason is not in the message.
+
+- Creates one patient (`registered_via = public_clinic`, `platform` null, `conversation` none) and one appointment (`conversation_id` null, `booking_origin` `booked`).
+- `bookingAllowed` is doctor verification only. An unverified doctor is **403** `DoctorNotVerifiedError`. Staff-review and chat catalog-finalized gates do not apply. The catalog fields on this body are the selection.
+- Prepaid and zero-fee follow the token checkout. `redirectUrl` is the booking success page (`{BOOKING_PAGE_URL}/success`), not Instagram.
+- A second pending or confirmed visit for the same phone on that UTC date is **400**. A taken slot is **409**.
+
+### GET `/api/v1/bookings/public/history?token=` (clk-12)
+
+**Auth:** History-form token in the query. Same public rate limit. A booking token or a join token is **401** and returns no lists. Expired or cancelled is **410** and returns no lists.
+
+**Success `data`:** `{ listsEditable, listsHidden, alreadySent, consultationType, chips }` plus `allergies`, `medicines`, and `conditions` only when the form is empty or the patient already sent their own row. `consultationType` is `video`, `voice`, `in_clinic`, `text`, or null. This response has no open orders, no test label, and no patient name.
+
+- No sidecar row: the three lists are empty (`{ none: false, items: [] }`) and `listsEditable` is true. The chart is not read.
+- A patient row: `alreadySent` is true and `listsEditable` is false. Medicine and condition items include `name` and, when the patient answered, `durationValue` plus `durationUnit` (`days`, `months`, or `years`). Allergy items are names only. `accepted_at` is not returned.
+- A `front_desk` or `assistant` row: `listsHidden` is true and the three lists are omitted. `chips` still return. The desk row is not changed.
+- No patient name, phone, age, or chart rows.
+
+### POST `/api/v1/bookings/public/history` (clk-11)
+
+**Auth:** History-form token in the body. Same public rate limit. A booking token or a join token is **401**. Expired or cancelled is **410**.
+
+**Body:** `token`, `noticeVersion`, `allergies`, `medicines`, `conditions`, optional `chips` (`since`, `course`, `tried`, `aim`). Allergy items are `{ name }`. Medicine and condition items are `{ name }` plus optional `durationValue` and `durationUnit` (`days`, `months`, or `years`). Both duration fields are sent together, or neither. A number without a unit is **400**. `{ none: false, items: [] }` means the patient skipped that list. `{ none: true, items: [] }` means they said none. A none list that also has items is **400**. Accepting a new chart row copies that how-long onto the medicine `started_ago_*` or the condition `diagnosed_ago_*`.
+
+**Success `data`:** `{ listsStored, chipsSaved }`. No chart rows. No list contents in the response.
+
+- First submit inserts `patient_history_submissions` with `source = patient` and `actor_id = patients.id`. `why_today` is the booking reason. `notice_version` is the version key only. The sentence shown on the page stays counsel-owned.
+- A second submit for a patient row is **409**. A `front_desk` or `assistant` row is not updated (`listsStored: false`). Chips still save on `appointments.previsit_context` in that case. Chips are not copied into `reason_for_visit`.
+
+### GET `/api/v1/bookings/public/history/medicines?token=` 
+
+**Auth:** History-form token in the query. Same public rate limit. A booking token or a join token is **401**. Expired or cancelled is **410**.
+
+**Success `data` without `q`:** `{ drugs: [{ id, genericName, brandNames, strength }] }`. The prep page loads this once and filters it while the person types, the same way the cockpit filters its catalog. No dose line, no doctor ranking, and the list is not logged.
+
+**Success `data` with `q`:** `{ suggestions: [{ label, hint }] }`. `q` is at most 80 characters. A one-letter `q` returns an empty list and does not dump the catalog. `label` is the brand plus strength when the query matches a brand, otherwise the generic plus strength. `hint` is the generic when the label is a brand, otherwise null. The query is not logged.
+
+### POST `/api/v1/bookings/public/history/photos?token=&documentType=` (clk-15)
+
+**Auth:** History-form token in the query. Same public rate limit. A booking token or a join token is **401**. Expired or cancelled is **410**. Body is the raw file. `Content-Type` is `image/jpeg`, `image/png`, `image/webp`, or `application/pdf`. `documentType` defaults to `other` and must be one of the existing visit-document types.
+
+**Success `data`:** `{ documentId }` (**201**). No storage path.
+
+- Stores `visit_documents` with `source = patient`, `actor_id = patients.id`, `ordered_by = outside`. Object prefix `{doctor_id}/patient/{appointment_id}/`. Check-in is not required.
+- A body over 10 MB is refused. A sixth patient file on that visit is **409**. Desk files do not count toward the five.
+- Does not extract the file and does not call the desk upload.
+
+### GET `/api/v1/bookings/public/history/photos?token=` (clk-16)
+
+**Success `data`:** `{ photos: [{ id, documentType, downloadUrl }], canRemove }`. Only `source = patient` rows. No `file_path`. Desk documents are omitted. `canRemove` is false once `patient_checked_in_at` is set. A bad token returns no list.
+
+### DELETE `/api/v1/bookings/public/history/photos/:documentId?token=` (clk-16)
+
+Deletes that patient file and its object while `patient_checked_in_at` is null. After check-in the response is **409** and the file stays. A desk document id is **404** and is not deleted.
+
 ### POST `/api/v1/bookings/select-slot-and-pay` (ARM-10)
 
 When the gate denies payment, response **403** with `error.code` = `StaffServiceReviewPendingPaymentError` or `ServiceSelectionNotFinalizedPaymentError` (canonical error envelope).
@@ -467,6 +570,7 @@ Clients should migrate to `GET /api/v1/opd/session` before **2026-08-01**.
   - `appointmentId` (uuid)
   - `status` — `pending` | `confirmed` | `cancelled` | `completed` | `no_show`
   - `opdMode` — `slot` | `queue`
+  - `consultationType` — `video` | `voice` | `in_clinic` | `text` | null. Modality only. This poll does not include a prep token.
   - `suggestedPollSeconds` — number (hint for client polling; also aligns with `Cache-Control: public, max-age=…`)
   - `delayMinutes` — number | null — minutes past scheduled start while still waiting (pending/confirmed, consult not started)
   - `doctorBusyWith` — optional: `you` | `other_patient` — in-progress consult context
@@ -474,7 +578,15 @@ Clients should migrate to `GET /api/v1/opd/session` before **2026-08-01**.
   - **Queue mode:** `tokenNumber`, `aheadCount`, `etaMinutes`, `etaRange` `{ minMinutes, maxMinutes }` — omit or undefined when no queue row exists
   - **`inAppNotifications`** (optional, OPD-09): array of `{ type }` where `type` is `delay_broadcast` | `early_invite` | `your_turn_soon` | `queue_position_changed` — hints for banners / a11y; **queue order changes** are also detectable by comparing `tokenNumber` / `aheadCount` between polls
 
-**No PHI** in `snapshot` (no patient name/phone).
+**No PHI** in `snapshot` (no patient name/phone). No open-order list in this phase.
+
+### GET `/api/v1/bookings/session/prep-link?token=` (clk-21)
+
+**Auth:** Consultation token in the query. A booking token or a history-form token is **401**. A cancelled or no-show visit, or a visit whose prep window has ended, is **410**.
+
+**Success `data`:** `{ prepPath }`. `prepPath` is `/book/prep?t=` for that same appointment. The consultation token is not in the path.
+
+Called when the patient taps share. `GET /session/snapshot` does not mint this token.
 
 ### POST `/api/v1/bookings/session/early-join/accept?token=`
 

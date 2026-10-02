@@ -33,7 +33,7 @@ describe('lang-23 system / OOB / comment copy', () => {
         addressSummary: 'Sector 17',
       })
     ).toBe(
-      'You expressed interest in booking.\n\nDemo Clinic - Dermatology. Sector 17\n\nReply here if you\'d like to schedule.'
+      'I can send the booking page.\n\nDemo Clinic. Sector 17\n\nReply here and I will send the link.'
     );
     expect(
       buildSlotSelectedFollowUpDm({

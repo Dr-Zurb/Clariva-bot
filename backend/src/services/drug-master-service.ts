@@ -61,7 +61,8 @@ function escapeLike(input: string): string {
  */
 export async function searchDrugs(
   rawQuery: string,
-  rawLimit: number = 10
+  rawLimit: number = 10,
+  options?: { preferBrands?: boolean }
 ): Promise<DrugSearchResult[]> {
   const admin = getSupabaseAdminClient();
   if (!admin) {
@@ -100,13 +101,15 @@ export async function searchDrugs(
 
   if (e1) handleSupabaseError(e1, 'searchDrugs:prefix-generic');
 
-  // Short-circuit: if the prefix bucket is already full, skip the
-  // brand-prefix and similarity round-trips entirely. Common case for
-  // confident typists ("amox", "para", "azith…").
-  let results: DrugSearchResult[] = (prefixGeneric ?? []) as DrugSearchResult[];
-  if (results.length >= limit) {
-    return results.slice(0, limit);
+  // Any generic-prefix hit answers while the person is still typing
+  // ("amlo" → Amlodipine). Scanning every brand row waits on the whole
+  // table and is only worth it when nothing starts with the query
+  // ("telma" does not prefix-match Telmisartan).
+  const genericPrefix = (prefixGeneric ?? []) as DrugSearchResult[];
+  if (genericPrefix.length > 0) {
+    return genericPrefix.slice(0, limit);
   }
+  const results: DrugSearchResult[] = options?.preferBrands ? [] : [...genericPrefix];
 
   // --- Bucket 2: substring match on any element of brand_names (priority 2).
   // PostgREST does not honour `brand_names::text` casts in .filter(), so
@@ -114,7 +117,6 @@ export async function searchDrugs(
   // matching in TypeScript. This is also more correct than the array-cast
   // approach because it matches within individual brand names rather than
   // the whole `{Crocin,Calpol}` literal string.
-  const remaining = limit - results.length;
   const seenIds = new Set(results.map((r) => r.id));
   const lowerQuery = query.toLowerCase();
 
@@ -132,10 +134,22 @@ export async function searchDrugs(
     if (!brandMatch) continue;
     seenIds.add(row.id);
     results.push(row);
-    if (results.length >= limit) {
+    if (!options?.preferBrands && results.length >= limit) {
       return results.slice(0, limit);
     }
   }
+
+  if (options?.preferBrands) {
+    for (const row of genericPrefix) {
+      if (seenIds.has(row.id)) continue;
+      seenIds.add(row.id);
+      results.push(row);
+      if (results.length >= limit) return results.slice(0, limit);
+    }
+  }
+
+  if (results.length >= limit) return results.slice(0, limit);
+  const remaining = limit - results.length;
 
   // --- Bucket 3: trigram similarity on generic_name (priority 3).
   // For typo tolerance ("paracetomol" → "Paracetamol"). Falls back to

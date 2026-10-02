@@ -17,12 +17,7 @@ import {
   COMPLAINT_CLARIFICATION_MAX_ATTEMPTS,
   resolveClarificationNumericReply,
 } from '../../../utils/complaint-clarification';
-import {
-  buildBookForOtherSelfNudgeMessage,
-  buildConsentOptionalExtrasMessage,
-  buildFollowUpServiceConfirmUnclearMessage,
-  buildPhoneDisplayFallbackLabel,
-} from '../../../utils/dm-copy';
+import { buildBookForOtherSelfNudgeMessage } from '../../../utils/dm-copy';
 import type { ConversationLanguage } from '../../../utils/conversation-language';
 import { effectiveAskedForMatch } from '../../../utils/dm-prompt-context';
 import { getActiveServiceCatalog } from '../../../utils/service-catalog-helpers';
@@ -34,7 +29,6 @@ import {
   applyMatcherProposalToConversationState,
   CLARIFICATION_LEGACY_FIELD_NAMES,
   isSlotBookingBlockedPendingStaffReview,
-  mergeBooking,
   mergeBookingForOther,
   mergeClarification,
   mergeServiceMatch,
@@ -56,7 +50,6 @@ import {
   applyReturningFollowUpAcceptance,
   clearReturningFollowUpProposal,
   parseReturningFollowUpReply,
-  transitionToConsentAfterFollowUpAccept,
 } from '../returning-followup-offer';
 import { applyReadyPatientBookingPath } from '../booking-entry-ready-path';
 import { isServiceMatchTurn } from './service-match-predicate';
@@ -243,21 +236,17 @@ export const serviceMatchStage: DmStageHandler = {
           state = gate.state;
           replyText = gate.replyText;
         } else {
-          const collected = await getCollectedData(conversation.id);
-          const name = collected?.name?.trim() || 'there';
-          const phone = collected?.phone?.trim() || '';
-          const phoneDisplay = phone ? `**${phone}**` : buildPhoneDisplayFallbackLabel({ language: ctx.turnLanguage });
-          state = transitionToConsentAfterFollowUpAccept(next, intentResult.intent);
-          const resolvedName = collected?.name?.trim() || undefined;
-          replyText = buildConsentOptionalExtrasMessage({
+          const ready = applyReadyPatientBookingPath({
+            state: next,
+            intent: intentResult.intent,
+            conversationId: conversation.id,
+            doctorId,
+            doctorSettings,
+            patient: null,
             language: ctx.turnLanguage,
-            patientName: state.bookingForOther?.bookingForSomeoneElse ? undefined : resolvedName,
-            phoneDisplay,
-            bookingForSomeoneElse: !!state.bookingForOther?.bookingForSomeoneElse,
-            bookingForName: state.bookingForOther?.bookingForSomeoneElse
-              ? resolvedName ?? name
-              : undefined,
           });
+          state = ready.state;
+          replyText = ready.replyText;
         }
       } else if (parsed === 'no') {
         dmRoutingBranch = 'returning_followup_confirm_decline';
@@ -286,46 +275,31 @@ export const serviceMatchStage: DmStageHandler = {
           state = gate.state;
           replyText = gate.replyText;
         } else {
-          const collected = await getCollectedData(conversation.id);
-          const name = collected?.name?.trim() || 'there';
-          const phone = collected?.phone?.trim() || '';
-          const phoneDisplay = phone ? `**${phone}**` : buildPhoneDisplayFallbackLabel({ language: ctx.turnLanguage });
-          const now = new Date().toISOString();
-          state = mergeBooking(
-            setStage(
-              {
-                ...cleared,
-                lastIntent: intentResult.intent,
-                updatedAt: now,
-                ...(cleared.bookingForOther?.bookingForSomeoneElse
-                  ? {}
-                  : { lastPromptKind: 'consent_optional_extras' as const }),
-              },
-              'consent'
-            ),
-            {
-              consent_requested_at: now,
-              reasonForVisit: typeof reason === 'string' ? reason : collected?.reason_for_visit,
-              age: collected?.age,
-            }
-          );
-          const resolvedName = collected?.name?.trim() || undefined;
-          replyText = buildConsentOptionalExtrasMessage({
+          const ready = applyReadyPatientBookingPath({
+            state: cleared,
+            intent: intentResult.intent,
+            conversationId: conversation.id,
+            doctorId,
+            doctorSettings,
+            patient: null,
             language: ctx.turnLanguage,
-            patientName: state.bookingForOther?.bookingForSomeoneElse ? undefined : resolvedName,
-            phoneDisplay,
-            bookingForSomeoneElse: !!state.bookingForOther?.bookingForSomeoneElse,
-            bookingForName: state.bookingForOther?.bookingForSomeoneElse
-              ? resolvedName ?? name
-              : undefined,
           });
+          state = ready.state;
+          replyText = ready.replyText;
         }
       } else {
         dmRoutingBranch = 'returning_followup_confirm_reply';
-        replyText = buildFollowUpServiceConfirmUnclearMessage({
+        const ready = applyReadyPatientBookingPath({
+          state,
+          intent: intentResult.intent,
+          conversationId: conversation.id,
+          doctorId,
+          doctorSettings,
+          patient: null,
           language: ctx.turnLanguage,
         });
-        state = { ...state, updatedAt: new Date().toISOString() };
+        state = ready.state;
+        replyText = ready.replyText;
       }
     } else if (state.step === 'awaiting_complaint_clarification') {
       dmRoutingBranch = 'complaint_clarification_reply';
@@ -382,35 +356,17 @@ export const serviceMatchStage: DmStageHandler = {
         const reMatch = reRun.match;
 
         if (reMatch && reMatch.autoFinalize && !reMatch.pendingStaffReview) {
-          const now = new Date().toISOString();
-          const collected = await getCollectedData(conversation.id);
-          const name = collected?.name?.trim() || 'there';
-          const phone = collected?.phone?.trim() || '';
-          const phoneDisplay = phone ? `**${phone}**` : buildPhoneDisplayFallbackLabel({ language: ctx.turnLanguage });
-          state = mergeBooking(
-            setStage(
-              {
-                ...state,
-                lastIntent: intentResult.intent,
-                updatedAt: now,
-                lastPromptKind: state.bookingForOther?.bookingForSomeoneElse
-                  ? undefined
-                  : ('consent_optional_extras' as const),
-              },
-              'consent'
-            ),
-            { consent_requested_at: now }
-          );
-          {
-            const resolvedName = collected?.name?.trim() || undefined;
-            replyText = buildConsentOptionalExtrasMessage({
-              language: ctx.turnLanguage,
-              patientName: state.bookingForOther?.bookingForSomeoneElse ? undefined : resolvedName,
-              phoneDisplay,
-              bookingForSomeoneElse: !!state.bookingForOther?.bookingForSomeoneElse,
-              bookingForName: state.bookingForOther?.bookingForSomeoneElse ? resolvedName ?? name : undefined,
-            });
-          }
+          const ready = applyReadyPatientBookingPath({
+            state,
+            intent: intentResult.intent,
+            conversationId: conversation.id,
+            doctorId,
+            doctorSettings,
+            patient: null,
+            language: ctx.turnLanguage,
+          });
+          state = ready.state;
+          replyText = ready.replyText;
         } else {
           const gate = transitionToAwaitingStaffServiceConfirmation(
             state,
@@ -460,7 +416,11 @@ export const serviceMatchStage: DmStageHandler = {
           state = gate.state;
           replyText = gate.replyText;
         } else {
-          const slotLink = buildBookingPageUrl(conversation.id, doctorId);
+          const slotLink = buildBookingPageUrl(
+            conversation.id,
+            doctorId,
+            doctorSettings?.public_slug
+          );
           const baseSlotMsg = formatBookingLinkDm({ language: ctx.turnLanguage, slotLink, doctorSettings });
           replyText = shared.bookingForOther?.pendingSelfBooking
             ? `${baseSlotMsg}\n\n${buildBookForOtherSelfNudgeMessage({ language: ctx.turnLanguage })}`
