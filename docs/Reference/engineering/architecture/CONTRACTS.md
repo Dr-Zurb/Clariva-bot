@@ -394,6 +394,7 @@ Response: X-Correlation-ID: 550e8400-e29b-41d4-a716-446655440000
 | `timezone` | string | Practice timezone. |
 | `mode` | `book` | Always book. Reschedule stays on the token page. |
 | `opdMode` | `slot` \| `queue` | That practice’s mode for today in its timezone. |
+| `dayModes` | map of `YYYY-MM-DD` to `slot` \| `queue` | Optional. The next 14 clinic days. A saved day wins, then the schedule, then the clinic default. |
 | `bookingAllowed` | boolean | `false` only when the doctor is not license-verified. |
 | `bookingBlockedReason` | `doctor_not_verified` | Present when `bookingAllowed` is `false`. |
 | `serviceCatalog` | object | Same catalog shape as the token page, when the practice has an active catalog. |

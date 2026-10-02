@@ -104,6 +104,7 @@ function BookPageContent({ slug }: { slug?: string }) {
   const [practiceName, setPracticeName] = useState<string>("");
   const [mode, setMode] = useState<"book" | "reschedule">("book");
   const [opdMode, setOpdMode] = useState<OpdModeApi>("slot");
+  const [dayModes, setDayModes] = useState<Record<string, OpdModeApi>>({});
   const [pageError, setPageError] = useState<string | null>(null);
   const [pageLoading, setPageLoading] = useState(true);
 
@@ -184,6 +185,9 @@ function BookPageContent({ slug }: { slug?: string }) {
         setPracticeName(res.data.practiceName || "Book Appointment");
         setMode(res.data.mode ?? "book");
         setOpdMode(res.data.opdMode ?? "slot");
+        if ("dayModes" in res.data && res.data.dayModes) {
+          setDayModes(res.data.dayModes);
+        }
 
         if (res.data.bookingAllowed === false) {
           const why = res.data.bookingBlockedReason;
@@ -309,6 +313,7 @@ function BookPageContent({ slug }: { slug?: string }) {
           setTimezone(res.data.timezone);
           if (res.data.opdMode) {
             setOpdMode(res.data.opdMode);
+            setDayModes((current) => ({ ...current, [date]: res.data.opdMode! }));
           }
         })
         .catch(() => {
@@ -327,12 +332,15 @@ function BookPageContent({ slug }: { slug?: string }) {
     }
   }, [selectedDate, token, isSlug, fetchSlots]);
 
+  const selectedDayMode: OpdModeApi =
+    (selectedDate && dayModes[selectedDate]) || opdMode;
+
   /** Queue + booking: first available slot on the chosen day backs the join request. */
   useEffect(() => {
-    if (opdMode !== "queue" || mode !== "book" || slotsLoading) return;
+    if (selectedDayMode !== "queue" || mode !== "book" || slotsLoading) return;
     const first = slots.find((s) => s.status === "available");
     setSelectedSlot(first ?? null);
-  }, [opdMode, mode, slots, slotsLoading]);
+  }, [selectedDayMode, mode, slots, slotsLoading]);
 
   const catalogPickComplete = useMemo(() => {
     if (!serviceCatalog || mode !== "book") {
@@ -487,7 +495,7 @@ function BookPageContent({ slug }: { slug?: string }) {
   ]);
 
   const availableCount = slots.filter((s) => s.status === "available").length;
-  const isQueueBook = opdMode === "queue" && mode === "book";
+  const isQueueBook = selectedDayMode === "queue" && mode === "book";
 
   if (pageLoading) {
     return (
@@ -556,8 +564,8 @@ function BookPageContent({ slug }: { slug?: string }) {
               ? "Pick a new day for your visit. You’ll keep a place in the queue for that session day."
               : "Select a new date and time for your appointment."
             : isQueueBook
-              ? "Choose a day to join the queue. You’ll get a token number — wait times are approximate."
-              : "Select a date and time for your appointment."}
+              ? "This day is a queue. Join it and you get a token number. Wait times are approximate."
+              : "This day is by time. Pick a time for your visit."}
         </p>
         <p className="mt-3 text-sm text-gray-700">{SCHEDULED_VISIT_NOTICE}</p>
 
@@ -672,7 +680,16 @@ function BookPageContent({ slug }: { slug?: string }) {
                     : "bg-white text-gray-700 shadow-sm ring-1 ring-gray-200 hover:bg-gray-50"
                 }`}
               >
-                {formatDateLabel(d)}
+                <span className="block">{formatDateLabel(d)}</span>
+                {dayModes[d] ? (
+                  <span
+                    className={`mt-0.5 block text-[11px] font-normal ${
+                      selectedDate === d ? "text-white/80" : "text-gray-500"
+                    }`}
+                  >
+                    {dayModes[d] === "queue" ? "Queue" : "Time"}
+                  </span>
+                ) : null}
               </button>
             ))}
           </div>
@@ -681,20 +698,22 @@ function BookPageContent({ slug }: { slug?: string }) {
         {/* Slot grid (slot mode, or reschedule in queue) */}
         <section className="mt-6" aria-labelledby="time-heading">
           <h2 id="time-heading" className="text-sm font-medium text-gray-700">
-            {isQueueBook ? "Queue for this day" : "Select a time"}
+            {isQueueBook ? "Queue for this day" : "Pick a time"}
           </h2>
 
           {slotsLoading ? (
-            <p className="mt-3 text-sm text-gray-500">Loading slots…</p>
+            <p className="mt-3 text-sm text-gray-500">Loading…</p>
           ) : slots.length === 0 ? (
             <p className="mt-3 text-sm text-gray-500">
-              No slots available. Pick another date.
+              {isQueueBook
+                ? "No openings left on this day. Try another date."
+                : "No times on this day. Try another date."}
             </p>
           ) : isQueueBook ? (
             <p className="mt-3 text-sm text-gray-600">
               {availableCount > 0
-                ? "We’ll use the first available slot on this day to join the queue. Tap Continue to confirm."
-                : "No openings left on this day — the session may be full. Try another date."}
+                ? "You’re joining the queue for this day. Tap Continue to confirm."
+                : "No openings left on this day. Try another date."}
             </p>
           ) : (
             <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">

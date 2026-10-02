@@ -4,6 +4,7 @@
 
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import {
+  resolveModesForDates,
   resolveOneDate,
   resolveModePolicyForDateRange,
 } from '../../../src/services/opd/opd-mode-service';
@@ -14,6 +15,28 @@ import { ValidationError } from '../../../src/utils/errors';
 jest.mock('../../../src/services/doctor-settings-service');
 
 const TZ = 'Asia/Kolkata';
+
+describe('resolveModesForDates', () => {
+  it('lets a saved day win, then the weekday rule, then the clinic default', () => {
+    const modes = resolveModesForDates({
+      dates: ['2026-10-02', '2026-10-03', '2026-10-04'],
+      facts: [{ session_date: '2026-10-02', mode: 'slot' }],
+      settings: {
+        opd_mode: 'queue',
+        opd_policies: {
+          mode_schedule: {
+            default_mode: 'queue',
+            weekly_overrides: { sat: 'slot' },
+          },
+        },
+      } as never,
+      timezone: TZ,
+    });
+    expect(modes['2026-10-02']).toBe('slot');
+    expect(modes['2026-10-03']).toBe('slot');
+    expect(modes['2026-10-04']).toBe('queue');
+  });
+});
 
 describe('resolveOneDate', () => {
   it('returns null for empty schedule', () => {

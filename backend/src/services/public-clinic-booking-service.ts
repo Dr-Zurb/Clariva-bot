@@ -8,7 +8,7 @@ import { InternalError, NotFoundError } from '../utils/errors';
 import { handleSupabaseError } from '../utils/db-helpers';
 import { getDoctorSettings } from './doctor-settings-service';
 import { getDaySlotsWithStatus, type DaySlotWithStatus } from './availability-service';
-import { resolveSessionDayMode } from './opd/opd-mode-service';
+import { resolveModesForDates, resolveSessionDayMode } from './opd/opd-mode-service';
 import { isDoctorVerified } from './doctor-verification-service';
 import { getActiveServiceCatalog } from '../utils/service-catalog-helpers';
 import type { DoctorSettingsRow, OpdMode } from '../types/doctor-settings';
@@ -36,6 +36,8 @@ export type PublicClinicPageInfo = {
   bookingAllowed: boolean;
   bookingBlockedReason?: 'doctor_not_verified';
   serviceCatalog?: PublicClinicCatalogPayload;
+  /** Mode for each bookable day, keyed by YYYY-MM-DD in the practice timezone. */
+  dayModes?: Record<string, OpdMode>;
 };
 
 type PublicSlugRow = {
@@ -102,6 +104,15 @@ function publicClinicCatalog(settings: DoctorSettingsRow | null): PublicClinicCa
   };
 }
 
+const PUBLIC_CLINIC_DAY_COUNT = 14;
+
+function addCalendarDays(ymd: string, days: number): string {
+  const [year, month, day] = ymd.split('-').map(Number);
+  const date = new Date(Date.UTC(year!, (month ?? 1) - 1, day ?? 1));
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
 function clinicTodayYmd(timezone: string): string {
   return new Intl.DateTimeFormat('en-CA', {
     timeZone: timezone,
@@ -148,11 +159,41 @@ export async function getPublicClinicPageInfo(
       ? await resolveSessionDayMode(admin, doctorId, todayYmd)
       : { mode: settings?.opd_mode ?? ('slot' as const) };
   const doctorVerified = await isDoctorVerified(doctorId, correlationId);
-  return buildPublicClinicPageInfo({
+  const page = buildPublicClinicPageInfo({
     doctorId,
     settings,
     opdMode: resolved.mode,
     doctorVerified,
+  });
+  const dayModes = await loadPublicClinicDayModes(admin, doctorId, settings, timezone, todayYmd);
+  return dayModes ? { ...page, dayModes } : page;
+}
+
+/** Saved day, then the clinic schedule, for the next two weeks. Null when the read fails. */
+async function loadPublicClinicDayModes(
+  admin: ReturnType<typeof getSupabaseAdminClient>,
+  doctorId: string,
+  settings: DoctorSettingsRow | null,
+  timezone: string,
+  todayYmd: string
+): Promise<Record<string, OpdMode> | null> {
+  if (!admin) return null;
+  const dates = Array.from({ length: PUBLIC_CLINIC_DAY_COUNT }, (_, index) =>
+    addCalendarDays(todayYmd, index)
+  );
+  const last = dates[dates.length - 1] ?? todayYmd;
+  const { data, error } = await admin
+    .from('doctor_opd_session_modes')
+    .select('session_date, mode')
+    .eq('doctor_id', doctorId)
+    .gte('session_date', todayYmd)
+    .lte('session_date', last);
+  if (error || !data) return null;
+  return resolveModesForDates({
+    dates,
+    facts: data as Array<{ session_date: string; mode: string }>,
+    settings,
+    timezone,
   });
 }
 

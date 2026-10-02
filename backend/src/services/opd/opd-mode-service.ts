@@ -90,6 +90,35 @@ export function resolveOneDate(
 }
 
 /**
+ * Mode for each date. A saved day wins, then the schedule, then the clinic default.
+ */
+export function resolveModesForDates(input: {
+  dates: string[];
+  facts: Array<{ session_date: string; mode: string }>;
+  settings: DoctorSettingsRow | null;
+  timezone: string;
+}): Record<string, OpdMode> {
+  const facts = new Map(
+    input.facts.map((fact) => [fact.session_date.slice(0, 10), fact.mode])
+  );
+  const schedule = modeScheduleFromSettings(input.settings);
+  const fallback: OpdMode =
+    input.settings?.opd_mode === 'queue' || input.settings?.opd_mode === 'slot'
+      ? input.settings.opd_mode
+      : 'slot';
+  const modes: Record<string, OpdMode> = {};
+  for (const date of input.dates) {
+    const saved = facts.get(date);
+    if (saved === 'queue' || saved === 'slot') {
+      modes[date] = saved;
+      continue;
+    }
+    modes[date] = resolveOneDate(schedule, date, input.timezone) ?? fallback;
+  }
+  return modes;
+}
+
+/**
  * Resolve the mode dictated by doctor_settings.opd_policies.mode_schedule
  * for a given (doctor, date). Returns null if no rule matches; caller
  * (resolveSessionDayMode) cascades to doctor_settings.opd_mode then 'slot'.

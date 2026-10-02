@@ -1607,6 +1607,7 @@ export interface PublicClinicPageInfoData {
   timezone: string;
   mode: "book";
   opdMode?: OpdModeApi;
+  dayModes?: Record<string, OpdModeApi>;
   bookingAllowed?: boolean;
   bookingBlockedReason?: BookingBlockedReasonApi;
   serviceCatalog?: BookingPageCatalogApi | null;
