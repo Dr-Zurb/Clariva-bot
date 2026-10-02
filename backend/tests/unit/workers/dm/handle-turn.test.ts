@@ -12,12 +12,19 @@ jest.mock('../../../../src/services/slot-selection-service', () => ({
   buildBookingPageUrl: jest.fn(() => 'https://example.com/book'),
 }));
 
+jest.mock('../../../../src/services/instagram-connect-service', () => ({
+  getConnectedInstagramDisplayName: jest.fn(async () => null),
+}));
+
+jest.mock('../../../../src/utils/booking-page-url', () => ({
+  buildBookingPageUrl: jest.fn(() => 'https://example.com/d/clinic'),
+  buildPublicClinicPageUrl: jest.fn(() => null),
+}));
+
 import { executeDmTurn } from '../../../../src/workers/dm/handle-turn';
 import type { DmTurnContext } from '../../../../src/workers/dm/stage-router';
 import type { Conversation } from '../../../../src/types/database';
 import type { ConversationState } from '../../../../src/types/conversation';
-import { MEDICAL_QUERY_RESPONSE_EN } from '../../../../src/utils/safety-messages';
-
 function minimalTurnCtx(overrides: Partial<DmTurnContext> = {}): DmTurnContext {
   const state: ConversationState = {
     step: 'responded',
@@ -110,7 +117,7 @@ describe('executeDmTurn — emergency head gate (rcp-08)', () => {
     expect(result.branch).toBe('emergency_safety');
     expect(result.nextState.step).toBe('responded');
     expect(result.nextState.lastIntent).toBe('emergency');
-    expect(result.reply).toContain(MEDICAL_QUERY_RESPONSE_EN);
+    expect(result.reply).toContain('Health questions are not answered');
     expect(result.reply).not.toContain('https://example.com/book');
     expect(result.reply.toLowerCase()).not.toContain('112');
     expect(ctx.runGenerateResponse).not.toHaveBeenCalled();
@@ -175,7 +182,7 @@ describe('executeDmTurn — emergency head gate (rcp-08)', () => {
     const result = await executeDmTurn(ctx);
 
     expect(result.branch).toBe('emergency_safety');
-    expect(result.reply).toContain(MEDICAL_QUERY_RESPONSE_EN);
+    expect(result.reply).toContain('Health questions are not answered');
     expect(result.reply).not.toContain('https://example.com/book');
     expect(result.reply.toLowerCase()).not.toContain('112');
     expect(ctx.runGenerateResponse).not.toHaveBeenCalled();
@@ -219,7 +226,10 @@ describe('executeDmTurn — emergency head gate (rcp-08)', () => {
     const result = await executeDmTurn(ctx, { conflictRecovery: true });
 
     expect(result.branch).toBe('conflict_recovery_ai');
-    expect(ctx.runGenerateResponse).toHaveBeenCalledTimes(1);
+    expect(result.reply).toContain('Automated reply.');
+    expect(result.reply).toContain('Visits:');
+    expect(result.reply).not.toContain('Halo Aid');
+    expect(ctx.runGenerateResponse).not.toHaveBeenCalled();
   });
 
   it('SAFETY-01: acute emergency preempts receptionist pause', async () => {

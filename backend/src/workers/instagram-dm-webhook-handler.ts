@@ -29,6 +29,10 @@ import {
 } from '../services/webhook-metrics';
 import type { InstagramWebhookPayload, WebhookProvider } from '../types/webhook';
 import { buildNonTextAckMessage, buildThrottleAckMessage } from '../utils/dm-copy';
+import { getDoctorSettings } from '../services/doctor-settings-service';
+import { getConnectedInstagramDisplayName } from '../services/instagram-connect-service';
+import { buildPublicClinicPageUrl } from '../utils/booking-page-url';
+import { renderInstagramVisitReply } from '../utils/instagram-visit-replies';
 import {
   resolveTurnLanguage,
   type ConversationLanguage,
@@ -36,6 +40,26 @@ import {
 
 /** @deprecated Import from `./dm/control-gates` — kept for existing test imports. */
 export const DEFAULT_INSTAGRAM_RECEPTIONIST_PAUSE_MESSAGE = DEFAULT_RECEPTIONIST_PAUSE_MESSAGE;
+
+async function instagramNonTextReply(
+  doctorId: string | null,
+  correlationId: string,
+  language: ConversationLanguage
+): Promise<string> {
+  if (!doctorId) {
+    return renderInstagramVisitReply({ kind: 'non_text', language });
+  }
+  const [settings, accountName] = await Promise.all([
+    getDoctorSettings(doctorId),
+    getConnectedInstagramDisplayName(doctorId, correlationId),
+  ]);
+  return renderInstagramVisitReply({
+    kind: 'non_text',
+    language,
+    accountName,
+    url: buildPublicClinicPageUrl(settings?.public_slug),
+  });
+}
 
 async function handleParseInboundSkip(
   skip: ParseInboundSkip,
@@ -148,7 +172,7 @@ async function handleParseInboundSkip(
       { eventId, provider, correlationId, pageIds: skip.pageIds },
       'Unknown Instagram page (no linked doctor); marking failed'
     );
-    if (skip.senderId) {
+    if (skip.senderId && provider !== 'instagram') {
       try {
         await sendInstagramMessage(skip.senderId, FALLBACK_REPLY, correlationId);
       } catch {
@@ -282,7 +306,10 @@ export async function processInstagramDmWebhook(params: {
       if (doctorId && inbound.tenant) {
         // Non-text → no signal; preserve sticky stored language (lang-01 §3.4 / lang-10).
         const { language } = resolveTurnLanguage(storedLanguage, '');
-        const nonTextAck = buildNonTextAckMessage({ language });
+        const nonTextAck =
+          provider === 'instagram'
+            ? await instagramNonTextReply(doctorId, correlationId, language)
+            : buildNonTextAckMessage({ language });
         try {
           await channelAdapter.send({ text: nonTextAck }, inbound, { context: 'default' });
         } catch (e) {
@@ -419,7 +446,7 @@ export async function processInstagramDmWebhook(params: {
         throttleSkipped: dmSend.status === 'throttle_skipped',
       });
       if (dmSend.status === 'throttle_skipped') {
-        if (pageIdForDm) {
+        if (pageIdForDm && provider !== 'instagram') {
           const shouldAck = await tryAcquireThrottleAck(pageIdForDm, senderId);
           if (shouldAck) {
             try {

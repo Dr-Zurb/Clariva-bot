@@ -42,6 +42,7 @@ Instagram carries “something happened + a link” (or a receptionist FAQ). Own
 | **MCA-DL-5** | **Emergency copy stays in-thread.** 112/108 safety replies are not “data collection.” | P3 must not strip the emergency gate. |
 | **MCA-DL-6** | **Doctor manual replies stay.** Opt-out suppresses *automated* sends only. | Dashboard send is not blocked. |
 | **MCA-DL-7** | **App Review stays honest.** Receptionist / appointment FAQs. Dev Policies §1 bans misleading Meta. | Do not hide that this is a clinic product. |
+| **MCA-DL-8** | **Instagram visit signpost (founder, 2 Oct 2026).** One word, "visit", for queue, slot, and a future mixed day. The chat states a single fee or a shared address only when asked. Times, visits, change, cancel, payment, and several fees are a link. No health talk, no record lookup, no model-written reply. Profile name, never "Halo Aid". Facebook is unchanged. | Bio link stays the fallback if Meta review declines. Booking-page wording is parked. |
 
 ---
 

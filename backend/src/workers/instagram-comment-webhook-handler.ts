@@ -24,8 +24,13 @@ import { shouldSkipCommentPrivateReply } from '../services/automated-messaging-o
 import { resolveCommentOutreachLanguage } from '../services/comment-outreach-language';
 import { sendCommentLeadToDoctor } from '../services/notification-service';
 import { logWebhookCommentPipeline } from '../services/webhook-metrics';
-import { buildCommentProactiveDmMessage, buildCommentPublicReplyText } from '../utils/dm-copy';
-import { instagramAddressToShare } from '../utils/instagram-faq-copy';
+import { buildCommentPublicReplyText } from '../utils/dm-copy';
+import { buildPublicClinicPageUrl } from '../utils/booking-page-url';
+import {
+  instagramCommentPrivateReply,
+  singleVisitFeeAmount,
+} from '../utils/instagram-visit-replies';
+import { getConnectedInstagramDisplayName } from '../services/instagram-connect-service';
 import type { CommentIntent } from '../types/ai';
 import type { WebhookProvider } from '../types/webhook';
 
@@ -36,6 +41,13 @@ const HIGH_INTENT_COMMENT: Set<CommentIntent> = new Set([
   'pricing_inquiry',
   'general_inquiry',
   'medical_query',
+]);
+
+/** Private reply only when the comment asks for a visit, times, or a fee. */
+const VISIT_COMMENT_DM: Set<CommentIntent> = new Set([
+  'book_appointment',
+  'check_availability',
+  'pricing_inquiry',
 ]);
 
 /** e-task-7: Skip intents (no storage, no outreach). */
@@ -190,18 +202,19 @@ export async function processInstagramCommentWebhook(
   );
 
   const receptionistPaused = settings?.instagram_receptionist_paused === true;
+  const sendsVisitDm = VISIT_COMMENT_DM.has(intent);
   const underDailyCap =
-    isHighIntent && !receptionistPaused
+    sendsVisitDm && !receptionistPaused
       ? await canSendCommentPrivateReply(doctorId, correlationId)
       : true;
-  if (isHighIntent && !receptionistPaused && !underDailyCap) {
+  if (sendsVisitDm && !receptionistPaused && !underDailyCap) {
     logger.info(
       { eventId, provider, correlationId },
       'Comment: daily private-reply cap reached, skipping outreach'
     );
   }
 
-  if (isHighIntent && intent !== 'medical_query' && !receptionistPaused && underDailyCap) {
+  if (VISIT_COMMENT_DM.has(intent) && !receptionistPaused && underDailyCap) {
     const doctorToken =
       doctorTokenEarly ?? (await getInstagramAccessTokenForDoctor(doctorId, correlationId));
     commentDoctorTokenPresent = !!doctorToken;
@@ -219,12 +232,13 @@ export async function processInstagramCommentWebhook(
         commenterIgId,
         correlationId
       );
-      const dmMessage = buildCommentProactiveDmMessage({
+      const accountName = await getConnectedInstagramDisplayName(doctorId, correlationId);
+      const dmMessage = instagramCommentPrivateReply({
         language,
-        intent,
-        practiceName: settings?.practice_name ?? undefined,
-        specialty: settings?.specialty ?? undefined,
-        addressSummary: instagramAddressToShare(settings) ?? undefined,
+        accountName,
+        url: buildPublicClinicPageUrl(settings?.public_slug),
+        feeAmount: singleVisitFeeAmount(settings),
+        askedFee: intent === 'pricing_inquiry',
       });
       try {
         if (!skipPrivate) {
@@ -254,6 +268,7 @@ export async function processInstagramCommentWebhook(
           buildCommentPublicReplyText({
             commentId,
             username: resolvedUsername,
+            flat: true,
           }),
           doctorToken,
           correlationId

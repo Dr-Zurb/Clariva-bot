@@ -8,6 +8,7 @@ import { isIdleFeeTriageTurn } from '../../../../../src/workers/dm/stages/idle-f
 import { resolveStage } from '../../../../../src/workers/dm/stage-router';
 import type { DmTurnContext } from '../../../../../src/workers/dm/stage-router';
 import type { Conversation } from '../../../../../src/types/database';
+import { AUTOMATED_MENU_EN } from '../../../../../src/utils/instagram-greeting-copy';
 
 jest.mock('../../../../../src/services/slot-selection-service', () => ({
   buildBookingPageUrl: jest.fn(() => 'https://example.com/book'),
@@ -170,7 +171,7 @@ describe('idleFeeTriageStage', () => {
     const result = await idleFeeTriageStage.handle(ctx);
     expect(result.branch).toBe('medical_safety');
     expect(result.reply).not.toContain('https://example.com/book');
-    expect(result.reply).toBe("I'm the receptionist. I can help with timings, availability, or a booking link.");
+    expect(result.reply).toBe(AUTOMATED_MENU_EN);
     expect(result.reply).not.toMatch(/medical advice|teleconsult|doctor|medical record/i);
     expect(result.nextState.triage?.lastMedicalDeflectionAt).toBeDefined();
     expect(result.nextState.triage?.reasonFirstTriagePhase).toBeUndefined();
@@ -187,7 +188,7 @@ describe('idleFeeTriageStage', () => {
     const result = await idleFeeTriageStage.handle(ctx);
     expect(result.branch).toBe('medical_safety');
     expect(result.reply).not.toContain('https://example.com/book');
-    expect(result.reply).toContain("I'm the receptionist");
+    expect(result.reply).toContain('Automated reply from Halo Aid');
     expect(result.reply).not.toMatch(/prescribe|medical advice|cough|consultation for/i);
   });
 
@@ -219,9 +220,7 @@ describe('idleFeeTriageStage', () => {
     expect(isIdleFeeTriageTurn(ctx)).toBe(true);
     const result = await idleFeeTriageStage.handle(ctx);
     expect(result.branch).toBe('medical_safety');
-    expect(result.reply).toBe(
-      "I'm the receptionist. I can help with timings, availability, or a booking link."
-    );
+    expect(result.reply).toBe(AUTOMATED_MENU_EN);
     expect(result.reply).not.toContain('https://example.com/book');
   });
 
@@ -251,9 +250,7 @@ describe('idleFeeTriageStage', () => {
     const result = await idleFeeTriageStage.handle(ctx);
     expect(result.branch).toBe('greeting_template');
     expect(ctx.runGenerateResponse).not.toHaveBeenCalled();
-    expect(result.reply).toBe(
-      "Hi — I'm the receptionist. I can help with availability, cancel/reschedule, or a booking link. How can I help today?"
-    );
+    expect(result.reply).toBe(AUTOMATED_MENU_EN);
     expect(result.reply).not.toMatch(/doctor|teleconsult|medical|Dr\b/i);
     expect(composeDmReplySegments).not.toHaveBeenCalled();
   });
@@ -341,14 +338,16 @@ describe('idleFeeTriageStage', () => {
   });
 
   it('greeting names the connected Instagram account', async () => {
-    jest.mocked(getConnectedInstagramDisplayName).mockResolvedValueOnce('Halo Aid');
+    jest.mocked(getConnectedInstagramDisplayName).mockResolvedValueOnce('City Clinic');
     const ctx = minimalTurnCtx({
       intentResult: { intent: 'greeting', confidence: 1 },
       text: 'hi',
     });
 
     const result = await idleFeeTriageStage.handle(ctx);
-    expect(result.reply).toContain("I'm Halo Aid's receptionist");
+    expect(result.reply).toBe(
+      'Automated reply from City Clinic. Options: availability, cancel/reschedule, or a booking link.'
+    );
   });
 
   it('greeting omits address when the doctor does not share it', async () => {
@@ -367,7 +366,7 @@ describe('idleFeeTriageStage', () => {
     expect(result.reply).not.toContain('12 Test Lane');
   });
 
-  it('single_fee greeting mentions fee, not a rupee amount', async () => {
+  it('greeting stays the automated menu when a fee and address exist', async () => {
     const ctx = minimalTurnCtx({
       intentResult: { intent: 'greeting', confidence: 1 },
       text: 'hi',
@@ -380,9 +379,8 @@ describe('idleFeeTriageStage', () => {
     });
 
     const result = await idleFeeTriageStage.handle(ctx);
-    expect(result.reply).toMatch(/appointment fee/i);
-    expect(result.reply).toMatch(/address/i);
-    expect(result.reply).not.toMatch(/₹/);
+    expect(result.reply).toBe(AUTOMATED_MENU_EN);
+    expect(result.reply).not.toMatch(/₹|appointment fee|\baddress\b/i);
   });
 
   it('hours on file → quote only, no /book', async () => {
@@ -503,7 +501,7 @@ describe('idleFeeTriageStage', () => {
     expect(result.branch).toBe('greeting_template');
     expect(patientService.findPatientByIdWithAdmin).not.toHaveBeenCalled();
     expect(result.reply).not.toContain('Welcome back');
-    expect(result.reply).toContain("I'm the receptionist");
+    expect(result.reply).toContain('Automated reply from Halo Aid');
     expect(ctx.runGenerateResponse).not.toHaveBeenCalled();
   });
 
@@ -527,7 +525,7 @@ describe('idleFeeTriageStage', () => {
     const result = await idleFeeTriageStage.handle(ctx);
     expect(result.branch).toBe('greeting_template');
     expect(composeDmReplySegments).not.toHaveBeenCalled();
-    expect(result.reply).toContain("I'm the receptionist");
+    expect(result.reply).toContain('Automated reply from Halo Aid');
     expect(ctx.runGenerateResponse).not.toHaveBeenCalled();
   });
 

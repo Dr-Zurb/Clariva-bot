@@ -23,16 +23,17 @@ import {
 
 describe('safety-messages (RBH-15)', () => {
   describe('resolveSafetyMessage', () => {
-    it('returns receptionist copy for pa language', () => {
+    it('returns the automated menu for pa language', () => {
       const msg = resolveSafetyMessage('medical_query', 'pa');
-      expect(msg.toLowerCase()).toContain('receptionist');
+      expect(msg).toContain('automated message');
+      expect(msg).toMatch(/[\u0A00-\u0A7F]/);
       expect(msg).not.toContain('scheduling assistant');
     });
 
     it('returns Roman Punjabi medical for pa-Latn', () => {
       const msg = resolveSafetyMessage('medical_query', 'pa-Latn');
-      expect(msg.toLowerCase()).toContain('receptionist');
-      expect(msg.toLowerCase()).toContain('main');
+      expect(msg.toLowerCase()).toContain('da automated message');
+      expect(msg).not.toMatch(/[\u0A00-\u0A7F]/);
     });
 
     it('returns Hindi Devanagari medical when language is hi', () => {
@@ -54,8 +55,8 @@ describe('safety-messages (RBH-15)', () => {
 
     it('returns Roman Hindi medical_query for hi-Latn (not English)', () => {
       const msg = resolveSafetyMessage('medical_query', 'hi-Latn');
-      expect(msg.toLowerCase()).toContain('main');
-      expect(msg.toLowerCase()).toMatch(/receptionist|booking|hours|availability/);
+      expect(msg.toLowerCase()).toContain('ka automated message');
+      expect(msg.toLowerCase()).toMatch(/booking|availability/);
       expect(msg).not.toContain("I'm the scheduling assistant");
     });
 

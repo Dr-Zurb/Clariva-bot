@@ -762,7 +762,7 @@ describe('AI Service', () => {
 
       const result = await generateResponse(defaultInput);
 
-      expect(result).toContain("I didn't quite get that");
+      expect(result).toContain("Automated reply from Halo Aid");
       expect(mockedAudit.logAIResponseGeneration).toHaveBeenCalledWith(
         expect.objectContaining({
           correlationId,
@@ -921,7 +921,7 @@ describe('AI Service', () => {
 
       const result = await generateResponse(defaultInput);
 
-      expect(result).toContain("I didn't quite get that");
+      expect(result).toContain("Automated reply from Halo Aid");
       expect(mockedAudit.logAIResponseGeneration).toHaveBeenCalledWith(
         expect.objectContaining({
           status: 'failure',
@@ -942,7 +942,7 @@ describe('AI Service', () => {
 
       const result = await generateResponse(defaultInput);
 
-      expect(result).toContain("I didn't quite get that");
+      expect(result).toContain("Automated reply from Halo Aid");
       expect(mockCreate).toHaveBeenCalledTimes(3);
       expect(mockedAudit.logAIResponseGeneration).toHaveBeenCalledWith(
         expect.objectContaining({

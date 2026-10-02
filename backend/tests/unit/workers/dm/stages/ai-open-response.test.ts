@@ -6,6 +6,7 @@ import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import { aiOpenResponseStage } from '../../../../../src/workers/dm/stages/ai-open-response';
 import { resolveStage } from '../../../../../src/workers/dm/stage-router';
 import type { DmTurnContext } from '../../../../../src/workers/dm/stage-router';
+import { AUTOMATED_MENU_EN } from '../../../../../src/utils/instagram-greeting-copy';
 import type { Conversation } from '../../../../../src/types/database';
 
 function minimalTurnCtx(overrides: Partial<DmTurnContext> = {}): DmTurnContext {
@@ -66,14 +67,29 @@ describe('aiOpenResponseStage', () => {
     jest.clearAllMocks();
   });
 
-  it('returns ai_open_response branch', async () => {
+  it('idle unmatched text gets the automated menu and does not call the model', async () => {
     const ctx = minimalTurnCtx();
     const result = await aiOpenResponseStage.handle(ctx);
     expect(result.branch).toBe('ai_open_response');
+    expect(result.reply).toBe(AUTOMATED_MENU_EN);
+    expect(ctx.runGenerateResponse).not.toHaveBeenCalled();
+  });
+
+  it('an in-progress step can still ask the model', async () => {
+    const ctx = minimalTurnCtx({
+      inCollection: true,
+      state: {
+        step: 'collecting_all',
+        collectedFields: [],
+        updatedAt: new Date().toISOString(),
+      },
+    });
+    const result = await aiOpenResponseStage.handle(ctx);
     expect(result.reply).toBe('Open AI reply');
+    expect(ctx.runGenerateResponse).toHaveBeenCalled();
   });
 
   it('resolveStage default is ai_open_response when no earlier stage claims', () => {
-    expect(resolveStage(minimalTurnCtx())).toBe('ai_open_response');
+    expect(resolveStage(minimalTurnCtx({ text: 'how are you' }))).toBe('ai_open_response');
   });
 });

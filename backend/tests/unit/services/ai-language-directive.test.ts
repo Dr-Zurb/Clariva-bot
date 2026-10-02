@@ -80,8 +80,9 @@ describe('lang-04 language reply directive', () => {
       );
     });
 
-    it('greeting identity is receptionist, not a doctor assistant', () => {
-      expect(RESPONSE_SYSTEM_PROMPT_BASE).toContain("I'm the receptionist");
+    it('menu identity is an automated reply, not a person', () => {
+      expect(RESPONSE_SYSTEM_PROMPT_BASE).toContain('Automated reply from Halo Aid');
+      expect(RESPONSE_SYSTEM_PROMPT_BASE).not.toContain("I'm the receptionist");
       expect(RESPONSE_SYSTEM_PROMPT_BASE).not.toContain("practice's assistant");
       expect(RESPONSE_SYSTEM_PROMPT_BASE).toMatch(
         /Never introduce yourself as a doctor's assistant/

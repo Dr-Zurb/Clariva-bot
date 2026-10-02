@@ -36,6 +36,12 @@ import {
   type ConversationLanguage,
   type StaticMessageLocale,
 } from './conversation-language';
+import {
+  AUTOMATED_MENU_EN,
+  AUTOMATED_MENU_HI_LATN,
+  AUTOMATED_MENU_PA_LATN,
+  buildAutomatedMenuMessage,
+} from './instagram-greeting-copy';
 
 /**
  * LANG6-D8: deliberate English in every static locale, with a reason.
@@ -3654,9 +3660,13 @@ function commentPublicReplyVariantIndex(commentId: string): number {
 export function buildCommentPublicReplyText(input: {
   commentId: string;
   username?: string | null;
+  /** Instagram: one flat line. Facebook keeps the rotating variants. */
+  flat?: boolean;
 }): string {
   const variants = DM_COPY_ENGLISH_ONLY_EXCEPTIONS.COMMENT_PUBLIC_REPLY.variants;
-  const variant = variants[commentPublicReplyVariantIndex(input.commentId)] ?? variants[0];
+  const variant = input.flat
+    ? 'Check your DM.'
+    : (variants[commentPublicReplyVariantIndex(input.commentId)] ?? variants[0]);
   const raw = (input.username ?? '').trim().replace(/^@/, '');
   if (raw && COMMENT_PUBLIC_REPLY_USERNAME.test(raw)) {
     return `@${raw} ${variant}`;
@@ -3721,12 +3731,12 @@ const COMMENT_PROACTIVE_DM_TEMPLATES: Readonly<
       cta: 'Reply here for the fee.',
     },
     general_inquiry: {
-      ack: "I'm the receptionist.",
-      cta: 'Reply here for timings, the appointment fee, or a booking link.',
+      ack: AUTOMATED_MENU_EN,
+      cta: '',
     },
     medical_query: {
-      ack: "I'm the receptionist.",
-      cta: 'I can help with timings, availability, or a booking link.',
+      ack: AUTOMATED_MENU_EN,
+      cta: '',
     },
   },
   hi: {
@@ -3743,12 +3753,12 @@ const COMMENT_PROACTIVE_DM_TEMPLATES: Readonly<
       cta: 'Fee ke liye yahan reply karein.',
     },
     general_inquiry: {
-      ack: 'Main receptionist hoon.',
-      cta: 'Timings, appointment fee, ya booking link ke liye yahan reply karein.',
+      ack: AUTOMATED_MENU_HI_LATN,
+      cta: '',
     },
     medical_query: {
-      ack: 'Main receptionist hoon.',
-      cta: 'Main timings, availability, ya booking link mein madad kar sakta hoon.',
+      ack: AUTOMATED_MENU_HI_LATN,
+      cta: '',
     },
   },
   pa: {
@@ -3765,12 +3775,12 @@ const COMMENT_PROACTIVE_DM_TEMPLATES: Readonly<
       cta: 'Fee layi ithe reply karo.',
     },
     general_inquiry: {
-      ack: 'Main receptionist haan.',
-      cta: 'Timings, appointment fee, ja booking link layi ithe reply karo.',
+      ack: AUTOMATED_MENU_PA_LATN,
+      cta: '',
     },
     medical_query: {
-      ack: 'Main receptionist haan.',
-      cta: 'Main timings, availability, ja booking link vich madad kar sakda haan.',
+      ack: AUTOMATED_MENU_PA_LATN,
+      cta: '',
     },
   },
 };
@@ -3792,7 +3802,9 @@ export function buildCommentProactiveDmMessage(input: CommentProactiveDmMessageI
 
   const table = COMMENT_PROACTIVE_DM_TEMPLATES[locale];
   const t = table[input.intent] ?? table.general_inquiry!;
-  return `${t.ack}${detailsBlock}\n\n${t.cta}`;
+  const cta = t.cta.trim();
+  if (!cta) return `${t.ack}${detailsBlock}`;
+  return `${t.ack}${detailsBlock}\n\n${cta}`;
 }
 
 export interface SlotSelectedFollowUpDmInput {
@@ -3962,13 +3974,7 @@ export const DM_COPY_PHI_REGISTRY = {
 
 export type DmCopyPhiBuilderName = keyof typeof DM_COPY_PHI_REGISTRY;
 
-const LLM_EMPTY_FALLBACK_COPY: Readonly<Record<StaticMessageLocale, string>> = {
-  en: "I didn't quite get that. Could you rephrase? Or say 'book appointment', 'check availability', 'cancel appointment', or 'reschedule appointment' if that's what you need.",
-  hi: "Main theek se samajh nahi paaya. Kya dobara likh sakte hain? Ya agar yeh chahiye ho to 'book appointment', 'check availability', 'cancel appointment', ya 'reschedule appointment' likhein.",
-  pa: "Main theek tarah samajh nahi paya. Ki dubara likh sakde ho? Ya je eh chahida hove ta 'book appointment', 'check availability', 'cancel appointment', ya 'reschedule appointment' likho.",
-};
-
-/** LLM empty/fail fallback (was ai-service FALLBACK_RESPONSE) — lang-24 sweep. */
+/** Same automated menu as the greeting. Used when a model reply is empty or fails. */
 export function buildLlmEmptyFallbackMessage(input: ConsentLanguageOnlyInput): string {
-  return LLM_EMPTY_FALLBACK_COPY[toStaticLocale(input.language)];
+  return buildAutomatedMenuMessage(input.language);
 }

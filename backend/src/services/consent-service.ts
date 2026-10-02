@@ -20,6 +20,7 @@ import {
   buildConsentRevokeRecordNotFoundMessage,
   buildConsentRevokeSuccessMessage,
 } from '../utils/dm-copy';
+import { instagramDeletionReply } from '../utils/instagram-visit-replies';
 
 export type ConsentParseResult = 'granted' | 'denied' | 'unclear';
 
@@ -157,21 +158,28 @@ export async function handleRevocation(
   conversationId: string,
   patientId: string,
   correlationId: string,
-  language: ConversationLanguage
+  language: ConversationLanguage,
+  copy?: 'instagram_visit'
 ): Promise<string> {
   await clearCollectedData(conversationId);
 
   const patient = await findPatientById(patientId, correlationId);
   if (!patient) {
-    return buildConsentRevokeRecordNotFoundMessage({ language });
+    return copy === 'instagram_visit'
+      ? instagramDeletionReply('none')
+      : buildConsentRevokeRecordNotFoundMessage({ language });
   }
 
   if (patient.consent_status === 'revoked') {
-    return buildConsentRevokeAlreadyRemovedMessage({ language });
+    return copy === 'instagram_visit'
+      ? instagramDeletionReply('none')
+      : buildConsentRevokeAlreadyRemovedMessage({ language });
   }
 
   if (patient.consent_status !== 'granted') {
-    return buildConsentRevokeNoStoredDataMessage({ language });
+    return copy === 'instagram_visit'
+      ? instagramDeletionReply('none')
+      : buildConsentRevokeNoStoredDataMessage({ language });
   }
 
   const now = new Date();
@@ -194,5 +202,7 @@ export async function handleRevocation(
     method: 'instagram_dm',
   });
 
-  return buildConsentRevokeSuccessMessage({ language });
+  return copy === 'instagram_visit'
+    ? instagramDeletionReply('deleted')
+    : buildConsentRevokeSuccessMessage({ language });
 }

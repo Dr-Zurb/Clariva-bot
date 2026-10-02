@@ -30,6 +30,13 @@ import {
 import type { DoctorSettingsRow } from '../../types/doctor-settings';
 import type { DmHandlerBranch } from '../../types/dm-instrumentation';
 import type { ConversationLanguage } from '../../utils/conversation-language';
+import type { ConversationPlatform } from '../../types/database';
+import { buildBookingPageUrl } from '../../utils/booking-page-url';
+import {
+  instagramStartAck,
+  instagramStopAck,
+  renderInstagramVisitReply,
+} from '../../utils/instagram-visit-replies';
 
 /** Minimal recent-turn shape gates read (no channel coupling). */
 export interface DmGateRecentMessage {
@@ -52,6 +59,10 @@ export interface DmGateContext {
   correlationId: string;
   /** Migration 239 stamp. NULL/omitted = not opted out. */
   automatedMessagingOptedOutAt?: string | null;
+  /** Set by executeDmTurn from the conversation. Facebook keeps the shared copy. */
+  platform?: ConversationPlatform;
+  doctorId?: string;
+  instagramAccountName?: string | null;
 }
 
 export interface DmGateResult {
@@ -129,7 +140,8 @@ export const revokeConsentGate: DmControlGate = {
       ctx.conversationId,
       ctx.patientId as string,
       ctx.correlationId,
-      ctx.turnLanguage
+      ctx.turnLanguage,
+      ctx.platform === 'instagram' ? 'instagram_visit' : undefined
     );
     return {
       branch: 'revoke_consent',
@@ -163,7 +175,7 @@ export const emergencyGate: DmControlGate = {
   handle(ctx) {
     return {
       branch: 'emergency_safety',
-      reply: resolveSafetyMessage('medical_query', ctx.turnLanguage),
+      reply: instagramOrSafetyReply(ctx),
       nextState: mergeTriage(
         {
           ...ctx.state,
@@ -197,7 +209,7 @@ export const openCrisisGate: DmControlGate = {
   handle(ctx) {
     return {
       branch: 'emergency_safety',
-      reply: resolveSafetyMessage('medical_query', ctx.turnLanguage),
+      reply: instagramOrSafetyReply(ctx),
       nextState: {
         ...ctx.state,
         lastIntent: ctx.intentResult.intent,
@@ -207,6 +219,22 @@ export const openCrisisGate: DmControlGate = {
     };
   },
 };
+
+function instagramOrSafetyReply(ctx: DmGateContext): string {
+  if (ctx.platform !== 'instagram') {
+    return resolveSafetyMessage('medical_query', ctx.turnLanguage);
+  }
+  return renderInstagramVisitReply({
+    kind: 'health',
+    language: ctx.turnLanguage,
+    accountName: ctx.instagramAccountName,
+  });
+}
+
+function instagramVisitUrl(ctx: DmGateContext): string | null {
+  if (!ctx.doctorId) return null;
+  return buildBookingPageUrl(ctx.conversationId, ctx.doctorId, ctx.doctorSettings?.public_slug);
+}
 
 function isOptedOutOfAutomatedMessaging(ctx: DmGateContext): boolean {
   const stamp = ctx.automatedMessagingOptedOutAt;
@@ -233,7 +261,14 @@ export const messagingOptOutGate: DmControlGate = {
       await persistAutomatedMessagingOptIn(ctx.conversationId, ctx.correlationId);
       return {
         branch: 'automated_messaging_opt_in',
-        reply: buildAutomatedMessagingStartAckMessage({ language: ctx.turnLanguage }),
+        reply:
+          ctx.platform === 'instagram'
+            ? instagramStartAck({
+                language: ctx.turnLanguage,
+                accountName: ctx.instagramAccountName,
+                url: instagramVisitUrl(ctx),
+              })
+            : buildAutomatedMessagingStartAckMessage({ language: ctx.turnLanguage }),
         nextState: {
           ...ctx.state,
           lastIntent: ctx.intentResult.intent,
@@ -259,7 +294,10 @@ export const messagingOptOutGate: DmControlGate = {
       await persistAutomatedMessagingOptOut(ctx.conversationId, ctx.correlationId);
       return {
         branch: 'automated_messaging_opt_out',
-        reply: buildAutomatedMessagingStopAckMessage({ language: ctx.turnLanguage }),
+        reply:
+        ctx.platform === 'instagram'
+          ? instagramStopAck(ctx.turnLanguage)
+          : buildAutomatedMessagingStopAckMessage({ language: ctx.turnLanguage }),
         nextState: {
           ...ctx.state,
           lastIntent: ctx.intentResult.intent,

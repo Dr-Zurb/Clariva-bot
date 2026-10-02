@@ -10,7 +10,9 @@ import {
   recentThreadHasAssistantEmergencyEscalation,
 } from '../../utils/safety-messages';
 import { emergencyGate, evaluateControlGates, HEAD_CONTROL_GATES } from './control-gates';
+import type { DmGateContext } from './control-gates';
 import { applyLearningPolicyAutobookAfterStage } from './stages/booking-funnel';
+import { handleInstagramVisitTurn } from './stages/instagram-visit-turn';
 import { resolveStage, STAGE_ROUTER, type DmTurnContext, type DmTurnResult } from './stage-router';
 
 export interface ExecuteDmTurnOptions {
@@ -18,18 +20,32 @@ export interface ExecuteDmTurnOptions {
   conflictRecovery?: boolean;
 }
 
+function gateCtxForTurn(turnCtx: DmTurnContext): DmGateContext {
+  return {
+    ...turnCtx.gateCtx,
+    platform: turnCtx.conversation.platform,
+    doctorId: turnCtx.doctorId,
+    instagramAccountName: turnCtx.instagramAccountName ?? null,
+  };
+}
+
 /** Run control gates, stage router, and post-stage hooks for one DM turn. */
 export async function executeDmTurn(
   turnCtx: DmTurnContext,
   options?: ExecuteDmTurnOptions
 ): Promise<DmTurnResult> {
-  if (options?.conflictRecovery) {
+  if (turnCtx.conversation.platform === 'instagram') {
+    if (options?.conflictRecovery) {
+      const result = await handleInstagramVisitTurn(turnCtx);
+      return { ...result, branch: 'conflict_recovery_ai' };
+    }
+  } else if (options?.conflictRecovery) {
     const { aiOpenResponseStage } = await import('./stages/ai-open-response');
     const result = await aiOpenResponseStage.handle(turnCtx);
     return { ...result, branch: 'conflict_recovery_ai' };
   }
 
-  const gateCtx = turnCtx.gateCtx;
+  const gateCtx = gateCtxForTurn(turnCtx);
   const regexHit = isEmergencyUserMessage(gateCtx.text);
   const emergencyGateEligible = emergencyGate.fires(gateCtx);
   const crisisOpen = isOpenEmergencyCrisis(gateCtx.state);
@@ -60,6 +76,10 @@ export async function executeDmTurn(
 
   if (headGateResult) {
     return headGateResult;
+  }
+
+  if (turnCtx.conversation.platform === 'instagram') {
+    return handleInstagramVisitTurn(turnCtx);
   }
 
   const stage = resolveStage(turnCtx);

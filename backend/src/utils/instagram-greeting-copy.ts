@@ -1,7 +1,7 @@
 /**
- * Locked Instagram greeting — receptionist, no doctor / teleconsult / medical wording.
- * Idle greeting is this template, not the LLM (App Review first file).
- * Menu only: no ₹, street, or hours in the hello.
+ * Locked Instagram menu. Not a person: no receptionist, no "I", no question.
+ * Idle greeting and the unmatched-message reply both use this template.
+ * Menu only: no ₹, street, or hours.
  */
 
 import {
@@ -19,7 +19,7 @@ export type ReceptionistGreetingOpts = {
   accountName?: string | null;
 };
 
-/** Instagram profile name safe to speak in the hello. Digits-only ids are dropped. */
+/** Instagram profile name safe to speak. Digits-only ids are dropped. */
 export function instagramAccountNameForGreeting(raw: string | null | undefined): string | null {
   if (typeof raw !== 'string') return null;
   const name = raw.replace(/\s+/g, ' ').trim();
@@ -27,64 +27,59 @@ export function instagramAccountNameForGreeting(raw: string | null | undefined):
   return name;
 }
 
-/** Default hello: packaged / no address (no fee in the menu). */
-export const RECEPTIONIST_GREETING_EN =
-  "Hi — I'm the receptionist. I can help with availability, cancel/reschedule, or a booking link. How can I help today?";
+const DEFAULT_FROM = 'Halo Aid';
 
-function joinHelpTopics(topics: string[]): string {
-  if (topics.length === 0) return 'a booking link';
-  if (topics.length === 1) return topics[0]!;
-  if (topics.length === 2) return `${topics[0]} or ${topics[1]}`;
-  return `${topics.slice(0, -1).join(', ')}, or ${topics[topics.length - 1]}`;
-}
+export const AUTOMATED_MENU_EN =
+  'Automated reply from Halo Aid. Options: availability, cancel/reschedule, or a booking link.';
 
-function greetingHelpTopics(opts?: ReceptionistGreetingOpts): string[] {
-  const topics = ['availability'];
-  if (opts?.hasAddress) topics.push('address');
-  if (opts?.catalogMode === 'single_fee') topics.push('the appointment fee');
-  topics.push('cancel/reschedule', 'a booking link');
-  return topics;
-}
+export const AUTOMATED_MENU_HI =
+  'Halo Aid का automated message. Options: availability, cancel/reschedule, या booking link.';
 
-const OPENER: Record<StaticMessageLocale, string> = {
-  en: "Hi — I'm the receptionist. I can help with",
-  hi: 'Namaste — main receptionist hoon. Main madad kar sakta hoon',
-  pa: 'Sat sri akal — main receptionist haan. Main madad kar sakda haan',
-};
+export const AUTOMATED_MENU_HI_LATN =
+  'Halo Aid ka automated message. Options: availability, cancel/reschedule, ya booking link.';
 
-function namedOpener(locale: StaticMessageLocale, name: string): string {
+export const AUTOMATED_MENU_PA =
+  'Halo Aid ਦਾ automated message. Options: availability, cancel/reschedule, ਜਾਂ booking link.';
+
+export const AUTOMATED_MENU_PA_LATN =
+  'Halo Aid da automated message. Options: availability, cancel/reschedule, ja booking link.';
+
+/** Default hello. Kept so existing imports still compile. */
+export const RECEPTIONIST_GREETING_EN = AUTOMATED_MENU_EN;
+
+function menuLine(locale: StaticMessageLocale, script: 'native' | 'latin', from: string): string {
+  if (locale === 'hi' && script === 'native') {
+    return `${from} का automated message. Options: availability, cancel/reschedule, या booking link.`;
+  }
   if (locale === 'hi') {
-    return `Namaste — main ${name} ka receptionist hoon. Main madad kar sakta hoon`;
+    return `${from} ka automated message. Options: availability, cancel/reschedule, ya booking link.`;
+  }
+  if (locale === 'pa' && script === 'native') {
+    return `${from} ਦਾ automated message. Options: availability, cancel/reschedule, ਜਾਂ booking link.`;
   }
   if (locale === 'pa') {
-    return `Sat sri akal — main ${name} da receptionist haan. Main madad kar sakda haan`;
+    return `${from} da automated message. Options: availability, cancel/reschedule, ja booking link.`;
   }
-  return `Hi — I'm ${name}'s receptionist. I can help with`;
+  return `Automated reply from ${from}. Options: availability, cancel/reschedule, or a booking link.`;
 }
 
-const CLOSER: Record<StaticMessageLocale, string> = {
-  en: 'How can I help today?',
-  hi: 'Aaj kaise help karun?',
-  pa: 'Ajj kivain help karan?',
-};
+export function buildAutomatedMenuMessage(
+  language: ConversationLanguage,
+  opts?: ReceptionistGreetingOpts
+): string {
+  const locale = toStaticLocale(language);
+  const script =
+    (locale === 'hi' && languageUsesDevanagari(language)) ||
+    (locale === 'pa' && languageUsesGurmukhi(language))
+      ? 'native'
+      : 'latin';
+  const from = instagramAccountNameForGreeting(opts?.accountName) ?? DEFAULT_FROM;
+  return menuLine(locale, script, from);
+}
 
 export function buildReceptionistGreetingMessage(
   language: ConversationLanguage,
   opts?: ReceptionistGreetingOpts
 ): string {
-  const locale = toStaticLocale(language);
-  const openerLocale =
-    locale === 'hi' && !languageUsesDevanagari(language)
-      ? 'hi'
-      : locale === 'pa' && !languageUsesGurmukhi(language)
-        ? 'pa'
-        : locale;
-  const accountName = instagramAccountNameForGreeting(opts?.accountName);
-  const topics = joinHelpTopics(greetingHelpTopics(opts));
-  if (!opts?.hasAddress && opts?.catalogMode !== 'single_fee' && openerLocale === 'en') {
-    if (!accountName) return RECEPTIONIST_GREETING_EN;
-    return `Hi — I'm ${accountName}'s receptionist. I can help with availability, cancel/reschedule, or a booking link. How can I help today?`;
-  }
-  const opener = accountName ? namedOpener(openerLocale, accountName) : OPENER[openerLocale];
-  return `${opener} ${topics}. ${CLOSER[openerLocale]}`;
+  return buildAutomatedMenuMessage(language, opts);
 }

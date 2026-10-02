@@ -47,8 +47,10 @@ Halo Aid automates DM conversations on a clinic's Instagram account: booking, FA
 
 What this is **not**: a reason to panic-disable the product. It is the reason the next counsel sitting exists.
 
+**Founder note (2 Oct 2026):** the residual risk is accepted. Meta review is a gamble: if it is approved, the Instagram bot stays; if it is not, the link in the bio is already the fallback. Instagram DMs are a visit signpost (MCA-DL-8). Facebook is out of this pass.
+
 **Actions:**
-1. **Counsel (L10 packet, added):** ask the attorney to read Dev Policies §5 "Healthcare" against (a) the receptionist FAQ/booking conversations and (b) provider-derived patient data in DMs. Get a written read before a paying clinic is live.
+1. **Counsel (L10 packet, added):** ask the attorney to read Dev Policies §5 "Healthcare" against (a) the receptionist FAQ/booking conversations and (b) provider-derived patient data in DMs. Get a written read before a paying clinic is live. Founder note above supersedes waiting on this before the Instagram signpost.
 2. **Product lever, if counsel says narrow it:** keep Instagram for inbound FAQs/booking only; move provider-data notifications (reminders, prescription-ready) to SMS/email. This option already exists as the parked reminder-channel decision — the code paths are separable.
 3. **App Review (M3):** framing stays receptionist/appointment-FAQs and must stay *accurate* — Dev Policies §1 bans misleading Meta. Do not describe flows we run as something else.
 

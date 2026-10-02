@@ -16,6 +16,14 @@ function bookingPageBase(): string {
  * Book link. A public slug uses `/d/:slug?c=` on the same site.
  * No slug keeps `/book?token=`.
  */
+/** Public clinic page, no conversation token. Null when the slug is missing or invalid. */
+export function buildPublicClinicPageUrl(publicSlug: string | null | undefined): string | null {
+  const slug = publicSlug?.trim() ?? '';
+  if (!slug || !isPublicSlugShape(slug)) return null;
+  const origin = bookingPageBase().replace(/\/book$/, '');
+  return `${origin}/d/${slug}`;
+}
+
 export function buildBookingPageUrl(
   conversationId: string,
   doctorId: string,

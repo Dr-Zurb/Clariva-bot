@@ -189,7 +189,7 @@ async function buildAiContextForResponse(
         'Thread note: If they are asking the fee, quote the appointment fee. Do not name a visit type.';
     } else if (isRecentMedicalDeflectionWindow(state)) {
       ctx.idleDialogueHint =
-        'Thread note: Reply only that you are the receptionist and can help with timings, availability, or a booking link.';
+        'Thread note: Reply only with: Automated reply from Halo Aid. Options: availability, cancel/reschedule, or a booking link. Do not say you are a person.';
     }
     const suppressIdleFees =
       !feeIdle &&

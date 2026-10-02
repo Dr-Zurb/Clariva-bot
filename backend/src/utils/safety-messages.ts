@@ -12,6 +12,13 @@ import {
   type ConversationLanguage,
   type StaticMessageLocale,
 } from './conversation-language';
+import {
+  AUTOMATED_MENU_EN,
+  AUTOMATED_MENU_HI,
+  AUTOMATED_MENU_HI_LATN,
+  AUTOMATED_MENU_PA,
+  AUTOMATED_MENU_PA_LATN,
+} from './instagram-greeting-copy';
 
 export type SafetyMessageLocale = StaticMessageLocale;
 export type SafetyMessageKind = 'medical_query' | 'emergency';
@@ -25,8 +32,7 @@ export interface ResolveSafetyMessageOptions {
 }
 
 /** English defaults (backward compatible exports). */
-export const MEDICAL_QUERY_RESPONSE_EN =
-  "I'm the receptionist. I can help with timings, availability, or a booking link.";
+export const MEDICAL_QUERY_RESPONSE_EN = AUTOMATED_MENU_EN;
 
 export const EMERGENCY_RESPONSE_EN =
   'Please call emergency services (in India: **112** or **108**) or go to the nearest hospital immediately.';
@@ -37,17 +43,15 @@ export const EMERGENCY_REAFFIRM_RESPONSE_EN =
 
 const MEDICAL_QUERY_BY_LOCALE: Record<SafetyMessageLocale, string> = {
   en: MEDICAL_QUERY_RESPONSE_EN,
-  hi: 'मैं रिसेप्शनिस्ट हूँ। समय, उपलब्धता, या बुकिंग लिंक में मदद कर सकता हूँ।',
-  pa: 'Main receptionist haan. Timings, availability, ya booking link vich madad kar sakda haan.',
+  hi: AUTOMATED_MENU_HI,
+  pa: AUTOMATED_MENU_PA,
 };
 
 /** Roman Hindi - for users typing Hinglish without Devanagari */
-const MEDICAL_QUERY_LATIN_HI =
-  'Main receptionist hoon. Timings, availability, ya booking link mein madad kar sakta hoon.';
+const MEDICAL_QUERY_LATIN_HI = AUTOMATED_MENU_HI_LATN;
 
 /** Roman Punjabi */
-const MEDICAL_QUERY_LATIN_PA =
-  'Main receptionist haan. Timings, availability, ya booking link vich madad kar sakda haan.';
+const MEDICAL_QUERY_LATIN_PA = AUTOMATED_MENU_PA_LATN;
 
 const EMERGENCY_BY_LOCALE: Record<SafetyMessageLocale, string> = {
   en: EMERGENCY_RESPONSE_EN,

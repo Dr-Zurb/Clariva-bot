@@ -96,6 +96,8 @@ export interface DmTurnContext {
     teleconsultCatalogRowCount: number | null | undefined
   ) => Promise<GenerateResponseContext>;
   fallbackReply: string;
+  /** Instagram profile name, when already resolved. Facebook leaves this unset. */
+  instagramAccountName?: string | null;
 }
 
 export interface DmTurnResult {

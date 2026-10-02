@@ -546,7 +546,7 @@ exports[`dm-copy snapshots lang-23 / throttle ack 1`] = `"I see your messages â€
 
 exports[`dm-copy snapshots lang-23 / welcome-back (phi) 1`] = `"Welcome back, **Priya**! Great to hear from you again."`;
 
-exports[`dm-copy snapshots lang-24 / LLM empty fallback 1`] = `"I didn't quite get that. Could you rephrase? Or say 'book appointment', 'check availability', 'cancel appointment', or 'reschedule appointment' if that's what you need."`;
+exports[`dm-copy snapshots lang-24 / LLM empty fallback 1`] = `"Automated reply from Halo Aid. Options: availability, cancel/reschedule, or a booking link."`;
 
 exports[`dm-copy snapshots mca-07 / automated messaging start ack 1`] = `"Automated messages are on again. How can I help?"`;
 
