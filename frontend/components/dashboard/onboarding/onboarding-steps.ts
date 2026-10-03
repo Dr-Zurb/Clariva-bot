@@ -50,7 +50,7 @@ export const ONBOARDING_STEPS: readonly OnboardingStepDef[] = [
     id: "instagram",
     title: "Connect socials",
     description:
-      "Link Instagram or Facebook so patient DMs and comments can become bookings.",
+      "Link Instagram so messages get an automated reply.",
     href: "/dashboard/settings/integrations",
     cta: "Connect socials",
     doneKey: "instagramConnected",

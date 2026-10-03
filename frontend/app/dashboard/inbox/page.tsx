@@ -129,8 +129,7 @@ export default async function InboxPage({
       <div className="shrink-0">
         <h1 className="text-2xl font-semibold text-foreground">Inbox</h1>
         <p className="mt-0.5 text-sm text-muted-foreground">
-          Leads and chats from comment to booking — read-only. The AI receptionist
-          stays in control.
+          Chats are read-only. Automated replies stay in control.
         </p>
       </div>
       <div className="min-h-0 flex-1">

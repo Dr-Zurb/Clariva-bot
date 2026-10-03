@@ -7,7 +7,7 @@ import { SettingsPageShell } from "@/components/settings/SettingsPageShell";
 import { useSessionAccessToken } from "@/hooks/useSessionAccessToken";
 
 /**
- * Integrations — Instagram connect + receptionist pause.
+ * Integrations — Instagram connect + pause automated replies.
  * Facebook Messenger stays in-repo; omitted from this page for the messages-first App Review file.
  */
 export default function IntegrationsPage() {
@@ -17,7 +17,7 @@ export default function IntegrationsPage() {
     return (
       <SettingsPageShell
         title="Integrations"
-        description="Connect Instagram and control automated receptionist replies."
+        description="Connect Instagram and control automated replies."
         isLoading
       />
     );
@@ -28,7 +28,7 @@ export default function IntegrationsPage() {
       <div>
         <h1 className="text-2xl font-semibold text-foreground">Integrations</h1>
         <p className="mt-1 text-muted-foreground">
-          Connect Instagram and control automated receptionist replies.
+          Connect Instagram and control automated replies.
         </p>
       </div>
       <VerificationBanner token={token} />

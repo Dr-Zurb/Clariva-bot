@@ -25,7 +25,7 @@ interface InstagramPausePanelProps {
 }
 
 /**
- * Pause Instagram receptionist — lives on Integrations (SR-D4).
+ * Pause Instagram automated replies — lives on Integrations (SR-D4).
  */
 export function InstagramPausePanel({ token }: InstagramPausePanelProps) {
   const {
@@ -68,7 +68,7 @@ export function InstagramPausePanel({ token }: InstagramPausePanelProps) {
         className="rounded-lg border border-border bg-card p-4 text-sm text-muted-foreground"
         aria-busy="true"
       >
-        Loading receptionist settings…
+        Loading automated reply settings…
       </div>
     );
   }
@@ -99,7 +99,7 @@ export function InstagramPausePanel({ token }: InstagramPausePanelProps) {
       aria-labelledby="ig-pause-heading"
     >
       <h3 id="ig-pause-heading" className="text-sm font-semibold text-foreground">
-        Receptionist pause
+        Automated replies
       </h3>
       {saveError ? (
         <p className="text-sm text-destructive" role="status">
@@ -117,18 +117,18 @@ export function InstagramPausePanel({ token }: InstagramPausePanelProps) {
         />
         <span>
           <span className="font-medium text-foreground">
-            Pause Instagram receptionist (human handoff)
+            Pause automated replies
           </span>
           <span className="mt-1 block text-sm text-muted-foreground">
-            When on, automated DMs stop and people get a short notice that a
-            person will reply when possible. You still get lead emails.
+            When on, automated replies stop. People who message get a short
+            notice that messages are paused.
           </span>
         </span>
       </label>
       <div className="pl-7">
         <FieldLabel
           htmlFor="instagram_receptionist_pause_message"
-          tooltip="Optional — overrides the default handoff sentence."
+          tooltip="Optional. Replaces the default pause message."
         >
           Custom pause message (optional)
         </FieldLabel>
@@ -140,7 +140,7 @@ export function InstagramPausePanel({ token }: InstagramPausePanelProps) {
             setForm((p) => ({ ...p, pauseMessage: e.target.value }))
           }
           maxLength={500}
-          placeholder="Leave blank to use the default polite handoff text"
+          placeholder="Leave blank to use the default pause message"
           disabled={!form.paused}
           className={settingsFieldClassName}
         />

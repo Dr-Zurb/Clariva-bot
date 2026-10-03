@@ -25,7 +25,7 @@ const cards = [
   {
     href: "/dashboard/settings/integrations",
     label: "Integrations",
-    description: "Connect Instagram and control the receptionist",
+    description: "Connect Instagram and control automated replies",
     icon: <Plug className="h-6 w-6" aria-hidden />,
   },
   {

@@ -192,7 +192,7 @@ export default function InstagramConnect({ token }: InstagramConnectProps) {
       <h2 className="font-semibold text-gray-900">Instagram</h2>
       <p className="mt-1 text-sm text-gray-600">
         Connect your Instagram professional account (Business or Creator) to
-        receive patient DMs and manage appointments. No Facebook Page required.
+        receive messages and send automated replies. No Facebook Page required.
       </p>
       {message && (
         <div
