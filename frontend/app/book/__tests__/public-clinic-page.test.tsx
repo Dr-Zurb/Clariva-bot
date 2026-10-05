@@ -126,7 +126,7 @@ describe("Public clinic booking page", () => {
   });
 
   it("passes ?c= as conversationToken", async () => {
-    search = "c=chat-token";
+    search = "c=chat-token&for=visit";
     postPublicClinicCheckout.mockResolvedValue({
       data: {
         paymentUrl: null,
@@ -183,6 +183,29 @@ describe("Public clinic booking page", () => {
     expect(screen.getByText(/Doctor is available/)).toBeInTheDocument();
     expect(screen.getByText(/Average visit is 10 min/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "10:00" })).not.toBeInTheDocument();
+  });
+
+  it("opens a menu from a chat link, and the visit form when for=visit", async () => {
+    search = "c=abc";
+    const { unmount } = render(<PublicClinicBookPage slug="city-clinic" />);
+    expect(
+      await screen.findByRole("link", { name: "New visit / revisit / follow-up" })
+    ).toHaveAttribute("href", "/d/city-clinic?c=abc&for=visit");
+    expect(screen.getByRole("link", { name: "Check availability" })).toHaveAttribute(
+      "href",
+      "/d/city-clinic?c=abc&for=times"
+    );
+    expect(screen.getByRole("link", { name: "Change or cancel a visit" })).toHaveAttribute(
+      "href",
+      "/d/city-clinic?c=abc&for=change"
+    );
+    expect(screen.getByText("This page does not give medical advice.")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Full name")).not.toBeInTheDocument();
+    unmount();
+
+    search = "c=abc&for=visit";
+    render(<PublicClinicBookPage slug="city-clinic" />);
+    expect(await screen.findByLabelText("Full name")).toBeInTheDocument();
   });
 
   it("lists a visit booked from this chat", async () => {

@@ -17,8 +17,10 @@ describe("booking page purpose", () => {
     expect(bookingPageTitle("visit", true)).toBe("Reschedule Appointment");
   });
 
-  it("drops for= and keeps the chat token", () => {
-    expect(newVisitPath("/d/city-clinic", "c=abc&for=change")).toBe("/d/city-clinic?c=abc");
-    expect(newVisitPath("/d/city-clinic", "for=times")).toBe("/d/city-clinic");
+  it("opens the new-visit form and keeps the chat token", () => {
+    expect(newVisitPath("/d/city-clinic", "c=abc&for=change")).toBe(
+      "/d/city-clinic?c=abc&for=visit"
+    );
+    expect(newVisitPath("/d/city-clinic", "for=times")).toBe("/d/city-clinic?for=visit");
   });
 });

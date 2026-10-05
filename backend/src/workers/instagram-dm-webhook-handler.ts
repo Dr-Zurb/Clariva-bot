@@ -31,9 +31,10 @@ import {
 import type { InstagramWebhookPayload, WebhookProvider } from '../types/webhook';
 import { buildNonTextAckMessage, buildThrottleAckMessage } from '../utils/dm-copy';
 import { getDoctorSettings } from '../services/doctor-settings-service';
+import { getConnectedInstagramDisplayName } from '../services/instagram-connect-service';
 import { buildPublicClinicPageUrl } from '../utils/booking-page-url';
 import { deleteUnsentMessage } from '../services/message-service';
-import { renderInstagramVisitReply } from '../utils/instagram-visit-replies';
+import { renderInstagramContinueReply } from '../utils/instagram-visit-replies';
 import {
   resolveTurnLanguage,
   type ConversationLanguage,
@@ -44,15 +45,20 @@ export const DEFAULT_INSTAGRAM_RECEPTIONIST_PAUSE_MESSAGE = DEFAULT_RECEPTIONIST
 
 async function instagramNonTextReply(
   doctorId: string | null,
-  language: ConversationLanguage
+  correlationId: string
 ): Promise<string> {
   if (!doctorId) {
-    return renderInstagramVisitReply({ kind: 'non_text', language });
+    return renderInstagramContinueReply({});
   }
   const settings = await getDoctorSettings(doctorId);
-  return renderInstagramVisitReply({
-    kind: 'non_text',
-    language,
+  let pageName: string | null = null;
+  try {
+    pageName = await getConnectedInstagramDisplayName(doctorId, correlationId);
+  } catch {
+    pageName = null;
+  }
+  return renderInstagramContinueReply({
+    pageName,
     url: buildPublicClinicPageUrl(settings?.public_slug),
   });
 }
@@ -330,7 +336,7 @@ export async function processInstagramDmWebhook(params: {
         const { language } = resolveTurnLanguage(storedLanguage, '');
         const nonTextAck =
           provider === 'instagram'
-            ? await instagramNonTextReply(doctorId, language)
+            ? await instagramNonTextReply(doctorId, correlationId)
             : buildNonTextAckMessage({ language });
         try {
           await channelAdapter.send({ text: nonTextAck }, inbound, { context: 'default' });

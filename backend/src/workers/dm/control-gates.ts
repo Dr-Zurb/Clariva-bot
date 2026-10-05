@@ -36,7 +36,7 @@ import {
   instagramPauseReply,
   instagramStartAck,
   instagramStopAck,
-  renderInstagramVisitReply,
+  renderInstagramContinueReply,
 } from '../../utils/instagram-visit-replies';
 
 /** Minimal recent-turn shape gates read (no channel coupling). */
@@ -133,7 +133,7 @@ export const revokeConsentGate: DmControlGate = {
   rationale:
     'DL-9 / DL-2: Patient consent revocation outranks automation, booking, and doctor pause — must win over everything.',
   fires(ctx) {
-    return ctx.intentResult.intent === 'revoke_consent';
+    return ctx.intentResult.intent === 'revoke_consent' || isRevokeConsentText(ctx.text);
   },
   async handle(ctx) {
     const reply = await handleRevocation(
@@ -169,6 +169,8 @@ export const emergencyGate: DmControlGate = {
   rationale:
     'Intercept acute regex OR classified emergency so intake cannot continue; Meta reply is receptionist FAQ only — no 112, no appointment link (revoke still wins the head chain).',
   fires(ctx) {
+    // Instagram sends one link and does not classify the message.
+    if (ctx.platform === 'instagram') return false;
     // Do not read ctx.inCollection — funnel state must not suppress the intercept.
     return isEmergencyUserMessage(ctx.text) || ctx.intentResult.intent === 'emergency';
   },
@@ -202,6 +204,7 @@ export const openCrisisGate: DmControlGate = {
   rationale:
     'If escalatedAt is still set, intercept vague follow-ups with receptionist FAQ (no 112). Stability allowlist falls through to booking.',
   fires(ctx) {
+    if (ctx.platform === 'instagram') return false;
     if (!isOpenEmergencyCrisis(ctx.state)) return false;
     if (userMessageSignalsPostEmergencyStability(ctx.text)) return false;
     return true;
@@ -220,6 +223,12 @@ export const openCrisisGate: DmControlGate = {
   },
 };
 
+function isRevokeConsentText(text: string): boolean {
+  return /\b(?:delete|erase|forget)\s+my\s+(?:data|information|details)\b|\brevoke(?:\s+my)?\s+consent\b/i.test(
+    text
+  );
+}
+
 function instagramOrSafetyReply(ctx: DmGateContext): string {
   if (ctx.platform !== 'instagram') {
     return resolveSafetyMessage('medical_query', ctx.turnLanguage);
@@ -227,9 +236,8 @@ function instagramOrSafetyReply(ctx: DmGateContext): string {
   const firstReply = !ctx.recentMessages.some(
     (message) => message.sender_type === 'system' || message.sender_type === 'doctor'
   );
-  return renderInstagramVisitReply({
-    kind: 'health',
-    language: ctx.turnLanguage,
+  return renderInstagramContinueReply({
+    url: instagramVisitUrl(ctx),
     includeStopHint: firstReply,
   });
 }
@@ -276,6 +284,9 @@ export const messagingOptOutGate: DmControlGate = {
           lastIntent: ctx.intentResult.intent,
           step: 'responded',
           updatedAt: new Date().toISOString(),
+          ...(ctx.platform === 'instagram'
+            ? { instagramLinkSentAt: new Date().toISOString() }
+            : {}),
         },
       };
     }

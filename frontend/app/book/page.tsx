@@ -35,6 +35,7 @@ import {
   type PublicBookingIntakeField,
 } from "@/lib/public-booking-intake";
 import { ChangeVisitScreen } from "@/components/public-clinic/ChangeVisitScreen";
+import { ChatContinueMenu } from "@/components/public-clinic/ChatContinueMenu";
 import {
   clinicDisplayName,
   PublicClinicFrame,
@@ -540,6 +541,22 @@ function BookPageContent({ slug }: { slug?: string }) {
       <PublicClinicFrame width="md">
         <p className="text-center text-sm font-medium text-red-800">{pageError}</p>
       </PublicClinicFrame>
+    );
+  }
+
+  if (
+    isSlug &&
+    slug?.trim() &&
+    conversationToken &&
+    !(searchParams?.get("for") ?? "").trim() &&
+    mode !== "reschedule"
+  ) {
+    return (
+      <ChatContinueMenu
+        practiceName={practiceName}
+        slug={slug.trim()}
+        code={conversationToken}
+      />
     );
   }
 

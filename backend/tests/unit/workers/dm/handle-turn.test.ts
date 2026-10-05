@@ -120,12 +120,13 @@ describe('executeDmTurn — emergency head gate (rcp-08)', () => {
 
     const result = await executeDmTurn(ctx);
 
-    expect(result.branch).toBe('emergency_safety');
+    expect(result.branch).toBe('greeting_template');
     expect(result.nextState.step).toBe('responded');
     expect(result.nextState.lastIntent).toBe('emergency');
-    expect(result.reply).toContain('Health questions are not answered');
-    expect(result.reply).not.toContain('https://example.com/book');
+    expect(result.reply).toContain('Please continue on this page:');
+    expect(result.reply).toContain('https://example.com/d/clinic');
     expect(result.reply.toLowerCase()).not.toContain('112');
+    expect(result.reply.toLowerCase()).not.toContain('health');
     expect(ctx.runGenerateResponse).not.toHaveBeenCalled();
   });
 
@@ -156,11 +157,13 @@ describe('executeDmTurn — emergency head gate (rcp-08)', () => {
 
     const result = await executeDmTurn(ctx);
 
-    expect(result.branch).toBe('emergency_safety');
+    expect(result.branch).toBe('greeting_template');
+    expect(result.reply).toContain('Please continue on this page:');
+    expect(result.reply.toLowerCase()).not.toContain('112');
     expect(ctx.runGenerateResponse).not.toHaveBeenCalled();
   });
 
-  it('open crisis: vague follow-up stays intercepted as receptionist FAQ, not 112', async () => {
+  it('open crisis on Instagram is the same link, not a health line', async () => {
     const state: ConversationState = {
       step: 'responded',
       collectedFields: [],
@@ -187,9 +190,10 @@ describe('executeDmTurn — emergency head gate (rcp-08)', () => {
 
     const result = await executeDmTurn(ctx);
 
-    expect(result.branch).toBe('emergency_safety');
-    expect(result.reply).toContain('Health questions are not answered');
-    expect(result.reply).not.toContain('https://example.com/book');
+    expect(result.branch).toBe('greeting_template');
+    expect(result.reply).toContain('Please continue on this page:');
+    expect(result.reply).toContain('https://example.com/d/clinic');
+    expect(result.reply.toLowerCase()).not.toContain('health');
     expect(result.reply.toLowerCase()).not.toContain('112');
     expect(ctx.runGenerateResponse).not.toHaveBeenCalled();
   });
@@ -221,26 +225,26 @@ describe('executeDmTurn — emergency head gate (rcp-08)', () => {
 
     const result = await executeDmTurn(ctx);
 
-    expect(result.branch).toBe('emergency_safety');
+    expect(result.branch).toBe('greeting_template');
     expect(result.nextState.lastIntent).toBe('emergency');
+    expect(result.reply).toContain('Please continue on this page:');
     expect(ctx.runGenerateResponse).not.toHaveBeenCalled();
   });
 
-  it('conflictRecovery forces ai_open_response body with conflict_recovery_ai branch', async () => {
+  it('conflictRecovery forces the link reply with conflict_recovery_ai branch', async () => {
     const ctx = minimalTurnCtx();
 
     const result = await executeDmTurn(ctx, { conflictRecovery: true });
 
     expect(result.branch).toBe('conflict_recovery_ai');
-    expect(result.reply).toContain('Hi, please choose from the following:');
-    expect(result.reply).toContain('1. New visit / revisit / follow-up');
-    expect(result.reply).not.toMatch(/automated/i);
-    expect(result.reply).not.toContain('https://');
+    expect(result.reply).toContain('Please continue on this page:');
+    expect(result.reply).toContain('https://example.com/d/clinic');
+    expect(result.reply).toContain('Reply STOP to stop these automated replies.');
     expect(result.reply).not.toContain('Halo Aid');
     expect(ctx.runGenerateResponse).not.toHaveBeenCalled();
   });
 
-  it('SAFETY-01: acute emergency preempts receptionist pause', async () => {
+  it('SAFETY-01: a paused clinic stays paused, including on a symptom', async () => {
     const state: ConversationState = {
       step: 'responded',
       collectedFields: [],
@@ -271,8 +275,9 @@ describe('executeDmTurn — emergency head gate (rcp-08)', () => {
 
     const result = await executeDmTurn(ctx);
 
-    expect(result.branch).toBe('emergency_safety');
-    expect(result.nextState.lastIntent).toBe('emergency');
+    expect(result.branch).toBe('receptionist_paused');
+    expect(result.reply).toBe('Messages are paused here.');
+    expect(result.reply.toLowerCase()).not.toContain('health');
     expect(ctx.runGenerateResponse).not.toHaveBeenCalled();
   });
 

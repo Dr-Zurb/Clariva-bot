@@ -464,6 +464,8 @@ export interface ConversationState {
   collectedFields?: string[];
   /** Timestamp of last state update (ISO string) */
   updatedAt?: string;
+  /** Instagram link reply. Another link waits until an hour after this. */
+  instagramLinkSentAt?: string;
   /** rcp-16: Catalog match, staff review, finalized selection. */
   serviceMatch?: ServiceMatchState;
   /** rcp-18: Booking / collection fields. */

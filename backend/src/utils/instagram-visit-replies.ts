@@ -19,6 +19,28 @@ import {
   isOpsPaymentFaqUserMessage,
   isThanksOnlyUserMessage,
 } from './instagram-faq-copy';
+import { instagramAccountNameForGreeting } from './instagram-greeting-copy';
+
+const CONTINUE_STOP = 'Reply STOP to stop these automated replies.';
+
+/** One fixed English link. The name is the connected Instagram profile name. */
+export function renderInstagramContinueReply(input: {
+  pageName?: string | null;
+  url?: string | null;
+  includeStopHint?: boolean;
+}): string {
+  const name = instagramAccountNameForGreeting(input.pageName);
+  const lead = name ? `Please continue on ${name}'s page:` : 'Please continue on this page:';
+  const url = input.url?.trim() ?? '';
+  const lines = url ? [lead, url] : [lead.replace(/:$/, '.')];
+  if (input.includeStopHint) lines.push(CONTINUE_STOP);
+  return lines.join('\n');
+}
+
+/** Thanks, ok, and emoji. A mix such as "ok thanks" is the same. */
+export function isInstagramQuietInbound(text: string): boolean {
+  return isInstagramChatter(text.trim());
+}
 
 export type InstagramVisitKind =
   | 'silent'
@@ -333,12 +355,7 @@ export function instagramStartAck(input: {
     hi: { native: 'Messages चालू हैं।', latin: 'Messages chalu hain.' },
     pa: { native: 'Messages ਚਾਲੂ ਹਨ।', latin: 'Messages chalu han.' },
   });
-  const menu = renderInstagramVisitReply({
-    kind: 'menu',
-    language: input.language,
-    url: input.url,
-  });
-  return `${on}\n${menu}`;
+  return `${on}\n${renderInstagramContinueReply({ url: input.url })}`;
 }
 
 export function instagramPauseReply(language: ConversationLanguage): string {
@@ -360,22 +377,7 @@ export function instagramCommentPrivateReply(input: {
   feeAmount?: string | null;
   askedFee: boolean;
 }): string {
-  const visits = renderInstagramVisitReply({
-    kind: 'visits',
-    language: input.language,
-    url: input.url,
-  });
-  if (input.askedFee && input.feeAmount) {
-    return `Visit fee: ${input.feeAmount}.\n${visits}`;
-  }
-  if (input.askedFee) {
-    return renderInstagramVisitReply({
-      kind: 'fees',
-      language: input.language,
-      url: input.url,
-    });
-  }
-  return visits;
+  return renderInstagramContinueReply({ url: input.url });
 }
 
 export function singleVisitFeeAmount(

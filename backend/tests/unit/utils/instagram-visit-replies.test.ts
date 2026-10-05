@@ -2,6 +2,7 @@ import { describe, expect, it } from '@jest/globals';
 import {
   classifyInstagramVisitTurn,
   instagramStopAck,
+  renderInstagramContinueReply,
   renderInstagramVisitReply,
 } from '../../../src/utils/instagram-visit-replies';
 
@@ -23,6 +24,30 @@ function rendered(kind: Parameters<typeof renderInstagramVisitReply>[0]['kind'])
     feeAmount: '₹500',
   });
 }
+
+describe('instagram continue reply', () => {
+  it('names the connected page and adds STOP only when asked', () => {
+    expect(
+      renderInstagramContinueReply({
+        pageName: 'Halo Aid Test',
+        url: URL,
+        includeStopHint: true,
+      })
+    ).toBe(
+      [
+        "Please continue on Halo Aid Test's page:",
+        URL,
+        'Reply STOP to stop these automated replies.',
+      ].join('\n')
+    );
+    expect(renderInstagramContinueReply({ url: URL })).toBe(
+      ['Please continue on this page:', URL].join('\n')
+    );
+    expect(renderInstagramContinueReply({ pageName: '12345', url: URL })).toContain(
+      'Please continue on this page:'
+    );
+  });
+});
 
 describe('instagram visit replies', () => {
   it('uses visit for a book, token, or appointment ask', () => {

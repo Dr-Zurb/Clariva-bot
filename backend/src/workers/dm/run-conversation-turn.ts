@@ -437,20 +437,26 @@ export async function runConversationTurn(
   }
 
   const intentStartedAt = Date.now();
-  const classifyCtx = buildClassifyIntentContext(state, recentMessages);
-  let intentResult = await classifyIntent(
-    text,
-    correlationId,
-    classifyCtx ? { classifyContext: classifyCtx } : undefined
-  );
-  intentResult = applyIntentPostClassificationPolicy(intentResult, text, state);
-  const intentBeforeEmergencyPolicy = intentResult.intent;
-  intentResult = applyEmergencyIntentPostPolicy(intentResult, text, recentMessages, state);
-  if (intentBeforeEmergencyPolicy === 'emergency' && intentResult.intent === 'medical_query') {
-    logDmEmergencyIntentDowngraded({
+  let intentResult: IntentDetectionResult;
+  if (inbound.channel === 'instagram') {
+    // The reply does not depend on the words. Do not send the text to a model.
+    intentResult = { intent: 'unknown', confidence: 0 };
+  } else {
+    const classifyCtx = buildClassifyIntentContext(state, recentMessages);
+    intentResult = await classifyIntent(
+      text,
       correlationId,
-      reason: 'post_escalation_stability',
-    });
+      classifyCtx ? { classifyContext: classifyCtx } : undefined
+    );
+    intentResult = applyIntentPostClassificationPolicy(intentResult, text, state);
+    const intentBeforeEmergencyPolicy = intentResult.intent;
+    intentResult = applyEmergencyIntentPostPolicy(intentResult, text, recentMessages, state);
+    if (intentBeforeEmergencyPolicy === 'emergency' && intentResult.intent === 'medical_query') {
+      logDmEmergencyIntentDowngraded({
+        correlationId,
+        reason: 'post_escalation_stability',
+      });
+    }
   }
   const intentMs = Date.now() - intentStartedAt;
 

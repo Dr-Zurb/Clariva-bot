@@ -15,10 +15,10 @@ export function bookingPageTitle(purpose: BookingPagePurpose, reschedule: boolea
   return "New visit";
 }
 
-/** Same page, without `for`, so the change screen can open a new visit. */
+/** Same page, opened on the new-visit form. A chat link with no `for` is the menu. */
 export function newVisitPath(path: string, search: string): string {
   const params = new URLSearchParams(search.startsWith("?") ? search.slice(1) : search);
-  params.delete("for");
+  params.set("for", "visit");
   const q = params.toString();
   return q ? `${path}?${q}` : path;
 }

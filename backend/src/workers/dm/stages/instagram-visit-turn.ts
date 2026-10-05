@@ -1,54 +1,17 @@
 /**
- * Instagram-only signpost. Facebook keeps the stage router.
+ * Instagram-only signpost. One link, then silence for an hour.
+ * Facebook keeps the stage router.
  */
 
+import { getConnectedInstagramDisplayName } from '../../../services/instagram-connect-service';
 import { mintVisitPageLink } from '../../../services/visit-page-link-service';
-import type { BookingPageFor } from '../../../utils/booking-page-url';
-import { isTeleconsultCatalogAuthoritative } from '../../../utils/consultation-fees';
-import { instagramAddressToShare } from '../../../utils/instagram-faq-copy';
 import {
-  classifyInstagramVisitTurn,
-  renderInstagramVisitReply,
-  singleVisitFeeAmount,
-  type InstagramVisitKind,
+  isInstagramQuietInbound,
+  renderInstagramContinueReply,
 } from '../../../utils/instagram-visit-replies';
-import type { DmHandlerBranch } from '../../../types/dm-instrumentation';
 import type { DmTurnContext, DmTurnResult } from '../stage-router';
 
-function branchFor(kind: InstagramVisitKind): DmHandlerBranch {
-  switch (kind) {
-    case 'health':
-      return 'medical_safety';
-    case 'fee':
-    case 'fees':
-      return 'fee_deterministic_idle';
-    case 'visits':
-      return 'book_responded';
-    case 'change':
-      return 'reschedule_appointment_intent';
-    case 'cancel':
-      return 'cancel_appointment_intent';
-    case 'view':
-      return 'check_appointment_status';
-    case 'silent':
-    case 'menu':
-    case 'times':
-    case 'payment':
-    case 'address':
-    case 'address_hidden':
-    case 'online':
-    case 'non_text':
-      return 'greeting_template';
-    default:
-      return 'greeting_template';
-  }
-}
-
-function bookingPurpose(kind: InstagramVisitKind): BookingPageFor | undefined {
-  if (kind === 'times') return 'times';
-  if (kind === 'change' || kind === 'cancel' || kind === 'view') return 'change';
-  return undefined;
-}
+const LINK_REPLY_GAP_MS = 60 * 60 * 1000;
 
 function isFirstAutomatedReply(ctx: DmTurnContext): boolean {
   return !ctx.recentMessages.some(
@@ -56,45 +19,65 @@ function isFirstAutomatedReply(ctx: DmTurnContext): boolean {
   );
 }
 
-export async function handleInstagramVisitTurn(ctx: DmTurnContext): Promise<DmTurnResult> {
-  const address = instagramAddressToShare(ctx.doctorSettings);
-  const feeAmount = singleVisitFeeAmount(ctx.doctorSettings);
-  const kind = classifyInstagramVisitTurn({
-    text: ctx.text,
-    intent: ctx.intentResult.intent,
-    signalsFeePricing: ctx.signalsFeePricing,
-    hasSingleFee: Boolean(feeAmount),
-    hasSharedAddress: Boolean(address),
-    onlineOnly: isTeleconsultCatalogAuthoritative({
-      service_offerings_json: ctx.doctorSettings?.service_offerings_json,
-      appointment_fee_currency: ctx.doctorSettings?.appointment_fee_currency,
-    }),
-  });
-  const url = await mintVisitPageLink({
-    conversationId: ctx.conversation.id,
-    doctorId: ctx.doctorId,
-    publicSlug: ctx.doctorSettings?.public_slug,
-    purpose: bookingPurpose(kind),
-    correlationId: ctx.correlationId,
-  });
-  const firstReply = isFirstAutomatedReply(ctx);
-  const reply = renderInstagramVisitReply({
-    kind,
-    language: ctx.turnLanguage,
-    url,
-    address,
-    feeAmount,
-    greet: kind === 'menu' && firstReply,
-    includeStopHint: kind !== 'silent' && firstReply,
-  });
+function repliedWithinHour(ctx: DmTurnContext): boolean {
+  const stamped = ctx.state.instagramLinkSentAt;
+  if (typeof stamped === 'string') {
+    const at = new Date(stamped).getTime();
+    if (Number.isFinite(at) && Date.now() - at < LINK_REPLY_GAP_MS) return true;
+  }
+  let latest = 0;
+  for (const message of ctx.recentMessages) {
+    if (message.sender_type !== 'system' && message.sender_type !== 'doctor') continue;
+    const at = new Date(message.created_at).getTime();
+    if (Number.isFinite(at) && at > latest) latest = at;
+  }
+  if (latest === 0) return false;
+  return Date.now() - latest < LINK_REPLY_GAP_MS;
+}
+
+function quietTurn(ctx: DmTurnContext): DmTurnResult {
   return {
-    branch: branchFor(kind),
-    reply,
+    branch: 'greeting_template',
+    reply: '',
     nextState: {
       ...ctx.state,
       lastIntent: ctx.intentResult.intent,
       step: 'responded',
       updatedAt: new Date().toISOString(),
+    },
+  };
+}
+
+export async function handleInstagramVisitTurn(ctx: DmTurnContext): Promise<DmTurnResult> {
+  if (isInstagramQuietInbound(ctx.text) || repliedWithinHour(ctx)) {
+    return quietTurn(ctx);
+  }
+  const url = await mintVisitPageLink({
+    conversationId: ctx.conversation.id,
+    doctorId: ctx.doctorId,
+    publicSlug: ctx.doctorSettings?.public_slug,
+    correlationId: ctx.correlationId,
+  });
+  let pageName: string | null = null;
+  try {
+    pageName = await getConnectedInstagramDisplayName(ctx.doctorId, ctx.correlationId);
+  } catch {
+    pageName = null;
+  }
+  const sentAt = new Date().toISOString();
+  return {
+    branch: 'greeting_template',
+    reply: renderInstagramContinueReply({
+      pageName,
+      url,
+      includeStopHint: isFirstAutomatedReply(ctx),
+    }),
+    nextState: {
+      ...ctx.state,
+      lastIntent: ctx.intentResult.intent,
+      step: 'responded',
+      updatedAt: sentAt,
+      instagramLinkSentAt: sentAt,
     },
   };
 }
