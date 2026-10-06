@@ -12,7 +12,7 @@ import { TrustBand } from "@/components/marketing/TrustBand";
 
 const TITLE = "Halo Aid — Turn your audience into your practice";
 const DESCRIPTION =
-  "Bookings, teleconsults, OPD, records, and prescriptions in one place. Turn Instagram DMs into visits — or just run your clinic.";
+  "Every Instagram DM gets one link to your page. Bookings, teleconsults, OPD, records, and prescriptions stay there.";
 
 // `title.absolute` keeps the landing title clean (no "· Halo Aid" template
 // suffix) since the headline already leads with the brand name.

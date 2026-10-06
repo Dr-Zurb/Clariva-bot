@@ -50,9 +50,9 @@ export function Hero() {
             <span className="text-[hsl(var(--halo-blue))]">your practice</span>.
           </h1>
           <p className="mt-5 max-w-lg text-lg text-[hsl(var(--halo-ink))]/70">
-            More patients seen — Halo Aid answers every DM and comment, books
-            the visit — teleconsult or in-clinic — then keeps the record, the
-            prescription, and the follow-up in one place.
+            Every Instagram DM gets one link to your page. The visit is booked
+            there — teleconsult or in-clinic — and the record, the
+            prescription, and the follow-up stay in one place.
           </p>
           <div className="mt-8 flex flex-wrap items-center gap-3">
             <Button asChild size="lg" className={haloPrimaryButton}>
@@ -72,7 +72,7 @@ export function Hero() {
           </div>
         </div>
 
-        {/* Visual: DM → booked visit → record */}
+        {/* Visual: DM → one page link → visit on the page */}
         <div className="relative mx-auto w-full max-w-md">
           <div
             aria-hidden
@@ -87,14 +87,20 @@ export function Hero() {
                 <MessageCircle className="h-4 w-4" />
               </span>
               <p className="rounded-2xl rounded-tl-sm bg-[hsl(var(--halo-mist))] px-4 py-2 text-sm text-[hsl(var(--halo-ink))]">
-                Hi doctor! Do you have any slots this week?
+                Do you have any slots this week?
               </p>
             </div>
             <div className="flex justify-end">
-              <p className="halo-gradient max-w-[80%] rounded-2xl rounded-tr-sm px-4 py-2 text-sm text-white shadow-sm">
-                Yes — I can see you Thursday at 4:30 PM. Tap to confirm.
+              <p className="halo-gradient max-w-[85%] rounded-2xl rounded-tr-sm px-4 py-2 text-sm text-white shadow-sm">
+                Please continue on your page:
+                <span className="mt-1 block font-medium underline underline-offset-2">
+                  haloaid.com/d/your-name
+                </span>
               </p>
             </div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-[hsl(var(--halo-ink))]/45">
+              On your page
+            </p>
             <div className="flex items-center gap-3 rounded-xl border border-[hsl(var(--halo-blue))]/15 bg-white p-3">
               <span
                 aria-hidden

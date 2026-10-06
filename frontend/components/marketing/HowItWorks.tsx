@@ -10,17 +10,17 @@ const STEPS = [
   {
     icon: MessageCircle,
     title: "They message you",
-    body: "Patients reach out on Instagram — in your DMs and under your posts, day or night.",
+    body: "Patients message your Instagram account, day or night.",
   },
   {
     icon: Sparkles,
-    title: "Halo Aid answers",
-    body: "Halo Aid reads the intent and replies instantly, in your voice.",
+    title: "Halo Aid sends your page",
+    body: "One reply: a link to your page. The message itself is not answered.",
   },
   {
     icon: CalendarCheck,
-    title: "The visit is booked",
-    body: "The visit is scheduled and confirmed — teleconsult or in-clinic.",
+    title: "They book on your page",
+    body: "The visit is scheduled there — teleconsult or in-clinic.",
   },
   {
     icon: Video,

@@ -16,8 +16,8 @@ const FEATURE_GROUPS = [
     features: [
       {
         icon: MessageSquare,
-        title: "Smart capture",
-        body: "Pull patient intent from Instagram DMs and comments automatically.",
+        title: "One page link",
+        body: "Every Instagram DM gets one link to your page.",
       },
       {
         icon: Inbox,

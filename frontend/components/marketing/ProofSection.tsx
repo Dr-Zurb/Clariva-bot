@@ -21,7 +21,7 @@ export function ProofSection() {
             See which post brought you patients.
           </h2>
           <p className="mt-4 text-lg text-[hsl(var(--halo-ink))]/70">
-            Every reel and every comment thread, tracked from the first message
+            Every reel, tracked from the first message
             to the completed visit. You&apos;ll know which content fills your
             calendar, and which doesn&apos;t.
           </p>
