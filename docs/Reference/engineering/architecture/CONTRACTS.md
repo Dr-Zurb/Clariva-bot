@@ -398,6 +398,8 @@ Response: X-Correlation-ID: 550e8400-e29b-41d4-a716-446655440000
 | `bookingAllowed` | boolean | `false` only when the doctor is not license-verified. |
 | `bookingBlockedReason` | `doctor_not_verified` | Present when `bookingAllowed` is `false`. |
 | `serviceCatalog` | object | Same catalog shape as the token page, when the practice has an active catalog. |
+| `clinicAddress` | string | Work address, shown to patients as the clinic address. Omitted when blank. |
+| `specialty` | string | Practice specialty. Omitted when blank. |
 
 No `conversationId`, patient id, name, phone, reason, or chat booking hints.
 

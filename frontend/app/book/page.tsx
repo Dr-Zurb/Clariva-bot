@@ -115,6 +115,8 @@ function BookPageContent({ slug }: { slug?: string }) {
   );
 
   const [practiceName, setPracticeName] = useState<string>("");
+  const [clinicAddress, setClinicAddress] = useState<string>("");
+  const [specialty, setSpecialty] = useState<string>("");
   const [mode, setMode] = useState<"book" | "reschedule">("book");
   const [opdMode, setOpdMode] = useState<OpdModeApi>("slot");
   const [dayModes, setDayModes] = useState<Record<string, OpdModeApi>>({});
@@ -207,6 +209,14 @@ function BookPageContent({ slug }: { slug?: string }) {
         setChatVisits(visitsRes.data.visits ?? []);
         if ("timezone" in res.data && res.data.timezone) setTimezone(res.data.timezone);
         setPracticeName(res.data.practiceName || "Book Appointment");
+        setClinicAddress(
+          "clinicAddress" in res.data && typeof res.data.clinicAddress === "string"
+            ? res.data.clinicAddress
+            : ""
+        );
+        setSpecialty(
+          "specialty" in res.data && typeof res.data.specialty === "string" ? res.data.specialty : ""
+        );
         setMode(res.data.mode ?? "book");
         setOpdMode(res.data.opdMode ?? "slot");
         if ("dayModes" in res.data && res.data.dayModes) {
@@ -556,6 +566,8 @@ function BookPageContent({ slug }: { slug?: string }) {
         practiceName={practiceName}
         slug={slug.trim()}
         code={conversationToken}
+        clinicAddress={clinicAddress}
+        specialty={specialty}
       />
     );
   }
@@ -622,6 +634,14 @@ function BookPageContent({ slug }: { slug?: string }) {
               : "This day is by time. Pick a time for your visit."}
         </p>
         <p className="mt-3 text-sm text-gray-700">{SCHEDULED_VISIT_NOTICE}</p>
+        {isSlug && clinicAddress.trim() ? (
+          <div className="mt-4">
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Clinic address
+            </p>
+            <p className="mt-1 text-sm leading-6 text-foreground">{clinicAddress.trim()}</p>
+          </div>
+        ) : null}
 
         {serviceCatalog && mode === "book" && serviceCatalog.services.length > 0 && (
           <section className="mt-6 space-y-4" aria-labelledby="svc-heading">

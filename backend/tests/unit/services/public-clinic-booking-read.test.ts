@@ -88,7 +88,28 @@ describe('public clinic slug read', () => {
     expect(page.bookingBlockedReason).toBe('doctor_not_verified');
     expect(page).not.toHaveProperty('conversationId');
     expect(page).not.toHaveProperty('patientId');
+    expect(page).not.toHaveProperty('clinicAddress');
+    expect(page).not.toHaveProperty('specialty');
     expect(JSON.stringify(page)).not.toContain(DOCTOR_B);
+  });
+
+  it('includes the work address as the clinic address', () => {
+    const page = buildPublicClinicPageInfo({
+      doctorId: DOCTOR_A,
+      settings: {
+        practice_name: 'City Clinic',
+        timezone: 'Asia/Kolkata',
+        opd_mode: 'slot',
+        address_summary: '  12 Market Road  ',
+        specialty: '  General physician  ',
+      } as never,
+      opdMode: 'slot',
+      doctorVerified: true,
+    });
+
+    expect(page.clinicAddress).toBe('12 Market Road');
+    expect(page.specialty).toBe('General physician');
+    expect(page.bookingAllowed).toBe(true);
   });
 
   it('keeps token booking queries token-only', () => {

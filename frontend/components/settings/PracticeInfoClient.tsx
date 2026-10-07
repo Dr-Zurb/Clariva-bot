@@ -37,14 +37,7 @@ type PracticeInfoForm = {
   specialty: string;
   qualifications: string;
   address_summary: string;
-  share_address_on_instagram: boolean;
 };
-
-function shareAddressOnInstagram(s: DoctorSettings): boolean {
-  if (s.share_address_on_instagram === false) return false;
-  if (s.share_address_on_instagram === true) return true;
-  return Boolean(s.address_summary?.trim());
-}
 
 function toForm(s: DoctorSettings): PracticeInfoForm {
   return {
@@ -54,7 +47,6 @@ function toForm(s: DoctorSettings): PracticeInfoForm {
     specialty: s.specialty ?? "",
     qualifications: s.qualifications ?? "",
     address_summary: s.address_summary ?? "",
-    share_address_on_instagram: shareAddressOnInstagram(s),
   };
 }
 
@@ -91,7 +83,7 @@ export function PracticeInfoClient({ token }: PracticeInfoClientProps) {
       specialty: form.specialty.trim() || null,
       qualifications: form.qualifications.trim() || null,
       address_summary: form.address_summary.trim() || null,
-      share_address_on_instagram: form.share_address_on_instagram,
+      share_address_on_instagram: Boolean(form.address_summary.trim()),
     };
     await save(payload);
   }
@@ -113,7 +105,7 @@ export function PracticeInfoClient({ token }: PracticeInfoClientProps) {
   return (
     <SettingsPageShell
       title="Practice info"
-      description="Practice name, timezone, specialty, qualifications, and address. Prices and currency are under Pricing."
+      description="Practice name, timezone, specialty, qualifications, and work address. Prices and currency are under Pricing."
       isLoading={isLoading || !form}
       loadError={loadError}
       onRetry={() => void refetch()}
@@ -234,9 +226,9 @@ export function PracticeInfoClient({ token }: PracticeInfoClientProps) {
           <div>
             <FieldLabel
               htmlFor="address_summary"
-              tooltip="Printed on the prescription. Instagram says it only when the box below is on."
+              tooltip="The clinic where you see patients. Not a home address. Printed on the prescription, and shown on your page as the clinic address."
             >
-              Address summary
+              Work address
             </FieldLabel>
             <Input
               id="address_summary"
@@ -246,31 +238,13 @@ export function PracticeInfoClient({ token }: PracticeInfoClientProps) {
                 setForm((p) => ({ ...p, address_summary: e.target.value }))
               }
               maxLength={500}
-              placeholder="e.g. 123 Main St, City"
+              placeholder="e.g. 12 Market Road, Batala"
               className="mt-1"
             />
-            <label className="mt-3 flex items-start gap-2 text-sm text-foreground">
-              <input
-                type="checkbox"
-                checked={form.share_address_on_instagram}
-                onChange={(e) =>
-                  setForm((p) => ({
-                    ...p,
-                    share_address_on_instagram: e.target.checked,
-                  }))
-                }
-                className="mt-0.5 h-4 w-4 rounded border-input text-primary focus:ring-ring"
-              />
-              <span>
-                <span className="font-medium">
-                  Show this address when someone asks on Instagram
-                </span>
-                <span className="mt-1 block text-muted-foreground">
-                  The prescription still prints this address. Instagram says it
-                  only when this is on.
-                </span>
-              </span>
-            </label>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Patients who book an in-clinic visit see this as the clinic
+              address. Leave it blank if you do not see patients at a clinic.
+            </p>
           </div>
           <SaveButton
             isDirty={isDirty}

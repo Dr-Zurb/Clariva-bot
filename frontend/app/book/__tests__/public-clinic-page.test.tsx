@@ -187,10 +187,30 @@ describe("Public clinic booking page", () => {
 
   it("opens a menu from a chat link, and the visit form when for=visit", async () => {
     search = "c=abc";
+    getPublicClinicPageInfo.mockResolvedValue({
+      data: {
+        doctorId: "11111111-1111-4111-8111-111111111111",
+        practiceName: "City Clinic",
+        timezone: "Asia/Kolkata",
+        mode: "book",
+        opdMode: "slot",
+        bookingAllowed: true,
+        clinicAddress: "12 Market Road",
+        specialty: "General physician",
+      },
+    });
     const { unmount } = render(<PublicClinicBookPage slug="city-clinic" />);
+    expect(await screen.findByRole("heading", { name: "City Clinic" })).toBeInTheDocument();
+    expect(screen.getByText("General physician")).toBeInTheDocument();
     expect(
-      await screen.findByRole("link", { name: "New visit / revisit / follow-up" })
+      screen.getByText("Book a visit, check times, or change a visit you already have.")
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "New visit / revisit / follow-up" })
     ).toHaveAttribute("href", "/d/city-clinic?c=abc&for=visit");
+    expect(screen.getByText("Clinic address")).toBeInTheDocument();
+    expect(screen.getByText("12 Market Road")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Continue" })).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Check availability" })).toHaveAttribute(
       "href",
       "/d/city-clinic?c=abc&for=times"

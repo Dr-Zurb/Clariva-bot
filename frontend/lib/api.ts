@@ -1619,6 +1619,10 @@ export interface PublicClinicPageInfoData {
   bookingAllowed?: boolean;
   bookingBlockedReason?: BookingBlockedReasonApi;
   serviceCatalog?: BookingPageCatalogApi | null;
+  /** Work address, shown as the clinic address. Omitted when the practice left it blank. */
+  clinicAddress?: string;
+  /** Practice specialty. Omitted when blank. */
+  specialty?: string;
 }
 
 export async function getPublicClinicPageInfo(

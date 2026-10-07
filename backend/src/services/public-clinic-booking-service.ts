@@ -43,6 +43,10 @@ export type PublicClinicPageInfo = {
   serviceCatalog?: PublicClinicCatalogPayload;
   /** Mode for each bookable day, keyed by YYYY-MM-DD in the practice timezone. */
   dayModes?: Record<string, OpdMode>;
+  /** Work address, shown to patients as the clinic address. Omitted when blank. */
+  clinicAddress?: string;
+  /** Practice specialty. Omitted when blank. */
+  specialty?: string;
 };
 
 type PublicSlugRow = {
@@ -137,6 +141,8 @@ export function buildPublicClinicPageInfo(input: {
   const practiceName = input.settings?.practice_name?.trim() || 'Halo Aid';
   const timezone = input.settings?.timezone ?? 'Asia/Kolkata';
   const serviceCatalog = publicClinicCatalog(input.settings);
+  const clinicAddress = input.settings?.address_summary?.trim() || '';
+  const specialty = input.settings?.specialty?.trim() || '';
   const bookingAllowed = input.doctorVerified;
   return {
     doctorId: input.doctorId,
@@ -147,6 +153,8 @@ export function buildPublicClinicPageInfo(input: {
     bookingAllowed,
     ...(bookingAllowed ? {} : { bookingBlockedReason: 'doctor_not_verified' as const }),
     ...(serviceCatalog ? { serviceCatalog } : {}),
+    ...(clinicAddress ? { clinicAddress } : {}),
+    ...(specialty ? { specialty } : {}),
   };
 }
 
