@@ -23,7 +23,7 @@ export function MarketingFooter() {
             className="h-7 w-7"
           />
           <p className="text-sm text-[hsl(var(--halo-ink))]/60">
-            Turn your audience into your practice.
+            Social media assistance for doctors.
           </p>
         </div>
         <nav

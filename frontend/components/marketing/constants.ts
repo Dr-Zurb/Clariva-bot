@@ -46,7 +46,6 @@ export type MarketingNavLink = {
 export const NAV_LINKS: readonly MarketingNavLink[] = [
   { href: "/#how-it-works", label: "How it works" },
   { href: "/#features", label: "Features" },
-  { href: "/#what-converts", label: "What converts" },
   { href: CLINICS_HREF, label: "For clinics" },
   { href: "/pricing", label: "Pricing" },
 ];

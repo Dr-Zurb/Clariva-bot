@@ -46,14 +46,32 @@ export function Hero() {
             </Link>
           </div>
           <h1 className="mt-5 text-4xl font-bold leading-[1.1] tracking-tight text-[hsl(var(--halo-navy))] sm:text-5xl">
-            Turn your audience into{" "}
-            <span className="text-[hsl(var(--halo-blue))]">your practice</span>.
+            Social media assistance{" "}
+            <span className="text-[hsl(var(--halo-blue))]">for doctors</span>.
           </h1>
-          <p className="mt-5 max-w-lg text-lg text-[hsl(var(--halo-ink))]/70">
-            Every Instagram DM gets one link to your page. The visit is booked
-            there — teleconsult or in-clinic — and the record, the
-            prescription, and the follow-up stay in one place.
-          </p>
+          <ul className="mt-5 max-w-lg space-y-2 text-base leading-6 text-[hsl(var(--halo-ink))]/75">
+            <li>
+              <span className="font-medium text-[hsl(var(--halo-navy))]">
+                Instagram messages
+              </span>
+              {" — "}
+              every DM gets one link to your page.
+            </li>
+            <li>
+              <span className="font-medium text-[hsl(var(--halo-navy))]">
+                Teleconsultation
+              </span>
+              {" — "}
+              video, voice, or text.
+            </li>
+            <li>
+              <span className="font-medium text-[hsl(var(--halo-navy))]">
+                Records and prescriptions
+              </span>
+              {" — "}
+              kept with the visit.
+            </li>
+          </ul>
           <div className="mt-8 flex flex-wrap items-center gap-3">
             <Button asChild size="lg" className={haloPrimaryButton}>
               <Link href={SIGNUP_HREF}>
