@@ -1,4 +1,4 @@
-/** First screen of /d/:slug. The chat adds `for`. A missing flag is a new visit. */
+/** `for` picks a step on /d/:slug. A missing flag is still "visit" for the form title. The slug page itself shows the practice screen until `for` is set. */
 
 export type BookingPagePurpose = "visit" | "times" | "change";
 

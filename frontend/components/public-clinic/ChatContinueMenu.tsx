@@ -13,12 +13,13 @@ interface ChatContinueMenuProps {
 }
 
 function pageHref(slug: string, code: string, purpose: "visit" | "times" | "change"): string {
-  const params = new URLSearchParams({ c: code, for: purpose });
+  const params = new URLSearchParams({ for: purpose });
+  if (code.trim()) params.set("c", code);
   return `/d/${slug}?${params.toString()}`;
 }
 
 /**
- * First screen of a chat link. The Instagram reply only shares this page.
+ * First screen of /d/:slug. A chat code is optional. `for` opens a step.
  */
 export function ChatContinueMenu({
   practiceName,

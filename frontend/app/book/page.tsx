@@ -557,7 +557,6 @@ function BookPageContent({ slug }: { slug?: string }) {
   if (
     isSlug &&
     slug?.trim() &&
-    conversationToken &&
     !(searchParams?.get("for") ?? "").trim() &&
     mode !== "reschedule"
   ) {

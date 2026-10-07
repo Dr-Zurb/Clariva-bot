@@ -78,7 +78,22 @@ describe("Public clinic booking page", () => {
     });
   });
 
+  it("opens the practice page from the plain clinic link", async () => {
+    render(<PublicClinicBookPage slug="city-clinic" />);
+    expect(await screen.findByRole("heading", { name: "City Clinic" })).toBeInTheDocument();
+    expect(
+      screen.getByText("Book a visit, check times, or change a visit you already have.")
+    ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "New visit / revisit / follow-up" })).toHaveAttribute(
+      "href",
+      "/d/city-clinic?for=visit"
+    );
+    expect(screen.queryByRole("heading", { name: "New visit" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Full name")).not.toBeInTheDocument();
+  });
+
   it("blocks continue until age and consent are present", async () => {
+    search = "for=visit";
     render(<PublicClinicBookPage slug="city-clinic" />);
     expect(await screen.findByText("City Clinic")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Next opening" })).toBeInTheDocument();
@@ -94,6 +109,7 @@ describe("Public clinic booking page", () => {
   });
 
   it("posts slug checkout fields and omits the conversation token when ?c= is absent", async () => {
+    search = "for=visit";
     postPublicClinicCheckout.mockResolvedValue({
       data: {
         paymentUrl: null,
@@ -147,6 +163,7 @@ describe("Public clinic booking page", () => {
   });
 
   it("shows the queue window and token, and hides the clock grid", async () => {
+    search = "for=visit";
     getPublicClinicPageInfo.mockResolvedValue({
       data: {
         doctorId: "11111111-1111-4111-8111-111111111111",
@@ -207,17 +224,17 @@ describe("Public clinic booking page", () => {
     ).toBeInTheDocument();
     expect(
       screen.getByRole("link", { name: "New visit / revisit / follow-up" })
-    ).toHaveAttribute("href", "/d/city-clinic?c=abc&for=visit");
+    ).toHaveAttribute("href", "/d/city-clinic?for=visit&c=abc");
     expect(screen.getByText("Clinic address")).toBeInTheDocument();
     expect(screen.getByText("12 Market Road")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Continue" })).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Check availability" })).toHaveAttribute(
       "href",
-      "/d/city-clinic?c=abc&for=times"
+      "/d/city-clinic?for=times&c=abc"
     );
     expect(screen.getByRole("link", { name: "Change or cancel a visit" })).toHaveAttribute(
       "href",
-      "/d/city-clinic?c=abc&for=change"
+      "/d/city-clinic?for=change&c=abc"
     );
     expect(screen.getByText("This page does not give medical advice.")).toBeInTheDocument();
     expect(screen.queryByLabelText("Full name")).not.toBeInTheDocument();
