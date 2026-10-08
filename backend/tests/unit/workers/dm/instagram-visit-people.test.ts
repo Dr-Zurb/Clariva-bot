@@ -153,12 +153,13 @@ function turn(
 }
 
 const FIRST = [
+  'Hello.',
   "Please continue on Halo Aid Test's page:",
   LINK,
   'Reply STOP to stop these automated replies.',
 ].join('\n');
 
-const LATER = ["Please continue on Halo Aid Test's page:", LINK].join('\n');
+const LATER = ['Hello.', "Please continue on Halo Aid Test's page:", LINK].join('\n');
 
 function expectContinue(reply: string, first: boolean): void {
   expect(reply).toBe(first ? FIRST : LATER);

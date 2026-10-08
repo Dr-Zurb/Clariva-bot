@@ -110,7 +110,8 @@ export function Hero() {
             </div>
             <div className="flex justify-end">
               <p className="halo-gradient max-w-[85%] rounded-2xl rounded-tr-sm px-4 py-2 text-sm text-white shadow-sm">
-                Please continue on your page:
+                Hello.
+                <span className="mt-1 block">Please continue on your page:</span>
                 <span className="mt-1 block font-medium underline underline-offset-2">
                   haloaid.com/d/your-name
                 </span>

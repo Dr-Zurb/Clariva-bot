@@ -32,7 +32,7 @@ export function renderInstagramContinueReply(input: {
   const name = instagramAccountNameForGreeting(input.pageName);
   const lead = name ? `Please continue on ${name}'s page:` : 'Please continue on this page:';
   const url = input.url?.trim() ?? '';
-  const lines = url ? [lead, url] : [lead.replace(/:$/, '.')];
+  const lines = ['Hello.', ...(url ? [lead, url] : [lead.replace(/:$/, '.')])];
   if (input.includeStopHint) lines.push(CONTINUE_STOP);
   return lines.join('\n');
 }

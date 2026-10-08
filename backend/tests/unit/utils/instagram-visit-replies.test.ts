@@ -35,13 +35,14 @@ describe('instagram continue reply', () => {
       })
     ).toBe(
       [
+        'Hello.',
         "Please continue on Halo Aid Test's page:",
         URL,
         'Reply STOP to stop these automated replies.',
       ].join('\n')
     );
     expect(renderInstagramContinueReply({ url: URL })).toBe(
-      ['Please continue on this page:', URL].join('\n')
+      ['Hello.', 'Please continue on this page:', URL].join('\n')
     );
     expect(renderInstagramContinueReply({ pageName: '12345', url: URL })).toContain(
       'Please continue on this page:'
