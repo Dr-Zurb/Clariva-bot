@@ -21,14 +21,6 @@ import {
 import { resolvePatientForChannelSender } from '../../services/patient-identity-service';
 import { maybeLinkCommentLeadAfterDm } from '../../services/comment-lead-service';
 import {
-  findPatientByIdWithAdmin,
-  setPatientPlatformUsernameIfEmpty,
-} from '../../services/patient-service';
-import { fetchMessengerUserProfile } from '../../services/instagram-service';
-import { setCachedPlatformAvatar } from '../../services/platform-avatar-cache';
-import { getInstagramAccessTokenForDoctor } from '../../services/instagram-connect-service';
-import { getFacebookPageAccessTokenForDoctor } from '../../services/facebook-connect-service';
-import {
   buildReturningPatientSummary,
   loadReturningPatientProfile,
   shouldUseReturningPatientMemory,
@@ -339,46 +331,6 @@ export async function runConversationTurn(
 
   if (!conversation) {
     return { skip: true, reason: 'no_conversation' };
-  }
-
-  // Inbox identity: @username + avatar (Meta profile_pic) — never block the DM reply path.
-  if (
-    conversation.patient_id &&
-    (inbound.channel === 'instagram' || inbound.channel === 'facebook')
-  ) {
-    const patientIdForUsername = conversation.patient_id;
-    const channelForUsername = inbound.channel;
-    void (async () => {
-      try {
-        const p = await findPatientByIdWithAdmin(patientIdForUsername, correlationId);
-        if (!p) return;
-        const needsUsername = !p.platform_username?.trim();
-        const token =
-          channelForUsername === 'instagram'
-            ? await getInstagramAccessTokenForDoctor(doctorId, correlationId)
-            : await getFacebookPageAccessTokenForDoctor(doctorId, correlationId);
-        if (!token) return;
-        const profile = await fetchMessengerUserProfile(senderId, token, correlationId);
-        if (needsUsername && profile.username) {
-          await setPatientPlatformUsernameIfEmpty(
-            patientIdForUsername,
-            profile.username,
-            correlationId
-          );
-        }
-        if (profile.profilePic) {
-          await setCachedPlatformAvatar(channelForUsername, senderId, profile.profilePic);
-        }
-      } catch (err) {
-        logger.debug(
-          {
-            correlationId,
-            error: err instanceof Error ? err.message : String(err),
-          },
-          'DM profile enrichment skipped'
-        );
-      }
-    })();
   }
 
   const conversationId = conversation.id;

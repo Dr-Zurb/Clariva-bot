@@ -5,7 +5,6 @@ import { usePathname } from "next/navigation";
 import {
   BarChart3,
   Bell,
-  Inbox,
   LayoutDashboard,
   ListChecks,
   PanelLeftClose,
@@ -54,12 +53,6 @@ const mainNavItems: NavItem[] = [
     href: "/dashboard/insights",
     label: "Insights",
     icon: BarChart3,
-  },
-  {
-    href: "/dashboard/inbox",
-    label: "Inbox",
-    icon: Inbox,
-    badgeKey: "bookingReviewsUnconfirmed",
   },
   {
     href: "/dashboard/alerts",

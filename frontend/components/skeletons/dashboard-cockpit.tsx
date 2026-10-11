@@ -53,37 +53,18 @@ export function CockpitTodaysScheduleSkeleton() {
   );
 }
 
-function InboxColumnSkeleton() {
-  return (
-    <Card className="scroll-mt-4">
-      <CardHeader className="pb-3">
-        <Skeleton className="h-4 w-16" />
-      </CardHeader>
-      <CardContent>
-        <Skeleton className="h-48 w-full" />
-      </CardContent>
-    </Card>
-  );
-}
-
 /**
  * Route-level skeleton for /dashboard — mirrors the Today cockpit layout.
  */
 export function DashboardCockpitSkeleton() {
   return (
     <div className="space-y-6" aria-busy="true" aria-label="Loading dashboard">
-      <KpiCardsSkeleton />
+      <KpiCardsSkeleton count={2} className="sm:grid-cols-2" />
 
-      <div className="grid gap-6 lg:grid-cols-12">
-        <div className="space-y-6 lg:col-span-8">
-          <CockpitNowNextSkeleton />
-          <CockpitOpdQueueSkeleton />
-          <CockpitTodaysScheduleSkeleton />
-        </div>
-
-        <aside className="lg:col-span-4">
-          <InboxColumnSkeleton />
-        </aside>
+      <div className="space-y-6">
+        <CockpitNowNextSkeleton />
+        <CockpitOpdQueueSkeleton />
+        <CockpitTodaysScheduleSkeleton />
       </div>
     </div>
   );

@@ -5,7 +5,6 @@ import { Card, CardContent } from "@/components/ui/card";
 import { todayLocalIso } from "@/lib/dates";
 import { useAppointmentsQuery } from "@/hooks/queries/useAppointmentsQuery";
 import { useRxSentTodayQuery } from "@/hooks/queries/useRxSentTodayQuery";
-import { useDashboardCounts } from "@/hooks/useDashboardCounts";
 
 interface KpiCardProps {
   label: string;
@@ -42,10 +41,9 @@ interface KpiStripProps {
 }
 
 /**
- * KPI strip — three ambient numbers at a glance:
+ * KPI strip — two ambient numbers at a glance:
  *   1. Today's consults (done / total)
- *   2. Pending DMs (match-review unconfirmed)
- *   3. Rx sent today
+ *   2. Rx sent today
  */
 export function KpiStrip({ token }: KpiStripProps) {
   // Query cache can differ SSR vs first client paint (partial dehydrate /
@@ -58,7 +56,6 @@ export function KpiStrip({ token }: KpiStripProps) {
 
   const appointmentsQuery = useAppointmentsQuery(token);
   const rxQuery = useRxSentTodayQuery(token);
-  const { counts } = useDashboardCounts(token);
 
   const kpi = useMemo(() => {
     const appointments = appointmentsQuery.data?.data?.appointments;
@@ -76,7 +73,6 @@ export function KpiStrip({ token }: KpiStripProps) {
   }, [appointmentsQuery.data]);
 
   const consultsReady = mounted && kpi !== null && !appointmentsQuery.isLoading;
-  const pendingDmsReady = mounted && counts !== null;
   const rxReady =
     mounted &&
     !rxQuery.isLoading &&
@@ -85,26 +81,18 @@ export function KpiStrip({ token }: KpiStripProps) {
   const consultsValue =
     kpi !== null ? `${kpi.consultsDone}/${kpi.consultsTotal}` : null;
 
-  const pendingDmsValue =
-    counts !== null ? counts.bookingReviewsUnconfirmed : null;
-
   // Broken list endpoint (needs patientId) → show em dash, not a fake 0.
   const rxValue = rxQuery.isSuccess ? (rxQuery.data ?? 0) : null;
 
   return (
     <div
-      className="grid grid-cols-1 gap-4 sm:grid-cols-3"
+      className="grid grid-cols-1 gap-4 sm:grid-cols-2"
       aria-label="Today's KPI summary"
     >
       <KpiCard
         label="Today's consults"
         value={consultsValue}
         isLoading={!consultsReady}
-      />
-      <KpiCard
-        label="Pending DMs"
-        value={pendingDmsValue}
-        isLoading={!pendingDmsReady}
       />
       <KpiCard
         label="Rx sent today"

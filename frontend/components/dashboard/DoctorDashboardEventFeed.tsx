@@ -158,7 +158,7 @@ export function describeEvent(event: DashboardEvent): string {
 export function eventDeepLink(event: DashboardEvent): string | null {
   switch (event.eventKind) {
     case "booking_review_sla_breach":
-      return "/dashboard/inbox?filter=needs_review";
+      return null;
     case "appointment_no_show": {
       const id = event.payload.appointment_id?.trim();
       return id ? `/dashboard/appointments/${id}` : null;

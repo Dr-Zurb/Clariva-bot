@@ -149,10 +149,8 @@ describe("describeEvent", () => {
 });
 
 describe("eventDeepLink / eventSeverity", () => {
-  it("deep-links SLA → inbox needs_review and no-show → appointment", () => {
-    expect(eventDeepLink(SAMPLE_SLA_BREACH)).toBe(
-      "/dashboard/inbox?filter=needs_review"
-    );
+  it("leaves SLA as text and deep-links no-show → appointment", () => {
+    expect(eventDeepLink(SAMPLE_SLA_BREACH)).toBeNull();
     expect(eventDeepLink(SAMPLE_NO_SHOW)).toBe(
       "/dashboard/appointments/appt-99"
     );
@@ -301,13 +299,14 @@ describe("DoctorDashboardEventFeed", () => {
     expect(items[0]).toHaveTextContent(/past its review deadline/);
     expect(items[1]).toHaveTextContent(/didn't show for their appointment/);
 
-    const slaLink = screen.getByRole("link", {
-      name: /A booking request for Meera is past its review deadline/,
-    });
-    expect(slaLink).toHaveAttribute(
-      "href",
-      "/dashboard/inbox?filter=needs_review"
-    );
+    expect(
+      screen.queryByRole("link", {
+        name: /A booking request for Meera is past its review deadline/,
+      })
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/A booking request for Meera is past its review deadline/)
+    ).toBeInTheDocument();
 
     const noShowLink = screen.getByRole("link", {
       name: /Ravi didn't show for their appointment/,

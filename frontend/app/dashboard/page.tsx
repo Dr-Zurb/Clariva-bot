@@ -7,7 +7,6 @@
 // Adding a chart here? Move it. Or open a fresh batch and justify with a doctor-pilot result.
 
 import { Suspense } from "react";
-import { InboxColumn } from "@/components/dashboard/cockpit/InboxColumn";
 import { CockpitKpiStripSection } from "@/components/dashboard/cockpit/streaming/CockpitKpiStripSection";
 import { CockpitNowNextSection } from "@/components/dashboard/cockpit/streaming/CockpitNowNextSection";
 import { CockpitOpdQueueSection } from "@/components/dashboard/cockpit/streaming/CockpitOpdQueueSection";
@@ -42,26 +41,20 @@ export default async function DashboardPage() {
       <SchedulingPausedBanner token={token} />
       <OnboardingChecklistCard token={token} />
 
-      <Suspense fallback={<KpiCardsSkeleton />}>
+      <Suspense fallback={<KpiCardsSkeleton count={2} className="sm:grid-cols-2" />}>
         <CockpitKpiStripSection token={token} />
       </Suspense>
 
-      <div className="grid gap-6 lg:grid-cols-12">
-        <div className="space-y-6 lg:col-span-8">
-          <Suspense fallback={<CockpitNowNextSkeleton />}>
-            <CockpitNowNextSection token={token} />
-          </Suspense>
-          <Suspense fallback={<CockpitOpdQueueSkeleton />}>
-            <CockpitOpdQueueSection token={token} />
-          </Suspense>
-          <Suspense fallback={<CockpitTodaysScheduleSkeleton />}>
-            <CockpitTodaysScheduleSection token={token} />
-          </Suspense>
-        </div>
-
-        <aside className="lg:col-span-4">
-          <InboxColumn token={token} />
-        </aside>
+      <div className="space-y-6">
+        <Suspense fallback={<CockpitNowNextSkeleton />}>
+          <CockpitNowNextSection token={token} />
+        </Suspense>
+        <Suspense fallback={<CockpitOpdQueueSkeleton />}>
+          <CockpitOpdQueueSection token={token} />
+        </Suspense>
+        <Suspense fallback={<CockpitTodaysScheduleSkeleton />}>
+          <CockpitTodaysScheduleSection token={token} />
+        </Suspense>
       </div>
     </div>
   );
