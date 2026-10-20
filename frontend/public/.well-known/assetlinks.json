@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.haloaid.app",
+      "sha256_cert_fingerprints": [
+        "91:8D:CF:0B:87:68:8B:1F:36:95:4A:94:86:AB:73:50:28:43:B5:B2:86:9A:AB:3D:47:02:1E:C0:A8:31:26:3F"
+      ]
+    }
+  }
+]

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:enabled="true"
+        android:icon="@drawable/ic_mark"
+        android:shortcutId="new-idea"
+        android:shortcutLongLabel="@string/widget_description"
+        android:shortcutShortLabel="@string/new_idea">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:data="https://haloaid.com/dashboard/social/idea"
+            android:targetClass="com.google.androidbrowserhelper.trusted.LauncherActivity"
+            android:targetPackage="com.haloaid.app" />
+    </shortcut>
+</shortcuts>

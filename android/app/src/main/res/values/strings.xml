@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Halo Aid</string>
+    <string name="new_idea">New idea</string>
+    <string name="widget_hint">A short title</string>
+    <string name="widget_description">Save a thought for later</string>
+    <string name="asset_statements" translatable="false">
+        [{
+            \"relation\": [\"delegate_permission/common.handle_all_urls\"],
+            \"target\": {
+                \"namespace\": \"web\",
+                \"site\": \"https://haloaid.com\"
+            }
+        }]
+    </string>
+</resources>
