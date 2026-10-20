@@ -1,5 +1,5 @@
 /**
- * On-the-go idea capture — title required, Thoughts stage.
+ * On-the-go idea capture — a blank title is saved as "untitled".
  * A shared link opens this screen and is saved only when Add is pressed.
  */
 
@@ -118,11 +118,27 @@ describe("seedIdeaCapture", () => {
 });
 
 describe("IdeaCapture", () => {
-  it("does not save an empty title", () => {
+  it("saves a blank title as untitled", async () => {
     render(<IdeaCapture token="token" />);
-    expect(screen.getByRole("button", { name: "Add" })).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "Add" }));
-    expect(createMock).not.toHaveBeenCalled();
+    await waitFor(() =>
+      expect(createMock).toHaveBeenCalledWith(
+        "token",
+        "untitled",
+        "thoughts",
+        {},
+        { keepalive: true }
+      )
+    );
+    expect(await screen.findByRole("status")).toHaveTextContent("Saved to Thoughts.");
+  });
+
+  it("keeps the title blank when an untitled save fails", async () => {
+    createMock.mockRejectedValue(new Error("Request failed"));
+    render(<IdeaCapture token="token" />);
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Not saved");
+    expect(screen.getByLabelText("Title")).toHaveValue("");
   });
 
   it("saves a thought and clears the form", async () => {
@@ -216,7 +232,7 @@ describe("IdeaCapture", () => {
     expect(screen.getByLabelText("Link")).toHaveAttribute("autocomplete", "halo-idea-link");
     expect(screen.getByLabelText("Link")).toHaveValue("https://www.instagram.com/reel/abc");
     expect(screen.getByLabelText("Note")).toHaveValue("");
-    expect(screen.getByRole("button", { name: "Add" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Add" })).toBeEnabled();
     expect(createMock).not.toHaveBeenCalled();
   });
 

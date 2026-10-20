@@ -164,8 +164,9 @@ export function IdeaCapture({
 
   function onSubmit(event: FormEvent) {
     event.preventDefault();
-    const nextTitle = draftTitle.trim();
-    if (!nextTitle || !token) return;
+    const typedTitle = draftTitle.trim();
+    const nextTitle = typedTitle || "untitled";
+    if (!token) return;
     const issue = file ? socialFileIssue(file) : null;
     if (issue) {
       setError(issue);
@@ -199,13 +200,14 @@ export function IdeaCapture({
     clearDraft();
     if (document.activeElement instanceof HTMLElement)
       document.activeElement.blur();
-    void finishSave(idea, upload, savedFile, typedLink);
+    void finishSave(idea, upload, savedFile, typedTitle, typedLink);
   }
 
   async function finishSave(
     idea: PendingIdea,
     upload: Promise<string> | null,
     savedFile: File | null,
+    typedTitle: string,
     typedLink: string
   ) {
     try {
@@ -223,7 +225,7 @@ export function IdeaCapture({
       if (!mounted.current || !formEmpty) return;
       dropPendingIdea(idea.id);
       setSaved(false);
-      setDraftTitle(idea.title);
+      setDraftTitle(typedTitle);
       setDraftNote(idea.note ?? "");
       setDraftLink(typedLink);
       setFile(savedFile);
@@ -247,7 +249,7 @@ export function IdeaCapture({
             <h1 className="text-xl font-semibold text-foreground">New idea</h1>
             <button
               type="submit"
-              disabled={!token || draftTitle.trim().length === 0}
+              disabled={!token}
               className="h-9 shrink-0 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground disabled:opacity-50"
             >
               Add
@@ -281,7 +283,6 @@ export function IdeaCapture({
             autoCorrect="off"
             value={draftTitle}
             maxLength={200}
-            required
             className={fieldClass}
             onChange={(event) => {
               setDraftTitle(event.target.value);
