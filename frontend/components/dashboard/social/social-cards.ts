@@ -321,14 +321,25 @@ export function getSocialCardFileUrl(token: string, id: string): Promise<string>
   );
 }
 
+export function prepareSocialCardFile(token: string, file: File): Promise<string> {
+  return uploadFile(token, file);
+}
+
 export function createSocialCard(
   token: string,
   title: string,
-  stage: Exclude<SocialCardStage, "posted" | "custom"> = "thoughts"
+  stage: Exclude<SocialCardStage, "posted" | "custom"> = "thoughts",
+  draft?: { words?: { note?: string }; sourceUrl?: string | null; filePath?: string }
 ): Promise<SocialCard> {
   return socialRequest<CardEnvelope>(token, "/api/v1/social/cards", {
     method: "POST",
-    body: { title, stage },
+    body: {
+      title,
+      stage,
+      ...(draft?.words ? { words: draft.words } : {}),
+      ...(draft?.sourceUrl ? { sourceUrl: draft.sourceUrl } : {}),
+      ...(draft?.filePath ? { filePath: draft.filePath } : {}),
+    },
   }).then((data) => data.card);
 }
 

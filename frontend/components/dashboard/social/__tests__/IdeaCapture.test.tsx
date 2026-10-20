@@ -8,11 +8,7 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { IdeaCapture } from "../IdeaCapture";
 import { ideaCaptureHref, seedIdeaCapture } from "../idea-capture";
-import {
-  attachSocialCardFile,
-  createSocialCard,
-  updateSocialCard,
-} from "../social-cards";
+import { createSocialCard, prepareSocialCardFile } from "../social-cards";
 import { readStagedFilesFromCache } from "@/lib/text/share-target-bridge";
 
 vi.mock("next/link", () => ({
@@ -32,8 +28,7 @@ vi.mock("next/link", () => ({
 
 vi.mock("../social-cards", () => ({
   createSocialCard: vi.fn(),
-  updateSocialCard: vi.fn(),
-  attachSocialCardFile: vi.fn(),
+  prepareSocialCardFile: vi.fn(async () => "doctor/photo.jpg"),
   socialFileIssue: () => null,
 }));
 
@@ -48,19 +43,16 @@ vi.mock("@/lib/text/share-target-bridge", () => ({
 }));
 
 const createMock = vi.mocked(createSocialCard);
-const updateMock = vi.mocked(updateSocialCard);
-const attachMock = vi.mocked(attachSocialCardFile);
+const prepareMock = vi.mocked(prepareSocialCardFile);
 const stagedMock = vi.mocked(readStagedFilesFromCache);
 
 beforeEach(() => {
   createMock.mockReset();
-  updateMock.mockReset();
-  attachMock.mockReset();
+  prepareMock.mockReset();
   stagedMock.mockReset();
   stagedMock.mockResolvedValue([]);
   createMock.mockResolvedValue({ id: "card-1" } as Awaited<ReturnType<typeof createSocialCard>>);
-  updateMock.mockResolvedValue({ id: "card-1" } as Awaited<ReturnType<typeof updateSocialCard>>);
-  attachMock.mockResolvedValue({ id: "card-1" } as Awaited<ReturnType<typeof attachSocialCardFile>>);
+  prepareMock.mockResolvedValue("doctor/photo.jpg");
 });
 
 describe("seedIdeaCapture", () => {
@@ -132,8 +124,11 @@ describe("IdeaCapture", () => {
     fireEvent.change(screen.getByLabelText("Note"), { target: { value: "New slot" } });
     fireEvent.click(screen.getByRole("button", { name: "Add" }));
 
-    await waitFor(() => expect(createMock).toHaveBeenCalledWith("token", "Fees reel", "thoughts"));
-    expect(updateMock).toHaveBeenCalledWith("token", "card-1", { words: { note: "New slot" } });
+    await waitFor(() =>
+      expect(createMock).toHaveBeenCalledWith("token", "Fees reel", "thoughts", {
+        words: { note: "New slot" },
+      })
+    );
     expect(await screen.findByRole("status")).toHaveTextContent("Saved to Thoughts.");
     expect(screen.getByLabelText("Title")).toHaveValue("");
     expect(screen.getByRole("link", { name: "Open the board" })).toHaveAttribute("href", "/dashboard/social");
@@ -165,7 +160,12 @@ describe("IdeaCapture", () => {
     stagedMock.mockResolvedValue([photo]);
     render(<IdeaCapture token="token" title="From the share sheet" fileKeys="share-target-a" />);
     expect(await screen.findByText("shared-1.jpg")).toBeInTheDocument();
+    await waitFor(() => expect(prepareMock).toHaveBeenCalledWith("token", photo));
     fireEvent.click(screen.getByRole("button", { name: "Add" }));
-    await waitFor(() => expect(attachMock).toHaveBeenCalledWith("token", "card-1", photo));
+    await waitFor(() =>
+      expect(createMock).toHaveBeenCalledWith("token", "From the share sheet", "thoughts", {
+        filePath: "doctor/photo.jpg",
+      })
+    );
   });
 });

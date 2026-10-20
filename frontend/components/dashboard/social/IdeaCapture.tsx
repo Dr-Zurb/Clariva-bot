@@ -10,10 +10,9 @@ import Link from "next/link";
 import { FILE_ACCEPT, normalizeLink } from "./idea-composer";
 import { seedIdeaCapture } from "./idea-capture";
 import {
-  attachSocialCardFile,
   createSocialCard,
+  prepareSocialCardFile,
   socialFileIssue,
-  updateSocialCard,
 } from "./social-cards";
 import {
   clearShareStaging,
@@ -38,9 +37,9 @@ export function IdeaCapture({
   fileKeys?: string;
 }) {
   const seeded = seedIdeaCapture({ title, note, link });
-  const fromLink = Boolean(seeded.link);
   const rootRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const prepared = useRef<{ file: File; path: Promise<string> } | null>(null);
   const [draftTitle, setDraftTitle] = useState(seeded.title);
   const [draftNote, setDraftNote] = useState(seeded.note);
   const [draftLink, setDraftLink] = useState(seeded.link);
@@ -111,6 +110,17 @@ export function IdeaCapture({
     };
   }, [fileKeys]);
 
+  useEffect(() => {
+    if (!file) {
+      prepared.current = null;
+      return;
+    }
+    if (prepared.current?.file === file) return;
+    const path = prepareSocialCardFile(token, file);
+    prepared.current = { file, path };
+    void path.catch(() => undefined);
+  }, [file, token]);
+
   function clearDraft() {
     setDraftTitle("");
     setDraftNote("");
@@ -138,28 +148,18 @@ export function IdeaCapture({
     setBusy(true);
     setError(null);
     try {
-      const card = await createSocialCard(token, nextTitle, "thoughts");
-      try {
-        if (nextNote || sourceUrl) {
-          await updateSocialCard(token, card.id, {
-            ...(nextNote ? { words: { note: nextNote } } : {}),
-            ...(sourceUrl ? { sourceUrl } : {}),
-          });
-        }
-        if (file) await attachSocialCardFile(token, card.id, file);
-        const keys = parseShareTargetKeys(fileKeys);
-        if (keys.length > 0) await clearShareStaging(keys);
-      } catch (followUp) {
-        setSaved(true);
-        setError(
-          followUp instanceof Error && followUp.message
-            ? `Saved to Thoughts. ${followUp.message}`
-            : "Saved to Thoughts. The note or file did not attach."
-        );
-        clearDraft();
-        window.history.replaceState(null, "", "/dashboard/social/idea");
-        return;
-      }
+      const filePath = file
+        ? await (prepared.current?.file === file
+            ? prepared.current.path
+            : prepareSocialCardFile(token, file))
+        : undefined;
+      await createSocialCard(token, nextTitle, "thoughts", {
+        ...(nextNote ? { words: { note: nextNote } } : {}),
+        ...(sourceUrl ? { sourceUrl } : {}),
+        ...(filePath ? { filePath } : {}),
+      });
+      const keys = parseShareTargetKeys(fileKeys);
+      if (keys.length > 0) void clearShareStaging(keys);
       setSaved(true);
       clearDraft();
       window.history.replaceState(null, "", "/dashboard/social/idea");
@@ -189,11 +189,6 @@ export function IdeaCapture({
       >
         <div className="min-h-0 flex-1 space-y-3 overflow-y-auto">
           <h1 className="text-xl font-semibold text-foreground">New idea</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {fromLink
-              ? "Add what you want to use from this. The link stays on the card."
-              : "It goes to Thoughts and ideas. You can shape it on the board later."}
-          </p>
           {saved ? (
             <p
               className="mt-4 rounded-md border border-border bg-muted/40 px-3 py-2 text-sm text-foreground"
@@ -223,7 +218,6 @@ export function IdeaCapture({
             value={draftTitle}
             maxLength={200}
             required
-            placeholder="A short title"
             className={fieldClass}
             onChange={(event) => {
               setDraftTitle(event.target.value);
@@ -243,9 +237,6 @@ export function IdeaCapture({
             value={draftNote}
             rows={2}
             maxLength={2000}
-            placeholder={
-              fromLink ? "What to use from this" : "A note, if you want one"
-            }
             className={fieldClass}
             onChange={(event) => setDraftNote(event.target.value)}
           />
@@ -265,7 +256,6 @@ export function IdeaCapture({
             spellCheck={false}
             value={draftLink}
             inputMode="url"
-            placeholder="A link, if you have one"
             className={fieldClass}
             onChange={(event) => setDraftLink(event.target.value)}
           />
