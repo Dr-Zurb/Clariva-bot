@@ -144,11 +144,14 @@ describe("IdeaCapture", () => {
     expect(createMock).not.toHaveBeenCalled();
   });
 
-  it("adds any card file from one pin", () => {
+  it("opens gallery beside camera, video, and files", () => {
     render(<IdeaCapture token="token" />);
-    expect(screen.getByLabelText("Add a file")).toHaveAttribute("accept", FILE_ACCEPT);
-    expect(screen.queryByRole("button", { name: "Camera" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Gallery" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Gallery")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Add a file" }));
+    expect(screen.getByLabelText("Gallery")).toHaveAttribute("accept", "image/*");
+    expect(screen.getByLabelText("Camera")).toHaveAttribute("capture", "environment");
+    expect(screen.getByLabelText("Video")).toHaveAttribute("accept", "video/*");
+    expect(screen.getByLabelText("Files")).toHaveAttribute("accept", FILE_ACCEPT);
   });
 
   it("opens a shared link with an empty title", () => {

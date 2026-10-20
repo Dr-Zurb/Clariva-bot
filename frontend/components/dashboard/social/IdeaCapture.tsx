@@ -23,7 +23,7 @@ import {
 } from "@/lib/text/share-target-bridge";
 
 const fieldClass =
-  "w-full rounded-md border border-border bg-background px-3 py-2 text-base text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring";
+  "w-full min-w-0 max-w-full rounded-md border border-border bg-background px-3 py-2 text-base text-foreground outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring";
 
 export function IdeaCapture({
   token,
@@ -40,7 +40,6 @@ export function IdeaCapture({
 }) {
   const seeded = seedIdeaCapture({ title, note, link });
   const rootRef = useRef<HTMLDivElement>(null);
-  const fileRef = useRef<HTMLInputElement>(null);
   const prepared = useRef<{ file: File; path: Promise<string> } | null>(null);
   const [draftTitle, setDraftTitle] = useState(seeded.title);
   const [draftNote, setDraftNote] = useState(seeded.note);
@@ -49,6 +48,7 @@ export function IdeaCapture({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const [sourcesOpen, setSourcesOpen] = useState(false);
 
   useEffect(() => {
     const root = rootRef.current;
@@ -110,7 +110,16 @@ export function IdeaCapture({
     setDraftNote("");
     setDraftLink("");
     setFile(null);
-    if (fileRef.current) fileRef.current.value = "";
+    setSourcesOpen(false);
+    clearFileInputs();
+  }
+
+  function clearFileInputs() {
+    rootRef.current
+      ?.querySelectorAll<HTMLInputElement>('input[type="file"]')
+      .forEach((input) => {
+        input.value = "";
+      });
   }
 
   function chooseFile(next: File | null, input: HTMLInputElement) {
@@ -126,6 +135,7 @@ export function IdeaCapture({
       return;
     }
     setError(null);
+    setSourcesOpen(false);
     setFile(next);
   }
 
@@ -178,7 +188,7 @@ export function IdeaCapture({
   }
 
   return (
-    <div ref={rootRef} data-idea-capture className="mx-auto w-full max-w-md">
+    <div ref={rootRef} data-idea-capture className="mx-auto w-full min-w-0 max-w-md">
       <form
         className="space-y-3"
         autoComplete="off"
@@ -265,36 +275,42 @@ export function IdeaCapture({
             className={fieldClass}
             onChange={(event) => setDraftLink(event.target.value)}
           />
-          <div className="flex items-center gap-3">
-            <label className="inline-flex h-9 cursor-pointer items-center gap-2 text-sm font-medium text-foreground">
-              <span className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-border text-muted-foreground">
-                <Paperclip className="h-4 w-4" aria-hidden="true" />
-              </span>
-              Add a file
-              <input
-                ref={fileRef}
-                type="file"
-                accept={FILE_ACCEPT}
-                className="sr-only"
-                onChange={(event) =>
-                  chooseFile(event.target.files?.[0] ?? null, event.target)
-                }
-              />
-            </label>
-            {file ? (
-              <span className="flex min-w-0 flex-1 items-center justify-between gap-2 text-sm">
-                <span className="min-w-0 truncate text-foreground">{file.name}</span>
-                <button
-                  type="button"
-                  className="shrink-0 text-muted-foreground hover:text-foreground"
-                  onClick={() => {
-                    setFile(null);
-                    if (fileRef.current) fileRef.current.value = "";
-                  }}
-                >
-                  Remove
-                </button>
-              </span>
+          <div className="space-y-2">
+            <div className="flex min-w-0 items-center gap-3">
+              <button
+                type="button"
+                aria-expanded={sourcesOpen}
+                className="inline-flex h-9 shrink-0 items-center gap-2 text-sm font-medium text-foreground"
+                onClick={() => setSourcesOpen((open) => !open)}
+              >
+                <span className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-border text-muted-foreground">
+                  <Paperclip className="h-4 w-4" aria-hidden="true" />
+                </span>
+                Add a file
+              </button>
+              {file ? (
+                <span className="flex min-w-0 flex-1 items-center justify-between gap-2 text-sm">
+                  <span className="min-w-0 truncate text-foreground">{file.name}</span>
+                  <button
+                    type="button"
+                    className="shrink-0 text-muted-foreground hover:text-foreground"
+                    onClick={() => {
+                      setFile(null);
+                      clearFileInputs();
+                    }}
+                  >
+                    Remove
+                  </button>
+                </span>
+              ) : null}
+            </div>
+            {sourcesOpen ? (
+              <div className="grid grid-cols-4 gap-1.5">
+                <FileSource label="Camera" accept="image/*" capture="environment" onPick={chooseFile} />
+                <FileSource label="Gallery" accept="image/*" onPick={chooseFile} />
+                <FileSource label="Video" accept="video/*" onPick={chooseFile} />
+                <FileSource label="Files" accept={FILE_ACCEPT} onPick={chooseFile} />
+              </div>
             ) : null}
           </div>
         </div>
@@ -305,5 +321,30 @@ export function IdeaCapture({
         ) : null}
       </form>
     </div>
+  );
+}
+
+function FileSource({
+  label,
+  accept,
+  capture,
+  onPick,
+}: {
+  label: string;
+  accept: string;
+  capture?: "environment";
+  onPick: (file: File | null, input: HTMLInputElement) => void;
+}) {
+  return (
+    <label className="inline-flex h-10 w-full min-w-0 cursor-pointer items-center justify-center rounded-md border border-border px-1 text-sm text-foreground">
+      {label}
+      <input
+        type="file"
+        accept={accept}
+        {...(capture ? { capture } : {})}
+        className="sr-only"
+        onChange={(event) => onPick(event.target.files?.[0] ?? null, event.target)}
+      />
+    </label>
   );
 }
