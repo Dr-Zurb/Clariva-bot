@@ -26,7 +26,7 @@ export function shareLinkRedirect(origin: string, input: {
   if (link) q.set("link", link);
   const query = q.toString();
   const path = !input.hasFile && (title || note || link)
-    ? "/dashboard/social/idea"
+    ? "/c/idea"
     : "/c/share-target";
   return query ? `${origin}${path}?${query}` : `${origin}${path}`;
 }

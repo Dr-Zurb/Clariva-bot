@@ -199,7 +199,7 @@ export function IdeaCapture({
             <h1 className="text-xl font-semibold text-foreground">New idea</h1>
             <button
               type="submit"
-              disabled={busy || draftTitle.trim().length === 0}
+              disabled={busy || !token || draftTitle.trim().length === 0}
               className="h-9 shrink-0 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground disabled:opacity-50"
             >
               {busy ? "Saving…" : "Add"}

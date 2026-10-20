@@ -10,7 +10,7 @@ describe("shareLinkRedirect", () => {
         link: "",
       })
     ).toBe(
-      "https://haloaid.com/dashboard/social/idea?note=https%3A%2F%2Fwww.instagram.com%2Freel%2Fabc"
+      "https://haloaid.com/c/idea?note=https%3A%2F%2Fwww.instagram.com%2Freel%2Fabc"
     );
   });
 

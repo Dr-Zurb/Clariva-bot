@@ -107,7 +107,7 @@ describe("seedIdeaCapture", () => {
   it("builds the capture url", () => {
     expect(
       ideaCaptureHref({ title: "Fees", keys: ["share-target-a"] })
-    ).toBe("/dashboard/social/idea?title=Fees&keys=share-target-a");
+    ).toBe("/c/idea?title=Fees&keys=share-target-a");
   });
 });
 

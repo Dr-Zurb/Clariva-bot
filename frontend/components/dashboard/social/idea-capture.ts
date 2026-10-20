@@ -26,7 +26,7 @@ export function ideaCaptureHref(input: {
   const keys = (input.keys ?? []).map((key) => key.trim()).filter(Boolean);
   if (keys.length > 0) q.set("keys", keys.join(","));
   const query = q.toString();
-  return query ? `/dashboard/social/idea?${query}` : "/dashboard/social/idea";
+  return query ? `/c/idea?${query}` : "/c/idea";
 }
 
 export function seedIdeaCapture(input: {

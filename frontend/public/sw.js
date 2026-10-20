@@ -53,7 +53,7 @@
  * Next app.
  */
 
-const SW_VERSION = "v5-2026-10-20-idea";
+const SW_VERSION = "v6-2026-10-20-open";
 const SHARE_TARGET_CACHE = "share-target-staging-v1";
 const SHARE_TARGET_STALE_MS = 30 * 60 * 1000;
 
@@ -159,6 +159,36 @@ function applyShareFields(target, title, note, link) {
   if (link) target.searchParams.set("link", link);
 }
 
+function escapeShareHtml(value) {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+// Paint the idea form in this response so Android hides the launch logo
+// before the real page arrives. A redirect keeps that logo up for the whole wait.
+function ideaOpenResponse(title, note, link) {
+  let shownTitle = title;
+  let shownNote = note;
+  let shownLink = link;
+  if (!shownLink && /^https?:\/\//i.test(shownNote)) {
+    shownLink = shownNote;
+    shownNote = "";
+  }
+  if (shownLink) shownTitle = "";
+  const query = new URLSearchParams();
+  if (title) query.set("title", title);
+  if (note) query.set("note", note);
+  if (link) query.set("link", link);
+  const next = `/c/idea${query.toString() ? `?${query}` : ""}`;
+  const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>New idea</title><style>body{margin:0;background:#fff;color:#111;font-family:system-ui,sans-serif}main{box-sizing:border-box;max-width:28rem;margin:0 auto;padding:16px}h1{font-size:20px;margin:0}label{display:block;font-size:14px;font-weight:600;margin:12px 0 6px}input,textarea{display:block;width:100%;box-sizing:border-box;padding:8px 12px;border:1px solid #e4e4e7;border-radius:6px;font:16px system-ui,sans-serif}</style></head><body><main><h1>New idea</h1><label>Title</label><input value="${escapeShareHtml(shownTitle)}"><label>Note</label><textarea rows="2">${escapeShareHtml(shownNote)}</textarea><label>Link</label><input value="${escapeShareHtml(shownLink)}"></main><script>addEventListener("load",function(){fetch(${JSON.stringify(next)},{credentials:"same-origin"}).finally(function(){location.replace(${JSON.stringify(next)})})})</script></body></html>`;
+  return new Response(html, {
+    headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" },
+  });
+}
+
 async function handleShareTarget(event) {
   const formData = await event.request.formData();
   const files = formData.getAll("files");
@@ -186,9 +216,7 @@ async function handleShareTarget(event) {
 
   // A note or link with no file is an idea. Files stay on the consult landing.
   if (stagedKeys.length === 0 && (title || note || link)) {
-    const ideaUrl = new URL("/dashboard/social/idea", self.location.origin);
-    applyShareFields(ideaUrl, title, note, link);
-    return Response.redirect(ideaUrl.href, 303);
+    return ideaOpenResponse(title, note, link);
   }
 
   const redirectUrl = new URL("/c/share-target", self.location.origin);
