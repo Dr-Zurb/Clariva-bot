@@ -89,6 +89,7 @@ const EXT_TYPE = {
   odp: "application/vnd.oasis.opendocument.presentation",
 };
 
+const IDEA_KIND_CAP = 10;
 const PHOTO_BYTES = 8 * 1024 * 1024;
 const VIDEO_BYTES = 100 * 1024 * 1024;
 const AUDIO_BYTES = 15 * 1024 * 1024;
@@ -227,6 +228,26 @@ export function fileIssue(file) {
   return null;
 }
 
+export function addToPile(current, incoming) {
+  const files = current.slice();
+  let overflow = false;
+  let issue = null;
+  for (const file of incoming) {
+    const problem = fileIssue(file);
+    if (problem) {
+      issue = problem;
+      continue;
+    }
+    const kind = kindOf(file);
+    if (kind && files.filter((item) => kindOf(item) === kind).length >= IDEA_KIND_CAP) {
+      overflow = true;
+      continue;
+    }
+    files.push(file);
+  }
+  return { files, overflow, issue };
+}
+
 export function contentTypeFor(file) {
   if (file.type === "audio/x-wav") return "audio/wav";
   if (file.type && Object.values(EXT_TYPE).includes(file.type)) return file.type;
@@ -311,8 +332,7 @@ export function bootIdeaOpen(doc) {
   const error = doc.getElementById("idea-error");
   const pin = doc.getElementById("idea-pin");
   const sources = doc.getElementById("idea-sources");
-  const picked = doc.getElementById("idea-picked");
-  const fileName = doc.getElementById("idea-file-name");
+  const fileList = doc.getElementById("idea-file-list");
   const filesInput = doc.getElementById("idea-files");
   if (!form || !titleInput || !noteInput || !linkInput || !filesInput) return;
 
@@ -338,11 +358,35 @@ export function bootIdeaOpen(doc) {
     // A blocked session store just leaves the fields as opened.
   }
 
-  let file = null;
+  let files = [];
+  let savedCardId = null;
+  let saving = false;
+  const stagedKeys = (params.get("keys") || "")
+    .split(",")
+    .map((part) => part.trim())
+    .filter((part) => part.startsWith("share-target-"));
   const showError = (message) => {
     if (!error) return;
     error.hidden = !message;
     error.textContent = message || "";
+  };
+  const renderFiles = () => {
+    if (!fileList) return;
+    fileList.replaceChildren();
+    files.forEach((item, index) => {
+      const row = doc.createElement("li");
+      const name = doc.createElement("b");
+      name.textContent = item.name;
+      const remove = doc.createElement("button");
+      remove.type = "button";
+      remove.textContent = "Remove";
+      remove.addEventListener("click", () => {
+        files = files.filter((_, itemIndex) => itemIndex !== index);
+        renderFiles();
+      });
+      row.append(name, remove);
+      fileList.append(row);
+    });
   };
 
   pin?.addEventListener("click", () => {
@@ -351,29 +395,25 @@ export function bootIdeaOpen(doc) {
     sources.hidden = !open;
     pin.setAttribute("aria-expanded", open ? "true" : "false");
   });
-  doc.getElementById("idea-remove")?.addEventListener("click", () => {
-    file = null;
-    if (picked) picked.hidden = true;
-    doc.querySelectorAll('input[type="file"]').forEach((input) => {
-      input.value = "";
-    });
-  });
   doc.querySelectorAll("#idea-sources input").forEach((input) => {
     input.addEventListener("change", () => {
-      const next = input.files?.[0] ?? null;
-      const issue = next ? fileIssue(next) : null;
-      if (issue) {
-        showError(issue);
-        input.value = "";
-        return;
-      }
-      file = next;
-      showError("");
-      if (fileName) fileName.textContent = next?.name || "";
-      if (picked) picked.hidden = !next;
+      const incoming = [...(input.files ?? [])];
+      input.value = "";
+      const result = addToPile(files, incoming);
+      files = result.files;
+      renderFiles();
+      showError(result.overflow ? "The pile is full" : result.issue || "");
       if (sources) sources.hidden = true;
       pin?.setAttribute("aria-expanded", "false");
     });
+  });
+  void readStagedIdeaFiles(stagedKeys).then((staged) => {
+    if (saving) return;
+    const result = addToPile(files, staged);
+    files = result.files;
+    renderFiles();
+    if (result.overflow) showError("The pile is full");
+    else if (result.issue) showError(result.issue);
   });
   titleInput.addEventListener("input", () => {
     if (status) status.hidden = true;
@@ -405,7 +445,7 @@ export function bootIdeaOpen(doc) {
       location.replace(`/login?next=${encodeURIComponent(next)}`);
       return;
     }
-    const issue = file ? fileIssue(file) : null;
+    const issue = files.map((item) => fileIssue(item)).find(Boolean);
     if (issue) {
       showError(issue);
       return;
@@ -418,7 +458,7 @@ export function bootIdeaOpen(doc) {
     }
     const typedTitle = titleInput.value.trim();
     const note = noteInput.value.trim();
-    const savedFile = file;
+    const savedFiles = files.slice();
     const idea = {
       id: crypto.randomUUID(),
       title: ideaTitle(typedTitle),
@@ -427,80 +467,167 @@ export function bootIdeaOpen(doc) {
       at: Date.now(),
     };
     keepPending(idea);
+    saving = true;
     titleInput.value = "";
     noteInput.value = "";
     linkInput.value = "";
-    file = null;
-    if (picked) picked.hidden = true;
+    files = [];
+    renderFiles();
     doc.querySelectorAll('input[type="file"]').forEach((input) => {
       input.value = "";
     });
     showError("");
     if (status) status.hidden = false;
     if (doc.activeElement instanceof HTMLElement) doc.activeElement.blur();
-    void finish(access, base(), idea, savedFile, typedTitle, typedLink, {
+    void finish(access, base(), idea, savedFiles, typedTitle, typedLink, {
       stillEmpty() {
-        return !titleInput.value.trim() && !noteInput.value.trim() && !linkInput.value.trim() && !file;
+        return (
+          !titleInput.value.trim() &&
+          !noteInput.value.trim() &&
+          !linkInput.value.trim() &&
+          files.length === 0
+        );
       },
-      restoreFile(next) {
-        file = next;
-        if (fileName) fileName.textContent = next?.name || "";
-        if (picked) picked.hidden = !next;
+      restoreFiles(next) {
+        saving = false;
+        files = next;
+        renderFiles();
+      },
+      cardId() {
+        return savedCardId;
+      },
+      remember(id) {
+        savedCardId = id;
+      },
+      clearStaged() {
+        return clearStagedIdeaFiles(stagedKeys);
       },
     });
   });
 }
 
-async function finish(token, base, idea, savedFile, typedTitle, typedLink, ui) {
+async function finish(token, base, idea, savedFiles, typedTitle, typedLink, ui) {
   const titleInput = document.getElementById("idea-title");
   const noteInput = document.getElementById("idea-note");
   const linkInput = document.getElementById("idea-link");
   const status = document.getElementById("idea-status");
   const error = document.getElementById("idea-error");
-  try {
-    let sent = idea;
-    if (savedFile) {
-      const small = await shrinkPhoto(savedFile);
-      const filePath = await uploadFile(token, base, small);
-      sent = { ...idea, filePath };
-      keepPending(sent);
-    }
-    await postJson(
-      token,
-      `${base}/api/v1/social/cards`,
-      {
-        title: sent.title,
-        stage: "thoughts",
-        ...(sent.note ? { words: { note: sent.note } } : {}),
-        ...(sent.sourceUrl ? { sourceUrl: sent.sourceUrl } : {}),
-        ...(sent.filePath ? { filePath: sent.filePath } : {}),
-      },
-      true
-    );
-    dropPending(idea.id);
-  } catch (err) {
+  const restore = (next, err) => {
     if (!ui.stillEmpty()) return;
-    dropPending(idea.id);
+    if (!ui.cardId()) dropPending(idea.id);
     if (titleInput) titleInput.value = typedTitle;
     if (noteInput) noteInput.value = idea.note || "";
     if (linkInput) linkInput.value = typedLink;
-    ui.restoreFile(savedFile);
+    ui.restoreFiles(next);
     if (status) status.hidden = true;
     if (error) {
       error.hidden = false;
       error.textContent =
         err instanceof Error && err.message ? `Not saved: ${err.message}` : "Not saved. Tap Add again.";
     }
+  };
+  try {
+    let cardId = ui.cardId();
+    if (!cardId) {
+      const created = await postJson(
+        token,
+        `${base}/api/v1/social/cards`,
+        {
+          title: idea.title,
+          stage: "thoughts",
+          ...(idea.note ? { words: { note: idea.note } } : {}),
+          ...(idea.sourceUrl ? { sourceUrl: idea.sourceUrl } : {}),
+        },
+        true
+      );
+      cardId = created?.card?.id || "";
+      if (!cardId) throw new Error("Could not save");
+      ui.remember(cardId);
+    }
+    dropPending(idea.id);
+    const failed = [];
+    for (const file of savedFiles) {
+      try {
+        await addScrap(token, base, cardId, file);
+      } catch {
+        failed.push(file);
+      }
+    }
+    if (failed.length) {
+      restore(
+        failed,
+        new Error(failed.length === savedFiles.length ? "Could not add the file" : "Some files were not saved")
+      );
+      return;
+    }
+    ui.remember(null);
+    await ui.clearStaged();
+  } catch (err) {
+    restore(savedFiles, err);
   }
 }
 
-async function uploadFile(token, base, file) {
+function stagedShareRequests(key) {
+  const absolute = new Request(new URL(`/${String(key).replace(/^\//, "")}`, location.origin));
+  return [absolute, key];
+}
+
+async function readStagedIdeaFiles(keys) {
+  if (!keys.length || typeof caches === "undefined") return [];
+  const cache = await caches.open("share-target-staging-v1");
+  const files = [];
+  for (const key of keys) {
+    let response = null;
+    for (const request of stagedShareRequests(key)) {
+      response = await cache.match(request);
+      if (response) break;
+    }
+    if (!response) continue;
+    const mime = response.headers.get("Content-Type") || "";
+    let name = "";
+    const header = response.headers.get("X-File-Name");
+    if (header) {
+      try {
+        name = decodeURIComponent(header);
+      } catch {
+        name = header;
+      }
+    }
+    const blob = await response.blob();
+    files.push(
+      new File([blob], name || `shared-${files.length + 1}`, {
+        type: mime || blob.type || "application/octet-stream",
+      })
+    );
+  }
+  return files;
+}
+
+async function clearStagedIdeaFiles(keys) {
+  if (!keys.length || typeof caches === "undefined") return;
+  const cache = await caches.open("share-target-staging-v1");
+  await Promise.all(
+    keys.flatMap((key) => stagedShareRequests(key).map((request) => cache.delete(request)))
+  );
+}
+
+async function addScrap(token, base, cardId, file) {
+  const small = await shrinkPhoto(file);
+  const path = await uploadFile(token, base, small, cardId);
+  await postJson(token, `${base}/api/v1/social/cards/${cardId}/scraps`, { path });
+}
+
+async function uploadFile(token, base, file, cardId) {
   const supabaseUrl = (localStorage.getItem("halo-idea-supabase") || "").replace(/\/$/, "");
   const anon = localStorage.getItem("halo-idea-anon") || "";
   if (!supabaseUrl || !anon) throw new Error("Could not upload the file");
-  const minted = await postJson(token, `${base}/api/v1/social/cards/uploads`, {
-    contentType: contentTypeFor(file),
-  });
+  const minted = await postJson(
+    token,
+    cardId
+      ? `${base}/api/v1/social/cards/${cardId}/file/upload`
+      : `${base}/api/v1/social/cards/uploads`,
+    { contentType: contentTypeFor(file) }
+  );
   const target = new URL(`${supabaseUrl}/storage/v1/object/upload/sign/social-card-files/${minted.path}`);
   target.searchParams.set("token", minted.token);
   const body = new FormData();

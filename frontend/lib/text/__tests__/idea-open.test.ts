@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  addToPile,
   apiBaseFor,
   contentTypeFor,
   ideaTitle,
@@ -51,5 +52,19 @@ describe("idea open sheet", () => {
   it("sends a jpeg content type", () => {
     const file = new File(["img"], "photo.jpg", { type: "image/jpeg" });
     expect(contentTypeFor(file)).toBe("image/jpeg");
+  });
+
+  it("adds files and stops at ten of one kind", () => {
+    const first = new File(["a"], "one.jpg", { type: "image/jpeg" });
+    const second = new File(["b"], "two.jpg", { type: "image/jpeg" });
+    const piled = addToPile([], [first]);
+    const both = addToPile(piled.files, [second]);
+    expect(both.files.map((file: File) => file.name)).toEqual(["one.jpg", "two.jpg"]);
+    const photos = Array.from({ length: 10 }, (_, index) => new File(["x"], `p${index}.jpg`, { type: "image/jpeg" }));
+    const pdf = new File(["pdf"], "note.pdf", { type: "application/pdf" });
+    const capped = addToPile(photos, [new File(["y"], "extra.jpg", { type: "image/jpeg" }), pdf]);
+    expect(capped.overflow).toBe(true);
+    expect(capped.files).toHaveLength(11);
+    expect(capped.files.at(-1)?.name).toBe("note.pdf");
   });
 });

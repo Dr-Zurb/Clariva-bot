@@ -210,6 +210,20 @@ export function extensionForMime(mime: string): string {
   }
 }
 
+function stagedShareRequests(key: string): Array<Request | string> {
+  if (typeof window === "undefined") return [key];
+  const absolute = new Request(new URL(`/${key.replace(/^\//, "")}`, window.location.origin));
+  return [absolute, key];
+}
+
+async function matchStaged(cache: Cache, key: string): Promise<Response | undefined> {
+  for (const request of stagedShareRequests(key)) {
+    const response = await cache.match(request);
+    if (response) return response;
+  }
+  return undefined;
+}
+
 export function blobToShareFile(blob: Blob, mime: string, index: number): File {
   const ext = extensionForMime(mime);
   const name = `shared-${index + 1}.${ext}`;
@@ -223,7 +237,7 @@ export async function readStagedFilesFromCache(keys: string[]): Promise<File[]> 
 
   for (let i = 0; i < keys.length && files.length < MAX_SHARE_FILES; i += 1) {
     const key = keys[i];
-    const response = await cache.match(key);
+    const response = await matchStaged(cache, key);
     if (!response) continue;
     const mime = response.headers.get("Content-Type") ?? "application/octet-stream";
     if (!isShareTargetMimeAllowed(mime)) continue;
@@ -235,11 +249,38 @@ export async function readStagedFilesFromCache(keys: string[]): Promise<File[]> 
   return files;
 }
 
+/** Every staged share file for a thought. The idea sheet applies the pile cap. */
+export async function readIdeaStagedFiles(keys: string[]): Promise<File[]> {
+  if (typeof caches === "undefined" || keys.length === 0) return [];
+  const cache = await caches.open(SHARE_TARGET_CACHE_NAME);
+  const files: File[] = [];
+  for (const key of keys) {
+    const response = await matchStaged(cache, key);
+    if (!response) continue;
+    const mime = response.headers.get("Content-Type") ?? "";
+    const blob = await response.blob();
+    let name = "";
+    const header = response.headers.get("X-File-Name");
+    if (header) {
+      try {
+        name = decodeURIComponent(header);
+      } catch {
+        name = header;
+      }
+    }
+    if (!name) name = blobToShareFile(blob, mime || blob.type, files.length).name;
+    files.push(new File([blob], name, { type: mime || blob.type || "application/octet-stream" }));
+  }
+  return files;
+}
+
 export async function clearShareStaging(keys: string[]): Promise<void> {
   if (typeof caches === "undefined" || keys.length === 0) return;
   try {
     const cache = await caches.open(SHARE_TARGET_CACHE_NAME);
-    await Promise.all(keys.map((key) => cache.delete(key)));
+    await Promise.all(
+      keys.flatMap((key) => stagedShareRequests(key).map((request) => cache.delete(request)))
+    );
   } catch {
     // Best-effort cleanup.
   }

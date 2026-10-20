@@ -105,19 +105,30 @@
         border-radius: 999px;
         color: #71717a;
       }
-      .picked {
-        flex: 1;
+      .file-list {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .file-list li {
+        display: flex;
+        align-items: center;
         justify-content: space-between;
+        gap: 8px;
+        min-width: 0;
         font-size: 14px;
       }
-      .picked b {
+      .file-list b {
         min-width: 0;
         overflow: hidden;
         font-weight: 400;
         text-overflow: ellipsis;
         white-space: nowrap;
       }
-      .picked button,
+      .file-list button,
       .status a {
         color: #1e56e0;
         font: inherit;
@@ -176,16 +187,13 @@
             </span>
             Add a file
           </button>
-          <span id="idea-picked" class="picked" hidden>
-            <b id="idea-file-name"></b>
-            <button id="idea-remove" type="button">Remove</button>
-          </span>
         </div>
+        <ul id="idea-file-list" class="file-list"></ul>
         <div id="idea-sources" class="sources" hidden>
           <label>Camera<input class="sr" type="file" accept="image/*" capture="environment" /></label>
-          <label>Gallery<input class="sr" type="file" accept="image/*" /></label>
-          <label>Video<input class="sr" type="file" accept="video/*" /></label>
-          <label>Files<input id="idea-files" class="sr" type="file" /></label>
+          <label>Gallery<input class="sr" type="file" accept="image/*" multiple /></label>
+          <label>Video<input class="sr" type="file" accept="video/*" multiple /></label>
+          <label>Files<input id="idea-files" class="sr" type="file" multiple /></label>
         </div>
         <p id="idea-error" class="error" role="alert" hidden></p>
       </form>

@@ -2,14 +2,15 @@
 
 /**
  * On-the-go capture for Thoughts and ideas.
- * One title, an optional note, and one file or link. The board studio stays on the desktop Add dialog.
+ * One title, an optional note, and a pile of files or a link.
+ * Ten of each kind. The board studio stays on the desktop Add dialog.
  */
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { Paperclip } from "lucide-react";
 import { FILE_ACCEPT, normalizeLink } from "./idea-composer";
-import { seedIdeaCapture } from "./idea-capture";
+import { addIdeaFiles, seedIdeaCapture } from "./idea-capture";
 import {
   dropPendingIdea,
   keepPendingIdea,
@@ -20,14 +21,15 @@ import {
 } from "./idea-pending";
 import { shrinkIdeaPhoto } from "./idea-photo";
 import {
+  addSocialCardScrap,
   createSocialCard,
-  prepareSocialCardFile,
   socialFileIssue,
+  socialFileKind,
 } from "./social-cards";
 import {
   clearShareStaging,
   parseShareTargetKeys,
-  readStagedFilesFromCache,
+  readIdeaStagedFiles,
 } from "@/lib/text/share-target-bridge";
 import { warmApi } from "@/lib/api-base";
 
@@ -49,17 +51,18 @@ export function IdeaCapture({
 }) {
   const seeded = seedIdeaCapture({ title, note, link });
   const rootRef = useRef<HTMLDivElement>(null);
-  const prepared = useRef<{ file: File; path: Promise<string> } | null>(null);
+  const savedCard = useRef<string | null>(null);
+  const saving = useRef(false);
   const mounted = useRef(false);
   const [draftTitle, setDraftTitle] = useState(seeded.title);
   const [draftNote, setDraftNote] = useState(seeded.note);
   const [draftLink, setDraftLink] = useState(seeded.link);
-  const [file, setFile] = useState<File | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [sourcesOpen, setSourcesOpen] = useState(false);
-  const draft = useRef({ title: draftTitle, note: draftNote, link: draftLink, file });
-  draft.current = { title: draftTitle, note: draftNote, link: draftLink, file };
+  const draft = useRef({ title: draftTitle, note: draftNote, link: draftLink, files });
+  draft.current = { title: draftTitle, note: draftNote, link: draftLink, files };
 
   useEffect(() => {
     mounted.current = true;
@@ -99,40 +102,34 @@ export function IdeaCapture({
     const keys = parseShareTargetKeys(fileKeys);
     if (keys.length === 0) return;
     let cancelled = false;
-    void readStagedFilesFromCache(keys).then((files) => {
-      if (cancelled) return;
-      const first = files[0];
-      if (!first) return;
-      const issue = socialFileIssue(first);
-      if (issue) {
-        setError(issue);
-        return;
+    void readIdeaStagedFiles(keys).then((staged) => {
+      if (cancelled || saving.current) return;
+      let issue: string | null = null;
+      const accepted: File[] = [];
+      for (const stagedFile of staged) {
+        const problem = socialFileIssue(stagedFile);
+        if (problem) {
+          issue = problem;
+          continue;
+        }
+        accepted.push(stagedFile);
       }
-      setFile(first);
+      setFiles((current) => {
+        const result = addIdeaFiles(current, accepted, socialFileKind);
+        setError(result.overflow ? "The pile is full" : issue);
+        return result.files;
+      });
     });
     return () => {
       cancelled = true;
     };
   }, [fileKeys]);
 
-  useEffect(() => {
-    if (!file || !token) {
-      prepared.current = null;
-      return;
-    }
-    if (prepared.current?.file === file) return;
-    const path = shrinkIdeaPhoto(file).then((small) =>
-      prepareSocialCardFile(token, small)
-    );
-    prepared.current = { file, path };
-    void path.catch(() => undefined);
-  }, [file, token]);
-
   function clearDraft() {
     setDraftTitle("");
     setDraftNote("");
     setDraftLink("");
-    setFile(null);
+    setFiles([]);
     setSourcesOpen(false);
     clearFileInputs();
   }
@@ -145,21 +142,25 @@ export function IdeaCapture({
       });
   }
 
-  function chooseFile(next: File | null, input: HTMLInputElement) {
-    if (!next) {
-      setFile(null);
-      return;
+  function chooseFiles(incoming: File[], input: HTMLInputElement) {
+    input.value = "";
+    if (incoming.length === 0) return;
+    let issue: string | null = null;
+    const accepted: File[] = [];
+    for (const item of incoming) {
+      const problem = socialFileIssue(item);
+      if (problem) {
+        issue = problem;
+        continue;
+      }
+      accepted.push(item);
     }
-    const fileIssue = socialFileIssue(next);
-    if (fileIssue) {
-      setError(fileIssue);
-      setFile(null);
-      input.value = "";
-      return;
-    }
-    setError(null);
+    setFiles((current) => {
+      const result = addIdeaFiles(current, accepted, socialFileKind);
+      setError(result.overflow ? "The pile is full" : issue);
+      return result.files;
+    });
     setSourcesOpen(false);
-    setFile(next);
   }
 
   function onSubmit(event: FormEvent) {
@@ -167,7 +168,7 @@ export function IdeaCapture({
     const typedTitle = draftTitle.trim();
     const nextTitle = typedTitle || "untitled";
     if (!token) return;
-    const issue = file ? socialFileIssue(file) : null;
+    const issue = files.map((item) => socialFileIssue(item)).find(Boolean);
     if (issue) {
       setError(issue);
       return;
@@ -179,12 +180,7 @@ export function IdeaCapture({
       return;
     }
     const nextNote = draftNote.trim();
-    const savedFile = file;
-    const upload = savedFile
-      ? prepared.current?.file === savedFile
-        ? prepared.current.path
-        : shrinkIdeaPhoto(savedFile).then((small) => prepareSocialCardFile(token, small))
-      : null;
+    const savedFiles = files.slice();
     const idea: PendingIdea = {
       id: newPendingId(),
       title: nextTitle,
@@ -193,46 +189,77 @@ export function IdeaCapture({
       at: Date.now(),
     };
     keepPendingIdea(idea);
-    const keys = parseShareTargetKeys(fileKeys);
-    if (keys.length > 0) void clearShareStaging(keys);
+    saving.current = true;
     setError(null);
     setSaved(true);
     clearDraft();
     if (document.activeElement instanceof HTMLElement)
       document.activeElement.blur();
-    void finishSave(idea, upload, savedFile, typedTitle, typedLink);
+    void finishSave(idea, savedFiles, typedTitle, typedLink);
+  }
+
+  function restoreDraft(idea: PendingIdea, typedTitle: string, typedLink: string, nextFiles: File[], message: string) {
+    const current = draft.current;
+    const formEmpty =
+      !current.title.trim() && !current.note.trim() && !current.link.trim() && current.files.length === 0;
+    if (!mounted.current || !formEmpty) return;
+    saving.current = false;
+    if (!savedCard.current) dropPendingIdea(idea.id);
+    setSaved(false);
+    setDraftTitle(typedTitle);
+    setDraftNote(idea.note ?? "");
+    setDraftLink(typedLink);
+    setFiles(nextFiles);
+    setError(message);
   }
 
   async function finishSave(
     idea: PendingIdea,
-    upload: Promise<string> | null,
-    savedFile: File | null,
+    savedFiles: File[],
     typedTitle: string,
     typedLink: string
   ) {
     try {
-      const filePath = upload ? await upload : undefined;
-      const sent = filePath ? { ...idea, filePath } : idea;
-      if (filePath) keepPendingIdea(sent);
-      await createSocialCard(token, idea.title, "thoughts", pendingIdeaDraft(sent), {
-        keepalive: true,
-      });
+      let cardId = savedCard.current;
+      if (!cardId) {
+        const created = await createSocialCard(token, idea.title, "thoughts", pendingIdeaDraft(idea), {
+          keepalive: true,
+        });
+        cardId = created.id;
+        savedCard.current = cardId;
+      }
       dropPendingIdea(idea.id);
+      const failed: File[] = [];
+      for (const item of savedFiles) {
+        try {
+          const small = await shrinkIdeaPhoto(item);
+          await addSocialCardScrap(token, cardId, small);
+        } catch {
+          failed.push(item);
+        }
+      }
+      if (failed.length > 0) {
+        restoreDraft(
+          idea,
+          typedTitle,
+          typedLink,
+          failed,
+          failed.length === savedFiles.length
+            ? "Not saved: Could not add the file"
+            : "Not saved: Some files were not saved"
+        );
+        return;
+      }
+      savedCard.current = null;
+      const keys = parseShareTargetKeys(fileKeys);
+      if (keys.length > 0) void clearShareStaging(keys);
     } catch (err) {
-      const current = draft.current;
-      const formEmpty =
-        !current.title.trim() && !current.note.trim() && !current.link.trim() && !current.file;
-      if (!mounted.current || !formEmpty) return;
-      dropPendingIdea(idea.id);
-      setSaved(false);
-      setDraftTitle(typedTitle);
-      setDraftNote(idea.note ?? "");
-      setDraftLink(typedLink);
-      setFile(savedFile);
-      setError(
-        err instanceof Error && err.message
-          ? `Not saved: ${err.message}`
-          : "Not saved. Tap Add again."
+      restoreDraft(
+        idea,
+        typedTitle,
+        typedLink,
+        savedFiles,
+        err instanceof Error && err.message ? `Not saved: ${err.message}` : "Not saved. Tap Add again."
       );
     }
   }
@@ -338,28 +365,32 @@ export function IdeaCapture({
                 </span>
                 Add a file
               </button>
-              {file ? (
-                <span className="flex min-w-0 flex-1 items-center justify-between gap-2 text-sm">
-                  <span className="min-w-0 truncate text-foreground">{file.name}</span>
-                  <button
-                    type="button"
-                    className="shrink-0 text-muted-foreground hover:text-foreground"
-                    onClick={() => {
-                      setFile(null);
-                      clearFileInputs();
-                    }}
-                  >
-                    Remove
-                  </button>
-                </span>
-              ) : null}
             </div>
+            {files.length > 0 ? (
+              <ul className="space-y-1">
+                {files.map((item, index) => (
+                  <li
+                    key={`${item.name}-${item.size}-${index}`}
+                    className="flex min-w-0 items-center justify-between gap-2 text-sm"
+                  >
+                    <span className="min-w-0 truncate text-foreground">{item.name}</span>
+                    <button
+                      type="button"
+                      className="shrink-0 text-muted-foreground hover:text-foreground"
+                      onClick={() => setFiles((current) => current.filter((_, itemIndex) => itemIndex !== index))}
+                    >
+                      Remove
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
             {sourcesOpen ? (
               <div className="grid grid-cols-4 gap-1.5">
-                <FileSource label="Camera" accept="image/*" capture="environment" onPick={chooseFile} />
-                <FileSource label="Gallery" accept="image/*" onPick={chooseFile} />
-                <FileSource label="Video" accept="video/*" onPick={chooseFile} />
-                <FileSource label="Files" accept={FILE_ACCEPT} onPick={chooseFile} />
+                <FileSource label="Camera" accept="image/*" capture="environment" onPick={chooseFiles} />
+                <FileSource label="Gallery" accept="image/*" multiple onPick={chooseFiles} />
+                <FileSource label="Video" accept="video/*" multiple onPick={chooseFiles} />
+                <FileSource label="Files" accept={FILE_ACCEPT} multiple onPick={chooseFiles} />
               </div>
             ) : null}
           </div>
@@ -378,12 +409,14 @@ function FileSource({
   label,
   accept,
   capture,
+  multiple,
   onPick,
 }: {
   label: string;
   accept: string;
   capture?: "environment";
-  onPick: (file: File | null, input: HTMLInputElement) => void;
+  multiple?: boolean;
+  onPick: (files: File[], input: HTMLInputElement) => void;
 }) {
   return (
     <label className="inline-flex h-10 w-full min-w-0 cursor-pointer items-center justify-center rounded-md border border-border px-1 text-sm text-foreground">
@@ -392,8 +425,19 @@ function FileSource({
         type="file"
         accept={accept}
         {...(capture ? { capture } : {})}
+        {...(multiple ? { multiple: true } : {})}
         className="sr-only"
-        onChange={(event) => onPick(event.target.files?.[0] ?? null, event.target)}
+        onChange={(event) => {
+          const list = event.target.files;
+          const picked: File[] = [];
+          if (list) {
+            for (let index = 0; index < list.length; index += 1) {
+              const item = list[index];
+              if (item) picked.push(item);
+            }
+          }
+          onPick(picked, event.target);
+        }}
       />
     </label>
   );

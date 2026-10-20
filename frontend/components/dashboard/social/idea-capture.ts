@@ -78,3 +78,24 @@ function pullLink(note: string): { link: string; note: string } | null {
     .trim();
   return { link, note: rest };
 }
+
+export const IDEA_KIND_CAP = 10;
+
+export function addIdeaFiles(
+  current: File[],
+  incoming: File[],
+  kindOf: (file: File) => string | null
+): { files: File[]; overflow: boolean } {
+  const files = [...current];
+  let overflow = false;
+  for (const file of incoming) {
+    const kind = kindOf(file);
+    if (!kind) continue;
+    if (files.filter((item) => kindOf(item) === kind).length >= IDEA_KIND_CAP) {
+      overflow = true;
+      continue;
+    }
+    files.push(file);
+  }
+  return { files, overflow };
+}

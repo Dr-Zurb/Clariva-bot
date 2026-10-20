@@ -8,9 +8,9 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { IdeaCapture } from "../IdeaCapture";
 import { FILE_ACCEPT } from "../idea-composer";
-import { ideaCaptureHref, seedIdeaCapture } from "../idea-capture";
-import { createSocialCard, listSocialCards, prepareSocialCardFile } from "../social-cards";
-import { readStagedFilesFromCache } from "@/lib/text/share-target-bridge";
+import { addIdeaFiles, ideaCaptureHref, seedIdeaCapture } from "../idea-capture";
+import { addSocialCardScrap, createSocialCard, listSocialCards } from "../social-cards";
+import { readIdeaStagedFiles } from "@/lib/text/share-target-bridge";
 
 vi.mock("next/link", () => ({
   default: ({
@@ -30,8 +30,15 @@ vi.mock("next/link", () => ({
 vi.mock("../social-cards", () => ({
   createSocialCard: vi.fn(),
   listSocialCards: vi.fn(async () => []),
-  prepareSocialCardFile: vi.fn(async () => "doctor/photo.jpg"),
+  addSocialCardScrap: vi.fn(async () => ({})),
   socialFileIssue: () => null,
+  socialFileKind: (file: File) => {
+    if (file.type.startsWith("image/")) return "photo";
+    if (file.type.startsWith("video/")) return "video";
+    if (file.type.startsWith("audio/")) return "audio";
+    if (file.type.startsWith("application/") || file.type.startsWith("text/")) return "document";
+    return null;
+  },
 }));
 
 vi.mock("@/lib/text/share-target-bridge", () => ({
@@ -40,26 +47,26 @@ vi.mock("@/lib/text/share-target-bridge", () => ({
       .split(",")
       .map((part) => part.trim())
       .filter((part) => part.startsWith("share-target-")),
-  readStagedFilesFromCache: vi.fn(async () => []),
+  readIdeaStagedFiles: vi.fn(async () => []),
   clearShareStaging: vi.fn(async () => undefined),
 }));
 
 const createMock = vi.mocked(createSocialCard);
 const listMock = vi.mocked(listSocialCards);
-const prepareMock = vi.mocked(prepareSocialCardFile);
-const stagedMock = vi.mocked(readStagedFilesFromCache);
+const scrapMock = vi.mocked(addSocialCardScrap);
+const stagedMock = vi.mocked(readIdeaStagedFiles);
 const PENDING_KEY = "halo-idea-pending-v1";
 
 beforeEach(() => {
   window.localStorage.clear();
   createMock.mockReset();
   listMock.mockReset();
-  prepareMock.mockReset();
+  scrapMock.mockReset();
   stagedMock.mockReset();
   stagedMock.mockResolvedValue([]);
   listMock.mockResolvedValue([]);
+  scrapMock.mockResolvedValue({} as Awaited<ReturnType<typeof addSocialCardScrap>>);
   createMock.mockResolvedValue({ id: "card-1" } as Awaited<ReturnType<typeof createSocialCard>>);
-  prepareMock.mockResolvedValue("doctor/photo.jpg");
 });
 
 describe("seedIdeaCapture", () => {
@@ -236,21 +243,68 @@ describe("IdeaCapture", () => {
     expect(createMock).not.toHaveBeenCalled();
   });
 
-  it("attaches the first shared file", async () => {
+  it("attaches every shared file on one thought", async () => {
     const photo = new File(["img"], "shared-1.jpg", { type: "image/jpeg" });
-    stagedMock.mockResolvedValue([photo]);
-    render(<IdeaCapture token="token" title="From the share sheet" fileKeys="share-target-a" />);
+    const pdf = new File(["pdf"], "note.pdf", { type: "application/pdf" });
+    stagedMock.mockResolvedValue([photo, pdf]);
+    render(<IdeaCapture token="token" title="From the share sheet" fileKeys="share-target-a,share-target-b" />);
     expect(await screen.findByText("shared-1.jpg")).toBeInTheDocument();
-    await waitFor(() => expect(prepareMock).toHaveBeenCalledWith("token", photo));
+    expect(screen.getByText("note.pdf")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Add" }));
-    await waitFor(() =>
-      expect(createMock).toHaveBeenCalledWith(
-        "token",
-        "From the share sheet",
-        "thoughts",
-        { filePath: "doctor/photo.jpg" },
-        { keepalive: true }
-      )
+    await waitFor(() => expect(scrapMock).toHaveBeenCalledTimes(2));
+    expect(createMock).toHaveBeenCalledWith(
+      "token",
+      "From the share sheet",
+      "thoughts",
+      {},
+      { keepalive: true }
     );
+    expect(scrapMock).toHaveBeenCalledWith("token", "card-1", photo);
+    expect(scrapMock).toHaveBeenCalledWith("token", "card-1", pdf);
+  });
+
+  it("adds a second file beside the first", () => {
+    render(<IdeaCapture token="token" />);
+    fireEvent.click(screen.getByRole("button", { name: "Add a file" }));
+    const gallery = screen.getByText("Gallery").querySelector('input[type="file"]');
+    if (!(gallery instanceof HTMLInputElement)) throw new Error("missing gallery input");
+    fireEvent.change(gallery, {
+      target: { files: [new File(["a"], "one.jpg", { type: "image/jpeg" })] },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Add a file" }));
+    const galleryAgain = screen.getByText("Gallery").querySelector('input[type="file"]');
+    if (!(galleryAgain instanceof HTMLInputElement)) throw new Error("missing gallery input");
+    fireEvent.change(galleryAgain, {
+      target: { files: [new File(["b"], "two.jpg", { type: "image/jpeg" })] },
+    });
+    expect(screen.getByText("one.jpg")).toBeInTheDocument();
+    expect(screen.getByText("two.jpg")).toBeInTheDocument();
+  });
+
+  it("stops at ten photos and says the pile is full", () => {
+    render(<IdeaCapture token="token" />);
+    fireEvent.click(screen.getByRole("button", { name: "Add a file" }));
+    const gallery = screen.getByText("Gallery").querySelector('input[type="file"]');
+    if (!(gallery instanceof HTMLInputElement)) throw new Error("missing gallery input");
+    fireEvent.change(gallery, {
+      target: {
+        files: Array.from({ length: 11 }, (_, index) => new File(["x"], `p${index}.jpg`, { type: "image/jpeg" })),
+      },
+    });
+    expect(screen.getAllByRole("button", { name: "Remove" })).toHaveLength(10);
+    expect(screen.getByRole("alert")).toHaveTextContent("The pile is full");
+  });
+});
+
+describe("addIdeaFiles", () => {
+  const kindOf = (file: File) => (file.type === "application/pdf" ? "document" : "photo");
+
+  it("keeps ten photos and still takes a document", () => {
+    const photos = Array.from({ length: 10 }, (_, index) => new File(["x"], `p${index}.jpg`, { type: "image/jpeg" }));
+    const pdf = new File(["pdf"], "note.pdf", { type: "application/pdf" });
+    const result = addIdeaFiles(photos, [new File(["y"], "extra.jpg", { type: "image/jpeg" }), pdf], kindOf);
+    expect(result.overflow).toBe(true);
+    expect(result.files).toHaveLength(11);
+    expect(result.files.at(-1)?.name).toBe("note.pdf");
   });
 });

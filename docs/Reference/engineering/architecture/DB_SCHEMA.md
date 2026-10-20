@@ -284,6 +284,8 @@ updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 
 **File store:** private bucket `social-card-files`. Object key is `{doctor_id}/{object_id}.ext` or `{doctor_id}/{card_id}/{object_id}.ext`. SELECT-own on the first folder. No storage write policies. Not the visit-document bucket and not clinic branding.
 
+**Pile:** `social_card_scraps` holds the extra files on a thought. Ten photos, ten videos, ten audio clips, and ten documents. `position` is 0–39. The key is `{doctor_id}/{card_id}/{object_id}.ext`. Do not log the key. RLS owner select and modify where `doctor_id = auth.uid()`.
+
 **RLS:** Enabled. Owner select and modify where `doctor_id = auth.uid()`. Service role still filters by `doctor_id`.
 
 **See:** [CONTRACTS.md](./CONTRACTS.md) social cards.
