@@ -144,27 +144,11 @@ describe("IdeaCapture", () => {
     expect(createMock).not.toHaveBeenCalled();
   });
 
-  it("keeps the camera in the sheet", async () => {
-    const stop = vi.fn();
-    const getUserMedia = vi.fn(async () => ({ getTracks: () => [{ stop }] }));
-    Object.defineProperty(navigator, "mediaDevices", {
-      configurable: true,
-      value: { getUserMedia },
-    });
+  it("adds any card file from one pin", () => {
     render(<IdeaCapture token="token" />);
-    fireEvent.click(screen.getByRole("button", { name: "Camera" }));
-    expect(await screen.findByRole("button", { name: "Back" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Add" })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Back" }));
-    expect(screen.getByRole("button", { name: "Add" })).toBeInTheDocument();
-    expect(stop).toHaveBeenCalled();
-  });
-
-  it("keeps gallery for recent photos and files for any card resource", () => {
-    render(<IdeaCapture token="token" />);
-    expect(screen.getByText("Add a file")).toBeInTheDocument();
-    expect(screen.getByLabelText("Gallery")).toHaveAttribute("accept", "image/*");
-    expect(screen.getByLabelText("Files")).toHaveAttribute("accept", FILE_ACCEPT);
+    expect(screen.getByLabelText("Add a file")).toHaveAttribute("accept", FILE_ACCEPT);
+    expect(screen.queryByRole("button", { name: "Camera" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Gallery" })).not.toBeInTheDocument();
   });
 
   it("opens a shared link with an empty title", () => {
