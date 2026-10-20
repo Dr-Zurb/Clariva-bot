@@ -8,7 +8,7 @@
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import Link from "next/link";
-import { Paperclip } from "lucide-react";
+import { AudioLines, FileText, Film, Paperclip, X } from "lucide-react";
 import { FILE_ACCEPT, NOTE_MAX, normalizeLink } from "./idea-composer";
 import { addIdeaFiles, seedIdeaCapture } from "./idea-capture";
 import {
@@ -160,7 +160,6 @@ export function IdeaCapture({
       setError(result.overflow ? "The pile is full" : issue);
       return result.files;
     });
-    setSourcesOpen(false);
   }
 
   function onSubmit(event: FormEvent) {
@@ -366,25 +365,6 @@ export function IdeaCapture({
                 Add a file
               </button>
             </div>
-            {files.length > 0 ? (
-              <ul className="space-y-1">
-                {files.map((item, index) => (
-                  <li
-                    key={`${item.name}-${item.size}-${index}`}
-                    className="flex min-w-0 items-center justify-between gap-2 text-sm"
-                  >
-                    <span className="min-w-0 truncate text-foreground">{item.name}</span>
-                    <button
-                      type="button"
-                      className="shrink-0 text-muted-foreground hover:text-foreground"
-                      onClick={() => setFiles((current) => current.filter((_, itemIndex) => itemIndex !== index))}
-                    >
-                      Remove
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            ) : null}
             {sourcesOpen ? (
               <div className="grid grid-cols-4 gap-1.5">
                 <FileSource label="Camera" accept="image/*" capture="environment" onPick={chooseFiles} />
@@ -392,6 +372,17 @@ export function IdeaCapture({
                 <FileSource label="Video" accept="video/*" multiple onPick={chooseFiles} />
                 <FileSource label="Files" accept={FILE_ACCEPT} multiple onPick={chooseFiles} />
               </div>
+            ) : null}
+            {files.length > 0 ? (
+              <ul className="space-y-2">
+                {files.map((item, index) => (
+                  <HeldFile
+                    key={`${item.name}-${item.size}-${item.lastModified}-${index}`}
+                    file={item}
+                    onRemove={() => setFiles((current) => current.filter((_, itemIndex) => itemIndex !== index))}
+                  />
+                ))}
+              </ul>
             ) : null}
           </div>
         </div>
@@ -401,6 +392,104 @@ export function IdeaCapture({
           </p>
         ) : null}
       </form>
+    </div>
+  );
+}
+
+function useObjectUrl(file: File): string | null {
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    const next = URL.createObjectURL(file);
+    setUrl(next);
+    return () => URL.revokeObjectURL(next);
+  }, [file]);
+  return url;
+}
+
+function HeldFile({ file, onRemove }: { file: File; onRemove: () => void }): JSX.Element {
+  const url = useObjectUrl(file);
+  const [open, setOpen] = useState(false);
+  const kind = socialFileKind(file);
+  return (
+    <li className="flex min-w-0 items-center gap-2">
+      <button
+        type="button"
+        aria-label={`View ${file.name}`}
+        onClick={() => setOpen(true)}
+        className="flex min-w-0 flex-1 items-center gap-2 rounded-md text-left"
+      >
+        <span className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-md bg-muted text-muted-foreground">
+          {kind === "photo" && url ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={url} alt="" className="h-full w-full object-cover" />
+          ) : null}
+          {kind === "video" && url ? (
+            <video src={url} muted playsInline preload="metadata" className="h-full w-full object-cover" />
+          ) : null}
+          {kind === "video" && !url ? <Film className="h-4 w-4" aria-hidden="true" /> : null}
+          {kind === "audio" ? <AudioLines className="h-4 w-4" aria-hidden="true" /> : null}
+          {kind === "document" || !kind ? <FileText className="h-4 w-4" aria-hidden="true" /> : null}
+        </span>
+        <span className="min-w-0 truncate text-sm text-foreground">{file.name}</span>
+      </button>
+      <button
+        type="button"
+        aria-label={`Remove ${file.name}`}
+        onClick={onRemove}
+        className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+      >
+        <X className="h-4 w-4" aria-hidden="true" />
+      </button>
+      {open && url ? (
+        <FileView file={file} url={url} kind={kind} onClose={() => setOpen(false)} />
+      ) : null}
+    </li>
+  );
+}
+
+function FileView({
+  file,
+  url,
+  kind,
+  onClose,
+}: {
+  file: File;
+  url: string;
+  kind: ReturnType<typeof socialFileKind>;
+  onClose: () => void;
+}): JSX.Element {
+  return (
+    <div
+      className="fixed inset-0 z-[70] flex items-center justify-center bg-black/70 p-4"
+      role="dialog"
+      aria-label={file.name}
+      onMouseDown={onClose}
+    >
+      <div
+        className="flex max-h-[85vh] w-full max-w-lg flex-col gap-3 overflow-hidden rounded-xl bg-card p-3"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <div className="flex items-center gap-2">
+          <p className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">{file.name}</p>
+          <button
+            type="button"
+            aria-label="Close"
+            onClick={onClose}
+            className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+          >
+            <X className="h-4 w-4" aria-hidden="true" />
+          </button>
+        </div>
+        {kind === "photo" ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={url} alt={file.name} className="max-h-[70vh] w-full object-contain" />
+        ) : null}
+        {kind === "video" ? <video src={url} controls playsInline className="max-h-[70vh] w-full" /> : null}
+        {kind === "audio" ? <audio src={url} controls className="w-full" /> : null}
+        {kind === "document" || !kind ? (
+          <iframe title={file.name} src={url} className="h-[70vh] w-full rounded-md border border-border" />
+        ) : null}
+      </div>
     </div>
   );
 }

@@ -86,16 +86,18 @@ export function addIdeaFiles(
   incoming: File[],
   kindOf: (file: File) => string | null
 ): { files: File[]; overflow: boolean } {
-  const files = [...current];
+  const kept = [...current];
+  const added: File[] = [];
   let overflow = false;
   for (const file of incoming) {
     const kind = kindOf(file);
     if (!kind) continue;
-    if (files.filter((item) => kindOf(item) === kind).length >= IDEA_KIND_CAP) {
+    const pile = kept.concat(added);
+    if (pile.filter((item) => kindOf(item) === kind).length >= IDEA_KIND_CAP) {
       overflow = true;
       continue;
     }
-    files.push(file);
+    added.push(file);
   }
-  return { files, overflow };
+  return { files: added.concat(kept), overflow };
 }

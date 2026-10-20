@@ -58,6 +58,12 @@ const stagedMock = vi.mocked(readIdeaStagedFiles);
 const PENDING_KEY = "halo-idea-pending-v1";
 
 beforeEach(() => {
+  if (typeof URL.createObjectURL !== "function") {
+    URL.createObjectURL = () => "blob:preview";
+  }
+  if (typeof URL.revokeObjectURL !== "function") {
+    URL.revokeObjectURL = () => undefined;
+  }
   window.localStorage.clear();
   createMock.mockReset();
   listMock.mockReset();
@@ -263,7 +269,7 @@ describe("IdeaCapture", () => {
     expect(scrapMock).toHaveBeenCalledWith("token", "card-1", pdf);
   });
 
-  it("adds a second file beside the first", () => {
+  it("puts a newer file on top and keeps the sources above the pile", () => {
     render(<IdeaCapture token="token" />);
     fireEvent.click(screen.getByRole("button", { name: "Add a file" }));
     const gallery = screen.getByText("Gallery").querySelector('input[type="file"]');
@@ -271,14 +277,32 @@ describe("IdeaCapture", () => {
     fireEvent.change(gallery, {
       target: { files: [new File(["a"], "one.jpg", { type: "image/jpeg" })] },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Add a file" }));
     const galleryAgain = screen.getByText("Gallery").querySelector('input[type="file"]');
     if (!(galleryAgain instanceof HTMLInputElement)) throw new Error("missing gallery input");
     fireEvent.change(galleryAgain, {
       target: { files: [new File(["b"], "two.jpg", { type: "image/jpeg" })] },
     });
-    expect(screen.getByText("one.jpg")).toBeInTheDocument();
-    expect(screen.getByText("two.jpg")).toBeInTheDocument();
+    const views = screen.getAllByRole("button", { name: /^View / });
+    expect(views.map((node) => node.getAttribute("aria-label"))).toEqual(["View two.jpg", "View one.jpg"]);
+    expect(
+      screen.getByText("Gallery").compareDocumentPosition(screen.getByText("two.jpg")) &
+        Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
+  });
+
+  it("opens a photo so the added file is visible", () => {
+    render(<IdeaCapture token="token" />);
+    fireEvent.click(screen.getByRole("button", { name: "Add a file" }));
+    const gallery = screen.getByText("Gallery").querySelector('input[type="file"]');
+    if (!(gallery instanceof HTMLInputElement)) throw new Error("missing gallery input");
+    fireEvent.change(gallery, {
+      target: { files: [new File(["a"], "one.jpg", { type: "image/jpeg" })] },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "View one.jpg" }));
+    expect(screen.getByRole("dialog", { name: "one.jpg" })).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "one.jpg" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(screen.queryByRole("dialog", { name: "one.jpg" })).not.toBeInTheDocument();
   });
 
   it("stops at ten photos and says the pile is full", () => {
@@ -291,7 +315,7 @@ describe("IdeaCapture", () => {
         files: Array.from({ length: 11 }, (_, index) => new File(["x"], `p${index}.jpg`, { type: "image/jpeg" })),
       },
     });
-    expect(screen.getAllByRole("button", { name: "Remove" })).toHaveLength(10);
+    expect(screen.getAllByRole("button", { name: /^Remove / })).toHaveLength(10);
     expect(screen.getByRole("alert")).toHaveTextContent("The pile is full");
   });
 });
@@ -305,6 +329,6 @@ describe("addIdeaFiles", () => {
     const result = addIdeaFiles(photos, [new File(["y"], "extra.jpg", { type: "image/jpeg" }), pdf], kindOf);
     expect(result.overflow).toBe(true);
     expect(result.files).toHaveLength(11);
-    expect(result.files.at(-1)?.name).toBe("note.pdf");
+    expect(result.files[0]?.name).toBe("note.pdf");
   });
 });
