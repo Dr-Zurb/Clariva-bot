@@ -151,7 +151,9 @@ describe("IdeaCapture", () => {
   it("opens a shared link with an empty title", () => {
     render(<IdeaCapture token="token" note="https://www.instagram.com/reel/abc" />);
     expect(screen.getByLabelText("Title")).toHaveValue("");
-    expect(screen.getByLabelText("Title")).toHaveFocus();
+    expect(screen.getByLabelText("Title")).not.toHaveFocus();
+    expect(screen.getByLabelText("Title")).toHaveAttribute("autocomplete", "halo-idea-title");
+    expect(screen.getByLabelText("Link")).toHaveAttribute("autocomplete", "halo-idea-link");
     expect(screen.getByLabelText("Link")).toHaveValue("https://www.instagram.com/reel/abc");
     expect(screen.getByLabelText("Note")).toHaveValue("");
     expect(screen.getByRole("button", { name: "Add" })).toBeDisabled();
