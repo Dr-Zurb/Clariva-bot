@@ -52,6 +52,18 @@ export function getApiBaseUrl(): string {
   return normalizeBase(process.env.NEXT_PUBLIC_API_URL ?? "");
 }
 
+/** Touch the API so a sleeping host is awake before the doctor taps Add. */
+export function warmApi(): void {
+  if (typeof window === "undefined") return;
+  try {
+    const base = getApiBaseUrl();
+    if (!base) return;
+    void fetch(`${base}/health`, { cache: "no-store", mode: "no-cors" }).catch(() => undefined);
+  } catch {
+    // A missing API address must not block the form.
+  }
+}
+
 export function requireApiBaseUrl(): string {
   const base = getApiBaseUrl();
   // Empty string = same-origin `/api/v1/...` (dev proxy or Funnel path routing).

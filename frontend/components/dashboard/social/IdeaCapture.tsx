@@ -21,6 +21,7 @@ import {
   parseShareTargetKeys,
   readStagedFilesFromCache,
 } from "@/lib/text/share-target-bridge";
+import { warmApi } from "@/lib/api-base";
 
 const fieldClass =
   "w-full min-w-0 max-w-full rounded-md border border-border bg-background px-3 py-2 text-base text-foreground outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring";
@@ -49,6 +50,10 @@ export function IdeaCapture({
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [sourcesOpen, setSourcesOpen] = useState(false);
+
+  useEffect(() => {
+    warmApi();
+  }, []);
 
   useEffect(() => {
     const root = rootRef.current;
