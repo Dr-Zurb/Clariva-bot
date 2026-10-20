@@ -153,12 +153,13 @@ type UploadEnvelope = { path: string; token: string };
 async function socialRequest<T>(
   token: string,
   path: string,
-  init?: { method?: string; body?: unknown }
+  init?: { method?: string; body?: unknown; keepalive?: boolean }
 ): Promise<T> {
   const res = await authorizedFetch(`${requireApiBaseUrl()}${path}`, {
     method: init?.method ?? "GET",
     headers: { "Content-Type": "application/json" },
     body: init?.body === undefined ? undefined : JSON.stringify(init.body),
+    ...(init?.keepalive ? { keepalive: true } : {}),
     token,
   });
   const json = (await res.json().catch(() => ({}))) as {
@@ -329,7 +330,8 @@ export function createSocialCard(
   token: string,
   title: string,
   stage: Exclude<SocialCardStage, "posted" | "custom"> = "thoughts",
-  draft?: { words?: { note?: string }; sourceUrl?: string | null; filePath?: string }
+  draft?: { words?: { note?: string }; sourceUrl?: string | null; filePath?: string },
+  options?: { keepalive?: boolean }
 ): Promise<SocialCard> {
   return socialRequest<CardEnvelope>(token, "/api/v1/social/cards", {
     method: "POST",
@@ -340,6 +342,7 @@ export function createSocialCard(
       ...(draft?.sourceUrl ? { sourceUrl: draft.sourceUrl } : {}),
       ...(draft?.filePath ? { filePath: draft.filePath } : {}),
     },
+    keepalive: options?.keepalive,
   }).then((data) => data.card);
 }
 

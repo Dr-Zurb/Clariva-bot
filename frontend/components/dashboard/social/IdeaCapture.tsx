@@ -10,6 +10,14 @@ import Link from "next/link";
 import { Paperclip } from "lucide-react";
 import { FILE_ACCEPT, normalizeLink } from "./idea-composer";
 import { seedIdeaCapture } from "./idea-capture";
+import {
+  dropPendingIdea,
+  keepPendingIdea,
+  newPendingId,
+  pendingIdeaDraft,
+  resendPendingIdeas,
+  type PendingIdea,
+} from "./idea-pending";
 import { shrinkIdeaPhoto } from "./idea-photo";
 import {
   createSocialCard,
@@ -42,18 +50,28 @@ export function IdeaCapture({
   const seeded = seedIdeaCapture({ title, note, link });
   const rootRef = useRef<HTMLDivElement>(null);
   const prepared = useRef<{ file: File; path: Promise<string> } | null>(null);
+  const mounted = useRef(false);
   const [draftTitle, setDraftTitle] = useState(seeded.title);
   const [draftNote, setDraftNote] = useState(seeded.note);
   const [draftLink, setDraftLink] = useState(seeded.link);
   const [file, setFile] = useState<File | null>(null);
-  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [sourcesOpen, setSourcesOpen] = useState(false);
+  const draft = useRef({ title: draftTitle, note: draftNote, link: draftLink, file });
+  draft.current = { title: draftTitle, note: draftNote, link: draftLink, file };
 
   useEffect(() => {
+    mounted.current = true;
     warmApi();
+    return () => {
+      mounted.current = false;
+    };
   }, []);
+
+  useEffect(() => {
+    if (token) void resendPendingIdeas(token);
+  }, [token]);
 
   useEffect(() => {
     const root = rootRef.current;
@@ -98,7 +116,7 @@ export function IdeaCapture({
   }, [fileKeys]);
 
   useEffect(() => {
-    if (!file) {
+    if (!file || !token) {
       prepared.current = null;
       return;
     }
@@ -144,10 +162,10 @@ export function IdeaCapture({
     setFile(next);
   }
 
-  async function onSubmit(event: FormEvent) {
+  function onSubmit(event: FormEvent) {
     event.preventDefault();
     const nextTitle = draftTitle.trim();
-    if (!nextTitle || busy) return;
+    if (!nextTitle || !token) return;
     const issue = file ? socialFileIssue(file) : null;
     if (issue) {
       setError(issue);
@@ -160,35 +178,60 @@ export function IdeaCapture({
       return;
     }
     const nextNote = draftNote.trim();
-    setBusy(true);
+    const savedFile = file;
+    const upload = savedFile
+      ? prepared.current?.file === savedFile
+        ? prepared.current.path
+        : shrinkIdeaPhoto(savedFile).then((small) => prepareSocialCardFile(token, small))
+      : null;
+    const idea: PendingIdea = {
+      id: newPendingId(),
+      title: nextTitle,
+      ...(nextNote ? { note: nextNote } : {}),
+      ...(sourceUrl ? { sourceUrl } : {}),
+      at: Date.now(),
+    };
+    keepPendingIdea(idea);
+    const keys = parseShareTargetKeys(fileKeys);
+    if (keys.length > 0) void clearShareStaging(keys);
     setError(null);
+    setSaved(true);
+    clearDraft();
+    if (document.activeElement instanceof HTMLElement)
+      document.activeElement.blur();
+    void finishSave(idea, upload, savedFile, typedLink);
+  }
+
+  async function finishSave(
+    idea: PendingIdea,
+    upload: Promise<string> | null,
+    savedFile: File | null,
+    typedLink: string
+  ) {
     try {
-      const filePath = file
-        ? await (prepared.current?.file === file
-            ? prepared.current.path
-            : shrinkIdeaPhoto(file).then((small) =>
-                prepareSocialCardFile(token, small)
-              ))
-        : undefined;
-      await createSocialCard(token, nextTitle, "thoughts", {
-        ...(nextNote ? { words: { note: nextNote } } : {}),
-        ...(sourceUrl ? { sourceUrl } : {}),
-        ...(filePath ? { filePath } : {}),
+      const filePath = upload ? await upload : undefined;
+      const sent = filePath ? { ...idea, filePath } : idea;
+      if (filePath) keepPendingIdea(sent);
+      await createSocialCard(token, idea.title, "thoughts", pendingIdeaDraft(sent), {
+        keepalive: true,
       });
-      const keys = parseShareTargetKeys(fileKeys);
-      if (keys.length > 0) void clearShareStaging(keys);
-      setSaved(true);
-      clearDraft();
-      if (document.activeElement instanceof HTMLElement)
-        document.activeElement.blur();
+      dropPendingIdea(idea.id);
     } catch (err) {
+      const current = draft.current;
+      const formEmpty =
+        !current.title.trim() && !current.note.trim() && !current.link.trim() && !current.file;
+      if (!mounted.current || !formEmpty) return;
+      dropPendingIdea(idea.id);
+      setSaved(false);
+      setDraftTitle(idea.title);
+      setDraftNote(idea.note ?? "");
+      setDraftLink(typedLink);
+      setFile(savedFile);
       setError(
         err instanceof Error && err.message
-          ? err.message
-          : "Could not save this idea."
+          ? `Not saved: ${err.message}`
+          : "Not saved. Tap Add again."
       );
-    } finally {
-      setBusy(false);
     }
   }
 
@@ -204,10 +247,10 @@ export function IdeaCapture({
             <h1 className="text-xl font-semibold text-foreground">New idea</h1>
             <button
               type="submit"
-              disabled={busy || !token || draftTitle.trim().length === 0}
+              disabled={!token || draftTitle.trim().length === 0}
               className="h-9 shrink-0 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground disabled:opacity-50"
             >
-              {busy ? "Saving…" : "Add"}
+              Add
             </button>
           </div>
           {saved ? (
@@ -257,7 +300,7 @@ export function IdeaCapture({
             autoComplete="halo-idea-note"
             value={draftNote}
             rows={2}
-            maxLength={2000}
+            maxLength={1000}
             className={fieldClass}
             onChange={(event) => setDraftNote(event.target.value)}
           />
@@ -276,6 +319,7 @@ export function IdeaCapture({
             autoCapitalize="off"
             spellCheck={false}
             value={draftLink}
+            maxLength={500}
             inputMode="url"
             className={fieldClass}
             onChange={(event) => setDraftLink(event.target.value)}

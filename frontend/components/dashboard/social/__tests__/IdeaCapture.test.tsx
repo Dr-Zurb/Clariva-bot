@@ -9,7 +9,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { IdeaCapture } from "../IdeaCapture";
 import { FILE_ACCEPT } from "../idea-composer";
 import { ideaCaptureHref, seedIdeaCapture } from "../idea-capture";
-import { createSocialCard, prepareSocialCardFile } from "../social-cards";
+import { createSocialCard, listSocialCards, prepareSocialCardFile } from "../social-cards";
 import { readStagedFilesFromCache } from "@/lib/text/share-target-bridge";
 
 vi.mock("next/link", () => ({
@@ -29,6 +29,7 @@ vi.mock("next/link", () => ({
 
 vi.mock("../social-cards", () => ({
   createSocialCard: vi.fn(),
+  listSocialCards: vi.fn(async () => []),
   prepareSocialCardFile: vi.fn(async () => "doctor/photo.jpg"),
   socialFileIssue: () => null,
 }));
@@ -44,14 +45,19 @@ vi.mock("@/lib/text/share-target-bridge", () => ({
 }));
 
 const createMock = vi.mocked(createSocialCard);
+const listMock = vi.mocked(listSocialCards);
 const prepareMock = vi.mocked(prepareSocialCardFile);
 const stagedMock = vi.mocked(readStagedFilesFromCache);
+const PENDING_KEY = "halo-idea-pending-v1";
 
 beforeEach(() => {
+  window.localStorage.clear();
   createMock.mockReset();
+  listMock.mockReset();
   prepareMock.mockReset();
   stagedMock.mockReset();
   stagedMock.mockResolvedValue([]);
+  listMock.mockResolvedValue([]);
   createMock.mockResolvedValue({ id: "card-1" } as Awaited<ReturnType<typeof createSocialCard>>);
   prepareMock.mockResolvedValue("doctor/photo.jpg");
 });
@@ -126,13 +132,61 @@ describe("IdeaCapture", () => {
     fireEvent.click(screen.getByRole("button", { name: "Add" }));
 
     await waitFor(() =>
-      expect(createMock).toHaveBeenCalledWith("token", "Fees reel", "thoughts", {
-        words: { note: "New slot" },
-      })
+      expect(createMock).toHaveBeenCalledWith(
+        "token",
+        "Fees reel",
+        "thoughts",
+        { words: { note: "New slot" } },
+        { keepalive: true }
+      )
     );
     expect(await screen.findByRole("status")).toHaveTextContent("Saved to Thoughts.");
     expect(screen.getByLabelText("Title")).toHaveValue("");
     expect(screen.getByRole("link", { name: "Open the board" })).toHaveAttribute("href", "/dashboard/social");
+    await waitFor(() => expect(window.localStorage.getItem(PENDING_KEY)).toBeNull());
+  });
+
+  it("shows saved before the server answers", () => {
+    createMock.mockReturnValue(new Promise(() => undefined));
+    render(<IdeaCapture token="token" />);
+    fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Clinic hours" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    expect(screen.getByRole("status")).toHaveTextContent("Saved to Thoughts.");
+    expect(screen.getByLabelText("Title")).toHaveValue("");
+    expect(window.localStorage.getItem(PENDING_KEY)).toContain("Clinic hours");
+  });
+
+  it("puts the idea back when the save fails", async () => {
+    createMock.mockRejectedValue(new Error("Request failed"));
+    render(<IdeaCapture token="token" />);
+    fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Clinic hours" } });
+    fireEvent.change(screen.getByLabelText("Note"), { target: { value: "Evening slot" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Not saved");
+    expect(screen.getByLabelText("Title")).toHaveValue("Clinic hours");
+    expect(screen.getByLabelText("Note")).toHaveValue("Evening slot");
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(window.localStorage.getItem(PENDING_KEY)).toBeNull();
+  });
+
+  it("sends an idea a closed sheet left behind, once", async () => {
+    const at = Date.now() - 10 * 60 * 1000;
+    window.localStorage.setItem(
+      PENDING_KEY,
+      JSON.stringify([
+        { id: "a", title: "Left behind", note: "From the reel", at },
+        { id: "b", title: "Already in", at },
+      ])
+    );
+    listMock.mockResolvedValue([
+      { title: "Already in", sourceUrl: null, createdAt: new Date(at).toISOString() },
+    ] as Awaited<ReturnType<typeof listSocialCards>>);
+    render(<IdeaCapture token="token" />);
+    await waitFor(() => expect(window.localStorage.getItem(PENDING_KEY)).toBeNull());
+    expect(createMock).toHaveBeenCalledTimes(1);
+    expect(createMock).toHaveBeenCalledWith("token", "Left behind", "thoughts", {
+      words: { note: "From the reel" },
+    });
   });
 
   it("refuses a title-only save when the link is not an address", async () => {
@@ -174,9 +228,13 @@ describe("IdeaCapture", () => {
     await waitFor(() => expect(prepareMock).toHaveBeenCalledWith("token", photo));
     fireEvent.click(screen.getByRole("button", { name: "Add" }));
     await waitFor(() =>
-      expect(createMock).toHaveBeenCalledWith("token", "From the share sheet", "thoughts", {
-        filePath: "doctor/photo.jpg",
-      })
+      expect(createMock).toHaveBeenCalledWith(
+        "token",
+        "From the share sheet",
+        "thoughts",
+        { filePath: "doctor/photo.jpg" },
+        { keepalive: true }
+      )
     );
   });
 });
