@@ -9,6 +9,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { FILE_ACCEPT, normalizeLink } from "./idea-composer";
 import { seedIdeaCapture } from "./idea-capture";
+import { shrinkIdeaPhoto } from "./idea-photo";
 import {
   createSocialCard,
   prepareSocialCardFile,
@@ -50,44 +51,23 @@ export function IdeaCapture({
 
   useEffect(() => {
     const root = rootRef.current;
-    const parent = root?.parentElement;
-    if (!root || !parent) return;
     const viewport = window.visualViewport;
+    if (!root || !viewport) return;
     let seen = false;
-    let lastHeight = viewport?.height ?? window.innerHeight;
+    let lastHeight = viewport.height;
 
-    function fit() {
-      const parentRect = parent.getBoundingClientRect();
-      const nextViewport = window.visualViewport;
-      const visibleTop = nextViewport?.offsetTop ?? 0;
-      const visibleBottom = nextViewport
-        ? nextViewport.offsetTop + nextViewport.height
-        : window.innerHeight;
-      const top = Math.max(parentRect.top, visibleTop);
-      const height = Math.max(240, Math.round(visibleBottom - top));
-      parent.scrollTop = 0;
-      root.style.height = `${height}px`;
-      root.style.maxHeight = `${height}px`;
-
-      const nextHeight = nextViewport?.height ?? window.innerHeight;
+    function onResize() {
+      const nextHeight = viewport.height;
       if (seen && nextHeight - lastHeight > 100) {
         const active = document.activeElement;
-        if (active instanceof HTMLElement && root.contains(active))
-          active.blur();
+        if (active instanceof HTMLElement && root.contains(active)) active.blur();
       }
       seen = true;
       lastHeight = nextHeight;
     }
 
-    fit();
-    viewport?.addEventListener("resize", fit);
-    viewport?.addEventListener("scroll", fit);
-    window.addEventListener("resize", fit);
-    return () => {
-      viewport?.removeEventListener("resize", fit);
-      viewport?.removeEventListener("scroll", fit);
-      window.removeEventListener("resize", fit);
-    };
+    viewport.addEventListener("resize", onResize);
+    return () => viewport.removeEventListener("resize", onResize);
   }, []);
 
   useEffect(() => {
@@ -116,7 +96,7 @@ export function IdeaCapture({
       return;
     }
     if (prepared.current?.file === file) return;
-    const path = prepareSocialCardFile(token, file);
+    const path = shrinkIdeaPhoto(file).then((small) => prepareSocialCardFile(token, small));
     prepared.current = { file, path };
     void path.catch(() => undefined);
   }, [file, token]);
@@ -151,7 +131,7 @@ export function IdeaCapture({
       const filePath = file
         ? await (prepared.current?.file === file
             ? prepared.current.path
-            : prepareSocialCardFile(token, file))
+            : shrinkIdeaPhoto(file).then((small) => prepareSocialCardFile(token, small)))
         : undefined;
       await createSocialCard(token, nextTitle, "thoughts", {
         ...(nextNote ? { words: { note: nextNote } } : {}),
@@ -162,7 +142,6 @@ export function IdeaCapture({
       if (keys.length > 0) void clearShareStaging(keys);
       setSaved(true);
       clearDraft();
-      window.history.replaceState(null, "", "/dashboard/social/idea");
       if (document.activeElement instanceof HTMLElement)
         document.activeElement.blur();
     } catch (err) {
@@ -177,17 +156,13 @@ export function IdeaCapture({
   }
 
   return (
-    <div
-      ref={rootRef}
-      data-idea-capture
-      className="mx-auto flex min-h-full w-full max-w-md flex-col"
-    >
+    <div ref={rootRef} data-idea-capture className="mx-auto w-full max-w-md">
       <form
-        className="flex min-h-0 flex-1 flex-col"
+        className="space-y-3"
         autoComplete="off"
         onSubmit={(event) => void onSubmit(event)}
       >
-        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto">
+        <div className="space-y-3">
           <h1 className="text-xl font-semibold text-foreground">New idea</h1>
           {saved ? (
             <p
