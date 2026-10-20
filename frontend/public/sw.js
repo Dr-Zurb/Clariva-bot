@@ -53,26 +53,35 @@
  * Next app.
  */
 
-const SW_VERSION = "v8-2026-10-20-open";
+const SW_VERSION = "v9-2026-10-20-route";
 const SHARE_TARGET_CACHE = "share-target-staging-v1";
 const SHARE_TARGET_STALE_MS = 30 * 60 * 1000;
 const IDEA_CACHE = `idea-launch-${SW_VERSION}`;
-const IDEA_ASSETS = ["/idea-open.html", "/idea-open.js"];
+const IDEA_SHEET = "/idea-open.html";
+const IDEA_LAUNCH_PATHS = ["/c/idea", "/dashboard/social/idea"];
 
 self.addEventListener("install", (event) => {
+  // The New idea icon is answered from Cache Storage by the browser itself,
+  // so this worker does not have to start first. Only the bare address is
+  // routed. A shared link carries a query and still reaches the fetch handler.
+  // A rejected route leaves the fetch handler in charge; install still succeeds.
+  if (typeof event.addRoutes === "function") {
+    event
+      .addRoutes(
+        IDEA_LAUNCH_PATHS.map((pathname) => ({
+          condition: { urlPattern: { pathname, search: "" }, requestMode: "navigate" },
+          source: { cacheName: IDEA_CACHE },
+        })),
+      )
+      .catch(() => undefined);
+  }
   // Skip the waiting phase so this SW becomes active immediately.
   // The previous SW (if any) is replaced on the next activate
   // event. Combined with `clients.claim()` below, the upgrade is
   // seamless for the user — no reload required.
   event.waitUntil(
     (async () => {
-      const cache = await caches.open(IDEA_CACHE);
-      await Promise.all(
-        IDEA_ASSETS.map(async (path) => {
-          const res = await cachedIdeaAsset(path, cache);
-          if (!res.ok || !(await cache.match(path))) throw new Error("idea sheet missing");
-        }),
-      );
+      await storeIdeaSheet();
       await self.skipWaiting();
     })(),
   );
@@ -155,26 +164,50 @@ self.addEventListener("push", (event) => {
 // ---------------------------------------------------------------------------
 
 function isIdeaLaunch(pathname) {
-  return pathname === "/c/idea" || pathname === "/dashboard/social/idea";
+  return IDEA_LAUNCH_PATHS.includes(pathname);
 }
 
-async function cachedIdeaAsset(path, openCache) {
-  const cache = openCache || (await caches.open(IDEA_CACHE));
-  const hit = await cache.match(path);
+async function fetchIdeaText(path) {
+  const net = new URL(path, self.location.origin);
+  net.searchParams.set("sw-net", "1");
+  const res = await fetch(net.href, { cache: "no-store" });
+  if (!res.ok) throw new Error("idea sheet missing");
+  return res.text();
+}
+
+// One document with the script inside, so opening the sheet is a single
+// cache read and the form works at first paint.
+async function buildIdeaSheet() {
+  const [html, js] = await Promise.all([fetchIdeaText(IDEA_SHEET), fetchIdeaText("/idea-open.js")]);
+  const marker = '<script type="module" src="/idea-open.js"></script>';
+  if (!html.includes(marker)) throw new Error("idea sheet script missing");
+  const inline = `<script type="module">${js.replace(/<\/script/gi, "<\\/script")}</script>`;
+  return html.replace(marker, () => inline);
+}
+
+function ideaSheetResponse(text) {
+  return new Response(text, {
+    headers: { "Content-Type": "text/html; charset=utf-8" },
+  });
+}
+
+async function storeIdeaSheet() {
+  const text = await buildIdeaSheet();
+  const cache = await caches.open(IDEA_CACHE);
+  await Promise.all(
+    [IDEA_SHEET, ...IDEA_LAUNCH_PATHS].map((path) => cache.put(path, ideaSheetResponse(text))),
+  );
+}
+
+async function cachedIdeaSheet() {
+  const cache = await caches.open(IDEA_CACHE);
+  const hit = await cache.match(IDEA_SHEET);
   if (hit) return hit;
   try {
-    const net = new URL(path, self.location.origin);
-    net.searchParams.set("sw-net", "1");
-    const res = await fetch(net.href);
-    if (res.ok) await cache.put(path, res.clone());
-    return res;
+    await storeIdeaSheet();
+    return (await cache.match(IDEA_SHEET)) || ideaSheetResponse(await buildIdeaSheet());
   } catch {
-    if (path.endsWith(".html")) {
-      return new Response("<!doctype html><title>New idea</title><h1>New idea</h1>", {
-        headers: { "Content-Type": "text/html; charset=utf-8" },
-      });
-    }
-    return new Response("", { status: 503 });
+    return ideaSheetResponse("<!doctype html><title>New idea</title><h1>New idea</h1>");
   }
 }
 
@@ -191,19 +224,15 @@ self.addEventListener("fetch", (event) => {
   }
   if (event.request.method !== "GET" || url.origin !== self.location.origin) return;
   if (url.searchParams.has("sw-net")) return;
-  if (url.pathname === "/idea-open.html" || url.pathname === "/idea-open.js") {
-    event.respondWith(cachedIdeaAsset(url.pathname));
-    return;
-  }
-  // The installed shortcut used to open the dashboard, which stays on the
-  // launch logo until a sleeping server answers. Serve the sheet already
-  // stored on the phone. `?net=1` still loads the full app page.
+  // Shared links (with a query), and browsers without static routes, land
+  // here. Serve the sheet already stored on the phone. `?net=1` still loads
+  // the full app page.
   if (
     event.request.mode === "navigate" &&
-    isIdeaLaunch(url.pathname) &&
+    (isIdeaLaunch(url.pathname) || url.pathname === IDEA_SHEET) &&
     !url.searchParams.has("net")
   ) {
-    event.respondWith(cachedIdeaAsset("/idea-open.html"));
+    event.respondWith(cachedIdeaSheet());
   }
 });
 
