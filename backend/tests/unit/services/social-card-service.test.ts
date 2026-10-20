@@ -181,6 +181,18 @@ describe('social cards', () => {
         words: { note: 'Parents keep asking when to come in' },
       }).words?.note
     ).toBe('Parents keep asking when to come in');
+    expect(
+      createSocialCardSchema.parse({
+        title: 'Fees for a first visit',
+        words: { note: 'a'.repeat(4000) },
+      }).words?.note
+    ).toHaveLength(4000);
+    expect(() =>
+      createSocialCardSchema.parse({
+        title: 'Fees for a first visit',
+        words: { note: 'a'.repeat(4001) },
+      })
+    ).toThrow(ZodError);
   });
 
   it('creates Ready when the file belongs to this doctor', async () => {

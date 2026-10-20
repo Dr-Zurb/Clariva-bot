@@ -117,6 +117,13 @@ export function SocialCardPanel({
   const [postUrl, setPostUrl] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [saveMark, setSaveMark] = useState<"idle" | "saving" | "saved">("idle");
+  const savedKey = useRef<string | null>(null);
+  const saveChain = useRef(Promise.resolve());
+  const wordsRef = useRef(words);
+  wordsRef.current = words;
+  const draftRef = useRef({ title, topic, note, links });
+  draftRef.current = { title, topic, note, links };
   const [handle, setHandle] = useState("");
   const [photo, setPhoto] = useState<string | null>(null);
   const isThought =
@@ -251,12 +258,116 @@ export function SocialCardPanel({
     }
   }
 
+  function thoughtKey(snap: { title: string; topic: string; note: string; links: ResourceLink[] }): string {
+    return JSON.stringify({
+      title: snap.title.trim() || "untitled",
+      topic: snap.topic,
+      note: snap.note,
+      links: snap.links.map((item) => `${item.id}|${item.url}`),
+    });
+  }
+
+  function saveThought(): Promise<boolean> {
+    if (!isThought) return Promise.resolve(true);
+    const key = thoughtKey(draftRef.current);
+    if (savedKey.current === key) return Promise.resolve(true);
+    const run = saveChain.current.then(async () => {
+      const latest = draftRef.current;
+      const latestTitle = latest.title.trim() || "untitled";
+      const latestKey = thoughtKey(latest);
+      if (savedKey.current === latestKey) return true;
+      setSaveMark("saving");
+      try {
+        const keepLinks =
+          latest.links.length > 0 || Boolean(card.sourceUrl) || (card.links?.length ?? 0) > 0;
+        await updateSocialCard(token, card.id, {
+          title: latestTitle,
+          topic: latest.topic.trim() || null,
+          ...(keepLinks
+            ? { links: latest.links, sourceUrl: latest.links[0]?.url ?? null }
+            : { sourceUrl: null }),
+          words: withNote(wordsRef.current, latest.note),
+        });
+        savedKey.current = latestKey;
+        if (!latest.title.trim()) setTitle(latestTitle);
+        setSaveMark(thoughtKey(draftRef.current) === latestKey ? "saved" : "saving");
+        await onSaved();
+        return true;
+      } catch (err: unknown) {
+        setError(err instanceof Error ? err.message : "Could not save the card");
+        setSaveMark("idle");
+        return false;
+      }
+    });
+    saveChain.current = run.then(
+      () => undefined,
+      () => undefined
+    );
+    return run;
+  }
+
+  const saveThoughtRef = useRef(saveThought);
+  saveThoughtRef.current = saveThought;
+
+  useEffect(() => {
+    if (!isThought) return;
+    const key = thoughtKey(draftRef.current);
+    if (savedKey.current === null) {
+      savedKey.current = key;
+      return;
+    }
+    if (key === savedKey.current) return;
+    setSaveMark("saving");
+    const id = window.setTimeout(() => {
+      void saveThoughtRef.current();
+    }, 400);
+    return () => window.clearTimeout(id);
+  }, [isThought, title, topic, note, links]);
+
+  function pasteLink(url: string, at: number): void {
+    const next = normalizeLink(url);
+    if (!next) return;
+    const id = links.find((item) => item.url === next)?.id ?? crypto.randomUUID();
+    setLinks((current) => (current.some((item) => item.url === next) ? current : [...current, { id, url: next }]));
+    setNote((current) => placeLink(current, id, at));
+  }
+
+  function unchangedThought(): boolean {
+    const key = thoughtKey(draftRef.current);
+    return savedKey.current === null || savedKey.current === key;
+  }
+
+  function dismissThought(): void {
+    if (unchangedThought()) {
+      onClose();
+      return;
+    }
+    void saveThought().then((ok) => {
+      if (ok) onClose();
+    });
+  }
+
+  function relocateThought(columnId: string): void {
+    if (unchangedThought()) {
+      onMove(columnId);
+      onClose();
+      return;
+    }
+    void saveThought().then((ok) => {
+      if (!ok) return;
+      onMove(columnId);
+      onClose();
+    });
+  }
+
   async function startMaking(nextFormat: SocialCardFormat): Promise<void> {
+    const flushed = await saveThought();
+    if (!flushed) return;
     const making = columns.find((column) => column.kind === "making");
-    const nextTitle = title.trim();
+    const nextTitle = title.trim() || "untitled";
     const typedLink = link.trim();
     const nextLink = typedLink ? normalizeLink(typedLink) ?? "" : "";
-    if (!making || !nextTitle || busy) return;
+    if (!making || busy) return;
     if (typedLink && !nextLink) {
       setError("Use a link");
       return;
@@ -674,14 +785,17 @@ export function SocialCardPanel({
         onRemoveItem={(id) => void removeItem(id)}
         onPut={(id, at) => setNote((current) => placeFile(current, id, at))}
         onPutLink={(id, at) => setNote((current) => placeLink(current, id, at))}
-        onChoose={(columnId) => {
-          onMove(columnId);
-          onClose();
-        }}
+        saveMark={saveMark}
+        columns={columns}
+        currentColumnId={currentColumnId}
+        onPasteLink={pasteLink}
+        onRelocate={relocateThought}
+        onWarn={setError}
+        onChoose={relocateThought}
         onStartMaking={(nextFormat) => void startMaking(nextFormat)}
         onDelete={onDelete}
-        onClose={onClose}
-        onSubmit={() => void persist()}
+        onClose={dismissThought}
+        onSubmit={() => void saveThought()}
       />
     );
   }
@@ -713,6 +827,7 @@ export function SocialCardPanel({
         onTopic={setTopic}
         onNote={setNote}
         onAskLink={() => setAskLink(true)}
+        onPasteLink={pasteLink}
         onAddLink={addResourceLink}
         onRemoveLink={removeResourceLink}
         onPutLink={(id, at) => setNote((current) => placeLink(current, id, at))}
@@ -1676,6 +1791,7 @@ function Composer({
   onTopic,
   onNote,
   onAskLink,
+  onPasteLink,
   onAddLink,
   onRemoveLink,
   onPutLink,
@@ -1731,6 +1847,7 @@ function Composer({
   onTopic: (value: string) => void;
   onNote: (value: string) => void;
   onAskLink: () => void;
+  onPasteLink: (url: string, line: number) => void;
   onAddLink: (url: string) => void;
   onRemoveLink: (id: string) => void;
   onPutLink: (id: string, at: number) => void;
@@ -1900,7 +2017,9 @@ function Composer({
                     fileRef.current?.click();
                   }}
                   onLink={onAskLink}
+                  onPasteLink={onPasteLink}
                   onLine={setLine}
+                  onDropFiles={(list, at) => onAddFiles(list, at)}
                   onDropResource={(kind, id, at) => (kind === "file" ? onPut(id, at) : onPutLink(id, at))}
                   files={files}
                   links={links}
@@ -2133,6 +2252,12 @@ function ThoughtSheet({
   onAddFiles,
   onRemoveItem,
   onPut,
+  saveMark,
+  columns,
+  currentColumnId,
+  onPasteLink,
+  onRelocate,
+  onWarn,
   onChoose,
   onStartMaking,
   onDelete,
@@ -2162,6 +2287,12 @@ function ThoughtSheet({
   onAddFiles: (files: File[], at: number | null) => void;
   onRemoveItem: (id: string) => void;
   onPut: (id: string, at: number) => void;
+  saveMark: "idle" | "saving" | "saved";
+  columns: readonly PanelColumn[];
+  currentColumnId: string;
+  onPasteLink: (url: string, line: number) => void;
+  onRelocate: (columnId: string) => void;
+  onWarn: (message: string) => void;
   onChoose: (columnId: string) => void;
   onStartMaking: (format: SocialCardFormat) => void;
   onDelete: () => void;
@@ -2172,6 +2303,27 @@ function ThoughtSheet({
   const insertAt = useRef<number | null>(null);
   const [line, setLine] = useState(0);
   const [picking, setPicking] = useState(false);
+  const [actions, setActions] = useState(false);
+  function chooseColumn(columnId: string): void {
+    const column = columns.find((item) => item.id === columnId);
+    if (!column || column.id === currentColumnId) return;
+    if (column.kind === "making") {
+      setPicking(true);
+      return;
+    }
+    if (column.kind === "ready" && !card.hasFile) {
+      onWarn("Ready needs a file");
+      return;
+    }
+    if (
+      column.kind === "ready" &&
+      (card.fileKind === "document" || card.fileKind === "audio" || card.postable === false)
+    ) {
+      onWarn(card.postable === false ? "Ready needs a JPEG, PNG, WebP, MP4, or MOV" : "Ready needs a photo or a video");
+      return;
+    }
+    onRelocate(columnId);
+  }
   const making = card.stage === "chosen";
   const { over, dropProps } = useSheetFileDrop((next) => onAddFiles(next, null));
   useEffect(() => {
@@ -2224,7 +2376,18 @@ function ThoughtSheet({
         }}
       >
         <div className="flex items-center gap-2 px-5 py-3">
-          <p className="text-sm font-medium text-foreground">Thought</p>
+          <select
+            aria-label="Column"
+            value={currentColumnId}
+            onChange={(event) => chooseColumn(event.target.value)}
+            className="h-8 max-w-[14rem] truncate bg-transparent text-sm font-medium text-foreground outline-none"
+          >
+            {columns.map((column) => (
+              <option key={column.id} value={column.id}>
+                {column.label}
+              </option>
+            ))}
+          </select>
           <div className="ml-auto flex items-center gap-1">
             {topic.trim() ? (
               <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs text-foreground">
@@ -2251,6 +2414,7 @@ function ThoughtSheet({
           </div>
         </div>
         <div className="flex min-h-0 flex-1 flex-col px-6 pb-2">
+          <div className="mx-auto flex min-h-0 w-full max-w-[43.75rem] flex-1 flex-col">
           <input
             aria-label="Title"
             value={title}
@@ -2267,7 +2431,9 @@ function ThoughtSheet({
               fileRef.current?.click();
             }}
             onLink={onAskLink}
+            onPasteLink={onPasteLink}
             onLine={setLine}
+            onDropFiles={(list, at) => onAddFiles(list, at)}
             onDropResource={(kind, id, at) => (kind === "file" ? onPut(id, at) : onPutLink(id, at))}
             files={files}
             links={links}
@@ -2277,16 +2443,36 @@ function ThoughtSheet({
               {error}
             </p>
           ) : null}
+          </div>
         </div>
 
         <div className="flex items-center gap-2 border-t border-border px-4 py-3">
-          <button
-            type="button"
-            onClick={onDelete}
-            className="text-sm text-muted-foreground hover:text-destructive"
-          >
-            Delete
-          </button>
+          <p className="text-sm text-muted-foreground" role="status">
+            {saveMark === "saving" ? "Saving" : saveMark === "saved" ? "Saved" : ""}
+          </p>
+          <div className="relative">
+            <button
+              type="button"
+              aria-label="Card actions"
+              aria-expanded={actions}
+              onClick={() => setActions((open) => !open)}
+              className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+            >
+              <EllipsisVertical className="h-4 w-4" aria-hidden="true" />
+            </button>
+            {actions ? (
+              <div role="menu" aria-label="Card actions" className="absolute bottom-10 left-0 z-20 w-36 rounded-lg border border-border bg-card py-1 shadow-lg">
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={onDelete}
+                  className="w-full px-3 py-1.5 text-left text-sm text-destructive hover:bg-muted"
+                >
+                  Delete
+                </button>
+              </div>
+            ) : null}
+          </div>
           <input
             ref={fileRef}
             type="file"
@@ -2328,7 +2514,7 @@ function ThoughtSheet({
                 type="button"
                 disabled={busy}
                 onClick={() => setPicking(true)}
-                className="h-9 rounded-md border border-border px-3 text-sm text-foreground hover:bg-muted disabled:opacity-50"
+                className="h-9 rounded-md bg-primary px-3 text-sm text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
               >
                 Start making
               </button>
@@ -2336,18 +2522,11 @@ function ThoughtSheet({
               <button
                 type="button"
                 onClick={() => onChoose(chosenId)}
-                className="h-9 rounded-md border border-border px-3 text-sm text-foreground hover:bg-muted"
+                className="h-9 rounded-md bg-primary px-3 text-sm text-primary-foreground hover:bg-primary/90"
               >
                 Choose
               </button>
             ) : null}
-            <button
-              type="submit"
-              disabled={busy || title.trim().length === 0}
-              className="h-9 rounded-md bg-primary px-3 text-sm text-primary-foreground disabled:opacity-50"
-            >
-              Save
-            </button>
           </div>
         </div>
       </form>

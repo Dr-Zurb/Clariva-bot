@@ -3,6 +3,7 @@
 /**
  * Content board (soc-04, soc-05, soc-15, soc-17, soc-18, soc-21).
  * A card is added from the column it belongs in. Ready asks for the file.
+ * A right arrow on a card moves it into the next column.
  * Each column filters and sorts on its own, for this sitting.
  * Expand opens that column over the board, grouped by topic.
  */
@@ -45,7 +46,7 @@ import {
   type AnimateLayoutChanges,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { Check, Link2, Maximize2, MoreHorizontal, Paperclip, Plus, X } from "lucide-react";
+import { ArrowRight, Check, Link2, Maximize2, MoreHorizontal, Paperclip, Plus, X } from "lucide-react";
 import {
   IdeaNote,
   PhotoControl,
@@ -454,6 +455,7 @@ function NewIdeaDialog({
           </div>
         </div>
         <div className="flex min-h-0 flex-1 flex-col px-6 pb-2">
+          <div className="mx-auto flex min-h-0 w-full max-w-[43.75rem] flex-1 flex-col">
           <input
             ref={titleRef}
             aria-label={`Title for ${column.label}`}
@@ -482,12 +484,30 @@ function NewIdeaDialog({
             }}
             onLink={() => (dump ? setAskLink(true) : setLinkOpen(true))}
             onLine={setLine}
+            onPasteLink={
+              dump
+                ? (url, at) => {
+                    const next = normalizeLink(url);
+                    if (!next) return;
+                    const id = links.find((item) => item.url === next)?.id ?? crypto.randomUUID();
+                    setLinks((current) =>
+                      current.some((item) => item.url === next) ? current : [...current, { id, url: next }]
+                    );
+                    setNote((current) => placeLink(current, id, at));
+                  }
+                : undefined
+            }
+            onDropFiles={(list, at) => {
+              insertAt.current = at;
+              takeFiles(list);
+            }}
             onDropResource={(kind, id, at) =>
               setNote((current) => (kind === "file" ? placeFile(current, id, at) : placeLink(current, id, at)))
             }
             files={scraps}
             links={links}
           />
+          </div>
           {fileError || error ? (
             <p className="text-sm text-destructive" role="alert">
               {fileError || error}
@@ -579,6 +599,16 @@ const OPENING_COLUMNS: readonly BoardColumn[] = [
   { id: "ready", kind: "ready", label: "Ready" },
 ];
 
+function nextColumn(
+  columns: readonly BoardColumn[],
+  card: Pick<SocialCard, "stage">,
+): BoardColumn | null {
+  const home = card.stage === "custom" ? "thoughts" : card.stage;
+  const index = columns.findIndex((column) => column.kind === home);
+  if (index < 0) return null;
+  return columns[index + 1] ?? null;
+}
+
 export function cardDrop(
   card: Pick<SocialCard, "stage" | "hasFile" | "postable"> & { fileKind?: SocialCard["fileKind"] },
   kind: BoardColumn["kind"],
@@ -631,6 +661,7 @@ function CardFace({
   onDelete,
   onDuplicate,
   onMove,
+  onAdvance,
   dragging,
   handle,
 }: {
@@ -644,6 +675,7 @@ function CardFace({
   onDelete: () => void;
   onDuplicate: () => void;
   onMove: (columnId: string) => void;
+  onAdvance: () => void;
   dragging?: boolean;
   handle?: {
     setNodeRef: (element: HTMLElement | null) => void;
@@ -667,6 +699,14 @@ function CardFace({
   const moves = columns.filter(
     (column) => column.kind !== card.stage && (column.kind !== "ready" || card.hasFile)
   );
+  const next = nextColumn(columns, card);
+  const titleRoom = next
+    ? menu
+      ? "pr-16"
+      : "pr-9 group-hover:pr-16 group-focus-within:pr-16 [@media(hover:none)]:pr-16"
+    : menu
+      ? "pr-7"
+      : "group-hover:pr-7 group-focus-within:pr-7 [@media(hover:none)]:pr-7";
   return (
     <li
       ref={handle?.setNodeRef}
@@ -701,15 +741,27 @@ function CardFace({
           ) : null}
           <button
             type="button"
-            className={`min-w-0 flex-1 text-left text-sm font-medium leading-5 text-foreground line-clamp-2 ${
-              menu ? "pr-7" : "group-hover:pr-7 group-focus-within:pr-7 [@media(hover:none)]:pr-7"
-            }`}
+            className={`min-w-0 flex-1 text-left text-sm font-medium leading-5 text-foreground line-clamp-2 ${titleRoom}`}
             {...(selecting ? {} : handle?.attributes)}
             onClick={selecting ? onToggle : onOpen}
           >
             {card.title}
           </button>
-          <div className="absolute right-2 top-3 z-10" ref={menuRef}>
+          {next ? (
+            <button
+              type="button"
+              aria-label={`Move ${card.title} to ${next.label}`}
+              title={`Move to ${next.label}`}
+              onPointerDown={holdStill}
+              onMouseDown={holdStill}
+              onTouchStart={holdStill}
+              onClick={() => onAdvance()}
+              className="absolute right-2 top-3 z-10 inline-flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+            >
+              <ArrowRight className="h-4 w-4" aria-hidden="true" />
+            </button>
+          ) : null}
+          <div className={`absolute top-3 z-10 ${next ? "right-9" : "right-2"}`} ref={menuRef}>
             <button
               type="button"
               aria-label={`Card menu for ${card.title}`}
@@ -847,6 +899,7 @@ function BoardCard({
   onDelete,
   onDuplicate,
   onMove,
+  onAdvance,
   lifting,
 }: {
   card: SocialCard;
@@ -859,6 +912,7 @@ function BoardCard({
   onDelete: () => void;
   onDuplicate: () => void;
   onMove: (columnId: string) => void;
+  onAdvance: () => void;
   lifting?: boolean;
 }): JSX.Element {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
@@ -879,6 +933,7 @@ function BoardCard({
       onDelete={onDelete}
       onDuplicate={onDuplicate}
       onMove={onMove}
+      onAdvance={onAdvance}
       dragging={lifting || isDragging}
       handle={{
         setNodeRef,
@@ -1128,6 +1183,19 @@ export function SocialBoard({
     } finally {
       setBusy(false);
     }
+  }
+
+  function advance(id: string): void {
+    const card = cards.find((item) => item.id === id);
+    if (!card) return;
+    const next = nextColumn(columns, card);
+    if (!next) return;
+    const block = readyBlock(card, next.kind);
+    if (block) {
+      setError(block);
+      return;
+    }
+    void move(card.id, next.id);
   }
 
   async function move(id: string, columnId: string): Promise<boolean> {
@@ -1615,6 +1683,7 @@ export function SocialBoard({
                                   onDelete={() => void removeCard(card.id)}
                                   onDuplicate={() => void copyCard(card.id)}
                                   onMove={(columnId) => void move(card.id, columnId)}
+                                  onAdvance={() => advance(card.id)}
                                 />
                               ))}
                             </ul>
@@ -1756,6 +1825,7 @@ export function SocialBoard({
                       onDelete={() => void removeCard(card.id)}
                       onDuplicate={() => void copyCard(card.id)}
                       onMove={(columnId) => void move(card.id, columnId)}
+                      onAdvance={() => advance(card.id)}
                     />
                   ))}
                   <li className="flex justify-center px-2 py-1">

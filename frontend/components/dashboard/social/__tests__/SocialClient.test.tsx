@@ -330,8 +330,9 @@ describe("Social shell", () => {
 
     const editor = await screen.findByRole("form", { name: "Card Fees" });
     expect(within(editor).getByLabelText("Title")).toHaveValue("Fees");
-    expect(within(editor).getByRole("button", { name: "Save" })).toBeInTheDocument();
-    fireEvent.click(within(editor).getByRole("button", { name: "Delete" }));
+    expect(within(editor).queryByRole("button", { name: "Save" })).not.toBeInTheDocument();
+    fireEvent.click(within(editor).getByRole("button", { name: "Card actions" }));
+    fireEvent.click(within(editor).getByRole("menuitem", { name: "Delete" }));
 
     await waitFor(() => {
       expect(deleteCardMock).toHaveBeenCalledWith("token", "1");
@@ -407,6 +408,41 @@ describe("Social shell", () => {
     expect(await screen.findByRole("toolbar", { name: "Selected cards" })).toHaveTextContent("1 selected");
     expect(thoughts).toHaveTextContent("Fees");
     expect(screen.getByRole("alert")).toHaveTextContent("Could not move the card");
+  });
+
+  it("moves a card to the next column from the arrow", async () => {
+    moveMock.mockResolvedValue(card({ id: "1", title: "Fees", stage: "chosen" }));
+    listMock.mockResolvedValue([
+      card({ id: "1", title: "Fees", stage: "thoughts" }),
+      card({ id: "2", title: "Cough", stage: "ready", hasFile: true, fileKind: "photo", postable: true }),
+    ]);
+    render(<SocialClient token="token" />);
+
+    const thoughts = await screen.findByRole("region", { name: "Thoughts and ideas" });
+    expect(within(thoughts).getByRole("button", { name: "Move Fees to Chosen" })).toBeInTheDocument();
+    expect(
+      within(screen.getByRole("region", { name: "Ready" })).queryByRole("button", { name: /Move Cough/ })
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(within(thoughts).getByRole("button", { name: "Move Fees to Chosen" }));
+
+    await waitFor(() => {
+      expect(moveMock).toHaveBeenCalledWith("token", "1", "chosen");
+    });
+    expect(screen.getByRole("region", { name: "Chosen" })).toHaveTextContent("Fees");
+    expect(thoughts).not.toHaveTextContent("Fees");
+  });
+
+  it("keeps a card in Making when Ready still needs a file", async () => {
+    listMock.mockResolvedValue([card({ id: "1", title: "Fees", stage: "making" })]);
+    render(<SocialClient token="token" />);
+
+    const making = await screen.findByRole("region", { name: "Making" });
+    fireEvent.click(within(making).getByRole("button", { name: "Move Fees to Ready" }));
+
+    expect(screen.getByRole("alert")).toHaveTextContent("Ready needs a file");
+    expect(moveMock).not.toHaveBeenCalled();
+    expect(making).toHaveTextContent("Fees");
   });
 
   it("adds a title from Chosen and refuses a Ready card with no file", async () => {
@@ -785,7 +821,7 @@ describe("Social shell", () => {
     render(<SocialClient token="token" />);
     fireEvent.click(await screen.findByRole("button", { name: "Fees" }));
 
-    expect(screen.getByText("Thought")).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Column" })).toHaveValue("thoughts");
     expect(screen.getByLabelText("Note")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Choose" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Publish" })).not.toBeInTheDocument();
@@ -814,7 +850,6 @@ describe("Social shell", () => {
     fireEvent.click(screen.getByRole("button", { name: "Tags" }));
     fireEvent.change(screen.getByLabelText("Topic"), { target: { value: "Cough" } });
     fireEvent.click(screen.getByRole("button", { name: "Create Cough" }));
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() => {
       expect(updateMock).toHaveBeenCalledWith("token", "1", {

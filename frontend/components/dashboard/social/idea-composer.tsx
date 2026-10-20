@@ -2,7 +2,7 @@
 
 import { useEffect, useLayoutEffect, useState, useRef, type DragEvent, type RefObject } from "react";
 import { createPortal } from "react-dom";
-import { ArrowRight, AudioLines, Check, ChevronLeft, ChevronRight, Columns2, Copy, ExternalLink, FileText, Film, GripVertical, Heading, Image as ImageIcon, LayoutGrid, Link2, List, Minus, Paperclip, Presentation, Table2, Tag, X } from "lucide-react";
+import { ArrowRight, AudioLines, Check, ChevronLeft, ChevronRight, Columns2, Copy, ExternalLink, FileText, Film, GripVertical, Heading, Image as ImageIcon, LayoutGrid, Link2, List, ListChecks, ListOrdered, Minus, Paperclip, Presentation, Quote, Table2, Tag, X } from "lucide-react";
 
 export const FILE_ACCEPT = [
   "image/jpeg",
@@ -48,7 +48,12 @@ export const FILE_ACCEPT = [
   ".odp",
 ].join(",");
 
-type LineKind = "text" | "heading" | "list" | "file" | "link" | "rule" | "cols" | "split" | "endcols";
+type LineKind = "text" | "heading" | "list" | "bullet" | "number" | "quote" | "file" | "link" | "rule" | "cols" | "split" | "endcols";
+
+/** The thought note, including file and link markers. */
+export const NOTE_MAX = 4000;
+
+const WRITING = new Set<LineKind>(["text", "heading", "list", "bullet", "number", "quote"]);
 
 type NoteLine = { kind: LineKind; body: string; done?: boolean };
 
@@ -137,7 +142,7 @@ export function placeFile(note: string, id: string, line: number): string {
   if (lines[at]?.kind === "text" && lines[at].body === "") lines[at] = marker;
   else lines.splice(at + 1, 0, marker);
   const joined = joinNote(lines);
-  return joined.length > 1000 ? note : joined;
+  return joined.length > NOTE_MAX ? note : joined;
 }
 
 export function stripFile(note: string, id: string): string {
@@ -147,7 +152,10 @@ export function stripFile(note: string, id: string): string {
 
 const MENU = [
   { id: "heading", label: "Heading", icon: Heading },
-  { id: "list", label: "List", icon: List },
+  { id: "bullet", label: "Bullet", icon: List },
+  { id: "number", label: "Numbered", icon: ListOrdered },
+  { id: "list", label: "To-do", icon: ListChecks },
+  { id: "quote", label: "Quote", icon: Quote },
   { id: "columns", label: "Columns", icon: Columns2 },
   { id: "rule", label: "Divider", icon: Minus },
   { id: "file", label: "File", icon: Paperclip },
@@ -168,6 +176,12 @@ function parseLine(line: string): NoteLine {
   if (line.startsWith("- [x] ") || line === "- [x]") return { kind: "list", body: line.slice(6), done: true };
   if (line.startsWith("- [ ] ") || line === "- [ ]") return { kind: "list", body: line.slice(6), done: false };
   if (line.startsWith("- ")) return { kind: "list", body: line.slice(2), done: false };
+  if (line.startsWith("* ")) return { kind: "bullet", body: line.slice(2) };
+  if (line === "*") return { kind: "bullet", body: "" };
+  if (line.startsWith("> ")) return { kind: "quote", body: line.slice(2) };
+  if (line === ">") return { kind: "quote", body: "" };
+  const numbered = /^(\d+)\.(?: (.*))?$/.exec(line);
+  if (numbered) return { kind: "number", body: numbered[2] ?? "" };
   return { kind: "text", body: line };
 }
 
@@ -259,7 +273,7 @@ export function placeLink(note: string, id: string, line: number): string {
   if (lines[at]?.kind === "text" && lines[at].body === "") lines[at] = marker;
   else lines.splice(at + 1, 0, marker);
   const joined = joinNote(lines);
-  return joined.length > 1000 ? note : joined;
+  return joined.length > NOTE_MAX ? note : joined;
 }
 
 export function stripLink(note: string, id: string): string {
@@ -330,13 +344,30 @@ function noteSegments(lines: readonly NoteLine[]): NoteSegment[] {
   return out;
 }
 
+export function noteNumber(lines: readonly NoteLine[], index: number): number {
+  let count = 0;
+  for (let i = 0; i <= index; i += 1) {
+    if (lines[i]?.kind === "number") count += 1;
+    else count = 0;
+  }
+  return count;
+}
+
 export function joinNote(lines: readonly NoteLine[]): string {
+  let count = 0;
   return lines
     .map((line) => {
+      if (line.kind !== "number") count = 0;
       if (line.kind === "file") return `!file:${line.body}`;
       if (line.kind === "link") return `!link:${line.body}`;
       if (line.kind === "heading") return `# ${line.body}`;
       if (line.kind === "list") return line.done ? `- [x] ${line.body}` : `- [ ] ${line.body}`;
+      if (line.kind === "bullet") return line.body ? `* ${line.body}` : "*";
+      if (line.kind === "quote") return line.body ? `> ${line.body}` : ">";
+      if (line.kind === "number") {
+        count += 1;
+        return line.body ? `${count}. ${line.body}` : `${count}.`;
+      }
       if (line.kind === "rule") return "!hr";
       if (line.kind === "cols") return "!cols";
       if (line.kind === "split") return "!|";
@@ -378,6 +409,18 @@ function lineUnder(event: DragEvent<HTMLElement>, count: number): number {
   return Math.max(count - 1, 0);
 }
 
+function hasFileDrag(event: DragEvent<HTMLElement>): boolean {
+  return Array.from(event.dataTransfer.types).includes("Files");
+}
+
+function nearestWriting(lines: readonly NoteLine[], index: number, step: -1 | 1): number | null {
+  for (let i = index + step; i >= 0 && i < lines.length; i += step) {
+    const kind = lines[i]?.kind;
+    if (kind && WRITING.has(kind)) return i;
+  }
+  return null;
+}
+
 export function IdeaNote({
   value,
   onChange,
@@ -385,6 +428,8 @@ export function IdeaNote({
   onLink,
   onLine,
   onDropResource,
+  onPasteLink,
+  onDropFiles,
   files = [],
   links = [],
 }: {
@@ -394,15 +439,23 @@ export function IdeaNote({
   onLink: () => void;
   onLine?: (line: number) => void;
   onDropResource?: (kind: "file" | "link", id: string, line: number) => void;
+  onPasteLink?: (url: string, line: number) => void;
+  onDropFiles?: (files: File[], line: number) => void;
   files?: readonly ShelfFile[];
   links?: readonly ResourceLink[];
 }): JSX.Element {
   const lines = splitNote(value);
   const inputs = useRef<Array<HTMLTextAreaElement | null>>([]);
   const [menuAt, setMenuAt] = useState<number | null>(null);
+  const [slashQuery, setSlashQuery] = useState("");
   const [active, setActive] = useState(0);
   const [overLine, setOverLine] = useState<number | null>(null);
-  const choices = MENU.filter((item) => item.id !== "columns" || menuAt === null || !insideColumns(lines, menuAt));
+  const [full, setFull] = useState(false);
+  const needle = slashQuery.trim().toLowerCase();
+  const choices = MENU.filter((item) => {
+    if (item.id === "columns" && (menuAt === null || insideColumns(lines, menuAt))) return false;
+    return needle.length === 0 || item.label.toLowerCase().includes(needle);
+  });
 
   useLayoutEffect(() => {
     for (const node of inputs.current) {
@@ -410,16 +463,32 @@ export function IdeaNote({
       node.style.height = "0px";
       node.style.height = `${node.scrollHeight}px`;
     }
-  }, [value]);
+  }, [value, slashQuery, menuAt]);
 
   function write(next: NoteLine[]): void {
     const joined = joinNote(next);
-    if (joined.length > 1000) return;
+    if (joined.length > NOTE_MAX) {
+      setFull(true);
+      return;
+    }
+    setFull(false);
     onChange(joined);
   }
 
-  function focusLine(index: number): void {
-    window.setTimeout(() => inputs.current[index]?.focus(), 0);
+  function focusLine(index: number, caret?: number): void {
+    window.setTimeout(() => {
+      const node = inputs.current[index];
+      if (!node) return;
+      node.focus();
+      if (caret === undefined) return;
+      const at = Math.min(Math.max(caret, 0), node.value.length);
+      node.setSelectionRange(at, at);
+    }, 0);
+  }
+
+  function closeMenu(): void {
+    setMenuAt(null);
+    setSlashQuery("");
   }
 
   function removeLine(index: number): void {
@@ -437,13 +506,8 @@ export function IdeaNote({
     const next = lines.slice();
     next.splice(index, 1);
     write(next.length > 0 ? next : [{ kind: "text", body: "" }]);
-    for (let i = index - 1; i >= 0; i -= 1) {
-      const kind = lines[i]?.kind;
-      if (kind === "text" || kind === "heading" || kind === "list") {
-        focusLine(i);
-        break;
-      }
-    }
+    const previous = nearestWriting(lines, index, -1);
+    if (previous !== null) focusLine(previous, lines[previous]?.body.length ?? 0);
   }
 
   function moveLine(from: number, to: number): void {
@@ -457,7 +521,7 @@ export function IdeaNote({
   }
 
   function pick(id: (typeof MENU)[number]["id"], index: number): void {
-    setMenuAt(null);
+    closeMenu();
     if (id === "file") {
       onPhoto(index);
       return;
@@ -473,7 +537,7 @@ export function IdeaNote({
       const next = lines.slice();
       next.splice(index, 1, { kind: "cols", body: "" }, left, { kind: "split", body: "" }, { kind: "text", body: "" }, { kind: "endcols", body: "" });
       write(next);
-      const focusAt = left.kind === "text" || left.kind === "heading" || left.kind === "list" ? index + 1 : index + 3;
+      const focusAt = WRITING.has(left.kind) ? index + 1 : index + 3;
       focusLine(focusAt);
       return;
     }
@@ -484,16 +548,19 @@ export function IdeaNote({
       focusLine(index + 1);
       return;
     }
+    const kind: LineKind =
+      id === "heading" || id === "bullet" || id === "number" || id === "quote" || id === "list" ? id : "text";
     const next = lines.slice();
-    next[index] = { kind: id === "heading" ? "heading" : "list", body: "", done: false };
+    next[index] = { kind, body: "", done: false };
     write(next);
     focusLine(index);
   }
 
   function renderLine(index: number): JSX.Element {
     const line = lines[index];
-    const writing = line?.kind === "text" || line?.kind === "heading" || line?.kind === "list";
+    const writing = Boolean(line && WRITING.has(line.kind));
     const bare = lines.length === 1 && lines[0]?.kind === "text" && lines[0].body === "";
+    const filtering = menuAt === index;
     return (
       <div
         key={index}
@@ -521,7 +588,7 @@ export function IdeaNote({
           onDragStart={(event) => {
             event.stopPropagation();
             event.dataTransfer.setData(LINE_DRAG, String(index));
-            if (line && line.body.trim() && (line.kind === "text" || line.kind === "heading" || line.kind === "list")) {
+            if (line && line.body.trim() && WRITING.has(line.kind)) {
               event.dataTransfer.setData(LIFT_DRAG, line.body.trim());
             }
             event.dataTransfer.effectAllowed = "copyMove";
@@ -544,6 +611,14 @@ export function IdeaNote({
           >
             {line.done ? <Check className="h-2.5 w-2.5" aria-hidden="true" /> : null}
           </button>
+        ) : null}
+        {line?.kind === "bullet" ? (
+          <span aria-hidden="true" className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-foreground" />
+        ) : null}
+        {line?.kind === "number" ? (
+          <span className="mt-0.5 w-6 shrink-0 text-right text-sm tabular-nums text-muted-foreground">
+            {noteNumber(lines, index)}.
+          </span>
         ) : null}
         {line?.kind === "file" ? (
           <ShelfTile
@@ -574,16 +649,35 @@ export function IdeaNote({
             }}
             rows={1}
             aria-label={index === 0 ? "Note" : undefined}
-            value={line.body}
-            placeholder={bare && index === 0 ? "What's the idea" : ""}
+            value={filtering ? `/${slashQuery}` : line.body}
+            placeholder={bare && index === 0 && !filtering ? "Type / for headings, lists, files, and links." : ""}
+            onPaste={(event) => {
+              if (!onPasteLink || line.kind !== "text" || line.body !== "" || filtering) return;
+              const url = normalizeLink(event.clipboardData.getData("text"));
+              if (!url) return;
+              event.preventDefault();
+              onPasteLink(url, index);
+            }}
             onChange={(event) => {
               const typed = event.target.value.replace(/\r/g, "");
-              if (typed === "/") {
-                setMenuAt(index);
+              if (filtering) {
+                if (!typed.startsWith("/")) {
+                  closeMenu();
+                  const next = lines.slice();
+                  next[index] = { ...line, body: typed };
+                  write(next);
+                  return;
+                }
+                setSlashQuery(typed.slice(1));
                 setActive(0);
                 return;
               }
-              setMenuAt(null);
+              if (line.body === "" && typed === "/") {
+                setMenuAt(index);
+                setSlashQuery("");
+                setActive(0);
+                return;
+              }
               if (!typed.includes("\n")) {
                 const next = lines.slice();
                 next[index] = { ...line, body: typed };
@@ -593,16 +687,18 @@ export function IdeaNote({
               const parts = typed.split("\n");
               const next = lines.slice();
               next[index] = { ...line, body: parts[0] };
-              const extra: NoteLine[] = parts.slice(1).map((body) =>
-                line.kind === "list" ? { kind: "list", body, done: false } : { kind: "text", body }
-              );
+              const carried: LineKind =
+                line.kind === "list" || line.kind === "bullet" || line.kind === "number" || line.kind === "quote"
+                  ? line.kind
+                  : "text";
+              const extra: NoteLine[] = parts.slice(1).map((body) => ({ kind: carried, body, done: false }));
               next.splice(index + 1, 0, ...extra);
               write(next);
             }}
             onFocus={() => onLine?.(index)}
             onKeyDown={(event) => {
-              if (menuAt === index) {
-                if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+              if (filtering) {
+                if ((event.key === "ArrowDown" || event.key === "ArrowUp") && choices.length > 0) {
                   event.preventDefault();
                   setActive((current) =>
                     event.key === "ArrowDown"
@@ -615,44 +711,104 @@ export function IdeaNote({
                   event.preventDefault();
                   const picked = choices[active];
                   if (picked) pick(picked.id, index);
+                  else {
+                    closeMenu();
+                    const next = lines.slice();
+                    next[index] = { ...line, body: slashQuery ? `/${slashQuery}` : "" };
+                    write(next);
+                  }
                   return;
                 }
                 if (event.key === "Escape") {
                   event.preventDefault();
-                  setMenuAt(null);
+                  closeMenu();
                   return;
                 }
               }
-              if (event.key === "Enter") {
+              const cursor = event.currentTarget.selectionStart ?? 0;
+              const cursorEnd = event.currentTarget.selectionEnd ?? cursor;
+              const collapsed = cursor === cursorEnd;
+              if (event.key === "ArrowUp" && !event.shiftKey && collapsed && cursor === 0) {
+                const previous = nearestWriting(lines, index, -1);
+                if (previous === null) return;
                 event.preventDefault();
-                const next = lines.slice();
-                const kind: LineKind = line.kind === "list" ? "list" : "text";
-                next.splice(index + 1, 0, { kind, body: "", done: false });
-                write(next);
-                focusLine(index + 1);
+                focusLine(previous, lines[previous]?.body.length ?? 0);
                 return;
               }
-              if (event.key === "Backspace" && line.body === "") {
+              if (
+                event.key === "ArrowDown" &&
+                !event.shiftKey &&
+                collapsed &&
+                cursor === (filtering ? `/${slashQuery}` : line.body).length
+              ) {
+                const following = nearestWriting(lines, index, 1);
+                if (following === null) return;
                 event.preventDefault();
-                if (line.kind !== "text") {
+                focusLine(following, 0);
+                return;
+              }
+              if (event.key === "Enter") {
+                event.preventDefault();
+                const block =
+                  line.kind === "list" || line.kind === "bullet" || line.kind === "number" || line.kind === "quote";
+                if (block && line.body === "") {
                   const next = lines.slice();
                   next[index] = { kind: "text", body: "" };
                   write(next);
                   return;
                 }
-                removeLine(index);
+                const left = line.body.slice(0, cursor);
+                const right = line.body.slice(cursorEnd);
+                const next = lines.slice();
+                next[index] = { ...line, body: left };
+                const kind: LineKind = block ? line.kind : "text";
+                next.splice(index + 1, 0, { kind, body: right, done: false });
+                write(next);
+                focusLine(index + 1, 0);
+                return;
+              }
+              if (event.key === "Backspace" && collapsed && cursor === 0) {
+                event.preventDefault();
+                if (line.body === "") {
+                  if (line.kind !== "text") {
+                    const next = lines.slice();
+                    next[index] = { kind: "text", body: "" };
+                    write(next);
+                    return;
+                  }
+                  removeLine(index);
+                  return;
+                }
+                const previous = nearestWriting(lines, index, -1);
+                if (previous === null) {
+                  if (line.kind !== "text") {
+                    const next = lines.slice();
+                    next[index] = { kind: "text", body: line.body };
+                    write(next);
+                  }
+                  return;
+                }
+                const prior = lines[previous];
+                if (!prior || !WRITING.has(prior.kind)) return;
+                const next = lines.slice();
+                next[previous] = { ...prior, body: prior.body + line.body };
+                next.splice(index, 1);
+                write(next);
+                focusLine(previous, prior.body.length);
               }
             }}
             className={`max-w-full min-w-0 flex-1 resize-none overflow-hidden whitespace-pre-wrap break-words bg-transparent outline-none placeholder:text-muted-foreground/50 ${
               line.kind === "heading" ? "min-h-7 text-lg font-medium leading-7" : "min-h-6 text-sm leading-6"
-            } ${line.kind === "list" && line.done ? "text-muted-foreground line-through" : "text-foreground"}`}
+            } ${line.kind === "quote" ? "border-l-2 border-border pl-2" : ""} ${
+              line.kind === "list" && line.done ? "text-muted-foreground line-through" : "text-foreground"
+            }`}
           />
         ) : null}
         {menuAt === index ? (
           <div
             role="menu"
             aria-label="Note options"
-            className="absolute left-6 top-full z-20 mt-1 w-44 rounded-lg border border-border bg-card py-1 shadow-lg"
+            className="absolute left-6 top-full z-20 mt-1 w-48 rounded-lg border border-border bg-card py-1 shadow-lg"
           >
             {choices.map((item, itemIndex) => {
               const Icon = item.icon;
@@ -682,6 +838,13 @@ export function IdeaNote({
     <div
       className="relative mt-3 flex min-h-0 w-full min-w-0 flex-1 flex-col gap-1 overflow-x-hidden overflow-y-auto"
       onDragOver={(event) => {
+        if (onDropFiles && hasFileDrag(event)) {
+          event.preventDefault();
+          event.stopPropagation();
+          event.dataTransfer.dropEffect = "copy";
+          setOverLine(lineUnder(event, lines.length));
+          return;
+        }
         if (!onDropResource || !hasResourceDrag(event)) return;
         event.preventDefault();
         event.dataTransfer.dropEffect = "copy";
@@ -693,6 +856,14 @@ export function IdeaNote({
         setOverLine(null);
       }}
       onDrop={(event) => {
+        if (onDropFiles && hasFileDrag(event)) {
+          event.preventDefault();
+          event.stopPropagation();
+          const at = lineUnder(event, lines.length);
+          setOverLine(null);
+          onDropFiles(Array.from(event.dataTransfer.files ?? []), at);
+          return;
+        }
         if (!onDropResource || !hasResourceDrag(event)) return;
         event.preventDefault();
         event.stopPropagation();
@@ -714,6 +885,14 @@ export function IdeaNote({
           </div>
         )
       )}
+      {full ? (
+        <p className="text-sm text-destructive" role="status">
+          The note is full
+        </p>
+      ) : null}
+      {!full && value.length >= NOTE_MAX - 800 ? (
+        <p className="text-xs text-muted-foreground">{NOTE_MAX - value.length} left</p>
+      ) : null}
     </div>
   );
 }
@@ -1469,15 +1648,6 @@ export function ScrapShelf({
           >
             <Paperclip className="h-3.5 w-3.5" aria-hidden="true" />
           </button>
-          <p className="mt-3 whitespace-nowrap text-center text-[10px] leading-3 text-muted-foreground">
-            Add a file
-            <br />
-            or
-            <br />
-            drag &
-            <br />
-            drop
-          </p>
           {items.length + links.length === 0 ? null : (
             <p className="mt-2 px-1 text-center text-[10px] leading-3 text-muted-foreground">{closedCount(items.length, links.length)}</p>
           )}

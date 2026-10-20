@@ -21,4 +21,6 @@
 
 Inherit DL-1…26 from the product plan. DL-3 and DL-12 were revised 12 Oct 2026. DL-4, DL-7, DL-8, DL-11, DL-13, and DL-18 were revised 13 Oct 2026. DL-5 was revised 15 Oct 2026. DL-19…26 were added 15 Oct 2026. DL-10 was revised 19 Oct 2026. Phase 3 stored the time as a day list. Phase 7 replaces that list with the week. It does not send the file. Phase 8 is the notebook for Chosen and the composer for Making and Ready. It does not send the file.
 
-**Created:** 2026-10-11. Phases 5–6 added 2026-10-12. Phase 7 added 2026-10-13. Phase 8 added 2026-10-15. Phases 9–11 specified 2026-10-19 in the analytics plan. DL-10 was revised the same day.
+The notebook pass on 20 Oct 2026 is not a phase. Thoughts and Chosen stay the same sheet. [Plan](./notebook/plan-social-notebook-batch.md).
+
+**Created:** 2026-10-11. Phases 5–6 added 2026-10-12. Phase 7 added 2026-10-13. Phase 8 added 2026-10-15. Phases 9–11 specified 2026-10-19 in the analytics plan. DL-10 was revised the same day. Notebook pass added 2026-10-20.

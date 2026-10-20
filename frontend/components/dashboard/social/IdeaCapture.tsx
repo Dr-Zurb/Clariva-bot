@@ -9,7 +9,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { Paperclip } from "lucide-react";
-import { FILE_ACCEPT, normalizeLink } from "./idea-composer";
+import { FILE_ACCEPT, NOTE_MAX, normalizeLink } from "./idea-composer";
 import { addIdeaFiles, seedIdeaCapture } from "./idea-capture";
 import {
   dropPendingIdea,
@@ -328,7 +328,7 @@ export function IdeaCapture({
             autoComplete="halo-idea-note"
             value={draftNote}
             rows={2}
-            maxLength={1000}
+            maxLength={NOTE_MAX}
             className={fieldClass}
             onChange={(event) => setDraftNote(event.target.value)}
           />
