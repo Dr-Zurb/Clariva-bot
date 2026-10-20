@@ -16,6 +16,14 @@ export async function middleware(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
   const origin = publicRequestOrigin(request);
 
+  // Home-screen "New idea" used to open the dashboard. Skip that shell
+  // before the session check. The service worker usually answers first.
+  if (request.method === "GET" && pathname === "/dashboard/social/idea") {
+    const dest = new URL("/c/idea", origin);
+    dest.search = request.nextUrl.search;
+    return NextResponse.redirect(dest);
+  }
+
   // Android share sheet POSTs the link here. The service worker usually
   // answers first. When it does not, Next has no POST page and shows 404.
   if (request.method === "POST" && pathname === "/c/share-target") {

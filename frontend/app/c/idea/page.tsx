@@ -1,9 +1,9 @@
 "use client";
 
 /**
- * Share-sheet idea page. No dashboard shell, so the phone can paint the form
- * without waiting on the rest of the app. The home-screen shortcut still uses
- * /dashboard/social/idea.
+ * Idea page without the dashboard shell. The installed shortcut is usually
+ * answered by the service worker (`public/idea-open.html`) before this loads.
+ * Open `?net=1` to force this page.
  */
 
 import { Suspense, useEffect, useState } from "react";

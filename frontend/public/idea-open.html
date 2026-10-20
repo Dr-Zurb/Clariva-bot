@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>New idea</title>
+    <style>
+      body {
+        margin: 0;
+        background: #fff;
+        color: #111;
+        font-family: system-ui, sans-serif;
+      }
+      main {
+        box-sizing: border-box;
+        max-width: 28rem;
+        margin: 0 auto;
+        padding: 16px;
+      }
+      form {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      .bar {
+        position: sticky;
+        top: 0;
+        z-index: 1;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        background: #fff;
+      }
+      h1 {
+        margin: 0;
+        font-size: 20px;
+      }
+      button.add {
+        height: 36px;
+        border: 0;
+        border-radius: 6px;
+        padding: 0 16px;
+        background: #1e56e0;
+        color: #fff;
+        font: 600 14px system-ui, sans-serif;
+      }
+      label.field {
+        display: block;
+        font-size: 14px;
+        font-weight: 600;
+      }
+      input,
+      textarea {
+        display: block;
+        box-sizing: border-box;
+        width: 100%;
+        margin-top: 6px;
+        padding: 8px 12px;
+        border: 1px solid #e4e4e7;
+        border-radius: 6px;
+        font: 16px system-ui, sans-serif;
+        color: #111;
+        background: #fff;
+      }
+      .status,
+      .error {
+        margin: 0;
+        padding: 8px 12px;
+        border-radius: 6px;
+        font-size: 14px;
+      }
+      .status {
+        border: 1px solid #e4e4e7;
+        background: #f4f4f5;
+      }
+      .error {
+        color: #b91c1c;
+      }
+      .file-row,
+      .picked {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        min-width: 0;
+      }
+      .pin {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        height: 36px;
+        padding: 0;
+        border: 0;
+        background: transparent;
+        color: #111;
+        font: 600 14px system-ui, sans-serif;
+      }
+      .pin span {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 36px;
+        height: 36px;
+        border: 1px solid #e4e4e7;
+        border-radius: 999px;
+        color: #71717a;
+      }
+      .picked {
+        flex: 1;
+        justify-content: space-between;
+        font-size: 14px;
+      }
+      .picked b {
+        min-width: 0;
+        overflow: hidden;
+        font-weight: 400;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .picked button,
+      .status a {
+        color: #1e56e0;
+        font: inherit;
+        background: none;
+        border: 0;
+        padding: 0;
+      }
+      .sources {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 6px;
+      }
+      .sources label {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        height: 40px;
+        border: 1px solid #e4e4e7;
+        border-radius: 6px;
+        font-size: 14px;
+      }
+      .sr {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        border: 0;
+      }
+    </style>
+  </head>
+  <body data-idea-open="1">
+    <main>
+      <form id="idea-form" autocomplete="off">
+        <div class="bar">
+          <h1>New idea</h1>
+          <button class="add" type="submit">Add</button>
+        </div>
+        <p id="idea-status" class="status" role="status" hidden>
+          Saved to Thoughts. <a href="/dashboard/social">Open the board</a>
+        </p>
+        <label class="field" for="idea-title">Title</label>
+        <input id="idea-title" name="halo-idea-title" type="text" maxlength="200" autocomplete="halo-idea-title" autocorrect="off" />
+        <label class="field" for="idea-note">Note</label>
+        <textarea id="idea-note" name="halo-idea-note" rows="2" maxlength="1000" autocomplete="halo-idea-note"></textarea>
+        <label class="field" for="idea-link">Link</label>
+        <input id="idea-link" name="halo-idea-link" type="text" maxlength="500" inputmode="url" autocomplete="halo-idea-link" autocorrect="off" autocapitalize="off" spellcheck="false" />
+        <div class="file-row">
+          <button id="idea-pin" class="pin" type="button" aria-expanded="false">
+            <span aria-hidden="true">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+              </svg>
+            </span>
+            Add a file
+          </button>
+          <span id="idea-picked" class="picked" hidden>
+            <b id="idea-file-name"></b>
+            <button id="idea-remove" type="button">Remove</button>
+          </span>
+        </div>
+        <div id="idea-sources" class="sources" hidden>
+          <label>Camera<input class="sr" type="file" accept="image/*" capture="environment" /></label>
+          <label>Gallery<input class="sr" type="file" accept="image/*" /></label>
+          <label>Video<input class="sr" type="file" accept="video/*" /></label>
+          <label>Files<input id="idea-files" class="sr" type="file" /></label>
+        </div>
+        <p id="idea-error" class="error" role="alert" hidden></p>
+      </form>
+    </main>
+    <script type="module" src="/idea-open.js"></script>
+  </body>
+</html>

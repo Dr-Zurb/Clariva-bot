@@ -53,16 +53,29 @@
  * Next app.
  */
 
-const SW_VERSION = "v7-2026-10-20-warm";
+const SW_VERSION = "v8-2026-10-20-open";
 const SHARE_TARGET_CACHE = "share-target-staging-v1";
 const SHARE_TARGET_STALE_MS = 30 * 60 * 1000;
+const IDEA_CACHE = `idea-launch-${SW_VERSION}`;
+const IDEA_ASSETS = ["/idea-open.html", "/idea-open.js"];
 
-self.addEventListener("install", () => {
+self.addEventListener("install", (event) => {
   // Skip the waiting phase so this SW becomes active immediately.
   // The previous SW (if any) is replaced on the next activate
   // event. Combined with `clients.claim()` below, the upgrade is
   // seamless for the user — no reload required.
-  self.skipWaiting();
+  event.waitUntil(
+    (async () => {
+      const cache = await caches.open(IDEA_CACHE);
+      await Promise.all(
+        IDEA_ASSETS.map(async (path) => {
+          const res = await cachedIdeaAsset(path, cache);
+          if (!res.ok || !(await cache.match(path))) throw new Error("idea sheet missing");
+        }),
+      );
+      await self.skipWaiting();
+    })(),
+  );
 });
 
 self.addEventListener("activate", (event) => {
@@ -72,6 +85,12 @@ self.addEventListener("activate", (event) => {
   event.waitUntil(
     (async () => {
       await self.clients.claim();
+      const names = await caches.keys();
+      await Promise.all(
+        names
+          .filter((name) => name.startsWith("idea-launch-") && name !== IDEA_CACHE)
+          .map((name) => caches.delete(name)),
+      );
       await purgeStaleShareTargetEntries();
     })(),
   );
@@ -135,16 +154,57 @@ self.addEventListener("push", (event) => {
 // GET route with cache keys in the query string (spec requirement).
 // ---------------------------------------------------------------------------
 
-self.addEventListener("fetch", (event) => {
-  if (event.request.method !== "POST") return;
-  let pathname = "";
+function isIdeaLaunch(pathname) {
+  return pathname === "/c/idea" || pathname === "/dashboard/social/idea";
+}
+
+async function cachedIdeaAsset(path, openCache) {
+  const cache = openCache || (await caches.open(IDEA_CACHE));
+  const hit = await cache.match(path);
+  if (hit) return hit;
   try {
-    pathname = new URL(event.request.url).pathname;
+    const net = new URL(path, self.location.origin);
+    net.searchParams.set("sw-net", "1");
+    const res = await fetch(net.href);
+    if (res.ok) await cache.put(path, res.clone());
+    return res;
+  } catch {
+    if (path.endsWith(".html")) {
+      return new Response("<!doctype html><title>New idea</title><h1>New idea</h1>", {
+        headers: { "Content-Type": "text/html; charset=utf-8" },
+      });
+    }
+    return new Response("", { status: 503 });
+  }
+}
+
+self.addEventListener("fetch", (event) => {
+  let url;
+  try {
+    url = new URL(event.request.url);
   } catch {
     return;
   }
-  if (pathname !== "/c/share-target") return;
-  event.respondWith(handleShareTarget(event));
+  if (event.request.method === "POST" && url.pathname === "/c/share-target") {
+    event.respondWith(handleShareTarget(event));
+    return;
+  }
+  if (event.request.method !== "GET" || url.origin !== self.location.origin) return;
+  if (url.searchParams.has("sw-net")) return;
+  if (url.pathname === "/idea-open.html" || url.pathname === "/idea-open.js") {
+    event.respondWith(cachedIdeaAsset(url.pathname));
+    return;
+  }
+  // The installed shortcut used to open the dashboard, which stays on the
+  // launch logo until a sleeping server answers. Serve the sheet already
+  // stored on the phone. `?net=1` still loads the full app page.
+  if (
+    event.request.mode === "navigate" &&
+    isIdeaLaunch(url.pathname) &&
+    !url.searchParams.has("net")
+  ) {
+    event.respondWith(cachedIdeaAsset("/idea-open.html"));
+  }
 });
 
 function shareField(formData, name, max) {
@@ -183,7 +243,7 @@ function ideaOpenResponse(title, note, link) {
   if (note) query.set("note", note);
   if (link) query.set("link", link);
   const next = `/c/idea${query.toString() ? `?${query}` : ""}`;
-  const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>New idea</title><style>body{margin:0;background:#fff;color:#111;font-family:system-ui,sans-serif}main{box-sizing:border-box;max-width:28rem;margin:0 auto;padding:16px}h1{font-size:20px;margin:0}label{display:block;font-size:14px;font-weight:600;margin:12px 0 6px}input,textarea{display:block;width:100%;box-sizing:border-box;padding:8px 12px;border:1px solid #e4e4e7;border-radius:6px;font:16px system-ui,sans-serif}</style></head><body><main><h1>New idea</h1><label>Title</label><input value="${escapeShareHtml(shownTitle)}"><label>Note</label><textarea rows="2">${escapeShareHtml(shownNote)}</textarea><label>Link</label><input value="${escapeShareHtml(shownLink)}"></main><script>fetch("/c/idea/wake",{credentials:"same-origin",keepalive:true}).catch(function(){});addEventListener("load",function(){fetch(${JSON.stringify(next)},{credentials:"same-origin"}).finally(function(){location.replace(${JSON.stringify(next)})})})</script></body></html>`;
+  const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>New idea</title><style>body{margin:0;background:#fff;color:#111;font-family:system-ui,sans-serif}main{box-sizing:border-box;max-width:28rem;margin:0 auto;padding:16px}h1{font-size:20px;margin:0}label{display:block;font-size:14px;font-weight:600;margin:12px 0 6px}input,textarea{display:block;width:100%;box-sizing:border-box;padding:8px 12px;border:1px solid #e4e4e7;border-radius:6px;font:16px system-ui,sans-serif}</style></head><body><main><h1>New idea</h1><label>Title</label><input value="${escapeShareHtml(shownTitle)}"><label>Note</label><textarea rows="2">${escapeShareHtml(shownNote)}</textarea><label>Link</label><input value="${escapeShareHtml(shownLink)}"></main><script>fetch("/c/idea/wake",{credentials:"same-origin",keepalive:true}).catch(function(){});location.replace(${JSON.stringify(next)})</script></body></html>`;
   return new Response(html, {
     headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" },
   });
