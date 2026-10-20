@@ -713,6 +713,109 @@ Day list (derived): latest attested Rx has ≥1 investigation order. `report_upl
 
 ---
 
+## Social cards (soc-03, soc-05, soc-07, soc-10, soc-11, soc-12, soc-13, soc-20)
+
+Doctor-owned marketing cards. Authenticated. No patient fields. The file is a photo, a video, audio, or a document in the `social-card-files` bucket. The card response says `hasFile`, `fileKind` (`photo`, `video`, `audio`, `document`, or null), and `postable`. It does not return the object key. `postable` is true only for JPEG, PNG, WebP, MP4, and MOV.
+
+`GET /api/v1/social/cards`  
+`POST /api/v1/social/cards`  
+`PATCH /api/v1/social/cards/:id`  
+`POST /api/v1/social/cards/:id/reuse` returns `201` with `{ card }`.  
+`DELETE /api/v1/social/cards/:id` returns `200` with `data: null`. That move puts the card in the bin.  
+`GET /api/v1/social/cards/bin` returns `{ cards }` still in the bin.  
+`POST /api/v1/social/cards/:id/restore` returns `{ card }` and clears `deletedAt`.  
+`DELETE /api/v1/social/cards/bin/:id` removes one binned card, its file, and its code. A card still on the board is not removed. Returns `200` with `data: null`.  
+`DELETE /api/v1/social/cards/bin` removes every binned card for this doctor. Returns `200` with `data: null`.
+
+`GET /api/v1/social/columns` returns `{ columns }`.  
+`POST /api/v1/social/columns` body `{ name }` returns `201` with `{ column }`. The new column sits immediately before Ready.  
+`PATCH /api/v1/social/columns/:id` body `{ name }` renames a named column. The four opening columns stay.  
+`DELETE /api/v1/social/columns/:id` returns `200` with `data: null`. Cards in that column go back to Thoughts and ideas. The column name is not logged.
+
+`POST /api/v1/social/cards/uploads` body `{ contentType }` returns `{ path, token }` for a file that will be attached on create.  
+`POST /api/v1/social/cards/:id/file/upload` is the same mint for a card that already exists.  
+`POST /api/v1/social/cards/:id/file` body `{ path }` attaches that object and leaves the column as it is.  
+`DELETE /api/v1/social/cards/:id/file` removes the object. A Ready card moves to `making`. Any other column stays. Returns `{ card }`.  
+`GET /api/v1/social/cards/:id/file` returns `{ downloadUrl }` for the owner. Another doctor gets nothing.
+
+A thought can also keep reference files. These are not the file that posts. Photos, videos, audio, and documents each have their own cap of ten.  
+`POST /api/v1/social/cards/:id/scraps` body `{ path }` returns `201` with `{ scrap }`. An eleventh file of that kind is refused with `The pile is full`.  
+`GET /api/v1/social/cards/:id/scraps/:scrapId` returns `{ downloadUrl }`.  
+`DELETE /api/v1/social/cards/:id/scraps/:scrapId` removes that reference and its object. Returns `200` with `data: null`.  
+The path is not logged and is not in the response.
+
+**Card:**
+
+```json
+{
+  "id": "uuid",
+  "stage": "thoughts",
+  "title": "Fees for a first visit",
+  "format": null,
+  "topic": null,
+  "words": {},
+  "hasFile": false,
+  "fileKind": null,
+  "postable": false,
+  "scraps": [],
+  "frames": [],
+  "sourceUrl": null,
+  "scheduledAt": null,
+  "publishError": null,
+  "instagramUrl": null,
+  "visitCount": 0,
+  "columnId": null,
+  "pagePath": "/d/clinic",
+  "createdAt": "2026-10-11T00:00:00.000Z",
+  "updatedAt": "2026-10-11T00:00:00.000Z"
+}
+```
+
+`stage` is `thoughts`, `chosen`, `making`, `ready`, `custom`, or `posted`. `custom` means the card sits in a column the doctor named. Create defaults to `thoughts`. `ready` is accepted only when `filePath` is a JPEG, PNG, WebP, MP4, or MOV. A GIF, HEIC, WebM, voice note, or document can sit on an earlier column and cannot land on Ready. A later move to `ready` needs a photo or a video already on the card. A file may also sit on any earlier column. Adding a file does not change the column. `posted` is not a column the doctor moves to. `columnId` is the column the card sits in, or null when the card is posted or has not been placed in one. Create and PATCH may send `columnId` to put the card in that column. Moving a card off Ready clears the time and keeps the file.
+
+**Column:**
+
+```json
+{
+  "id": "uuid",
+  "kind": "custom",
+  "name": "Film on Sunday",
+  "position": 3
+}
+```
+
+`kind` is `thoughts`, `chosen`, `making`, `ready`, or `custom`. The first four exist once per doctor, in that order. A `custom` column is inserted immediately before Ready. `name` is 1–80 characters. The response does not include `doctor_id`.
+
+`format` is `post`, `reel`, or `story`, or null. A post does not need `shots`.
+
+`words` may include `note`, `caption`, `altText`, `firstComment`, `hook`, `script`, `coverLine`, `shots` (up to three strings), `line`, `location`, `collaborator`, `crop` (`original`, `square`, or `portrait`), `aiGenerated`, `shareToFeed`, `music`, `stickers`, and `productTag`. `altText` is the optional description of a picture, up to 500 characters. `music`, `stickers`, or `productTag` means the card is finished on the phone. `note` is the idea on a thought, up to 1000 characters. It is not the caption. `caption` may be 2200 characters. Saving a different format keeps the words of the formats that are hidden. Lines wrap. A heading line starts with `# `. A list line starts with `- [ ] ` or `- [x] `; an older line that starts with `- ` is an unticked list. A whole line `!hr` is a divider. Two columns are a whole line `!cols`, the left lines, a whole line `!|`, the right lines, then a whole line `!/`. A whole line `!file:` plus a scrap id points at one reference already on that card. `!file:piece` points at the card’s own file. Deleting that line does not delete the file. A whole line `!link:` plus a link id points at one inspiration link on that card. Unknown keys are rejected, including `patientId`, `patientName`, `phone`, `name`, `complaint`, and `diagnosis`.
+
+`scraps` is an array of `{ id, fileKind, postable, face }`, at most ten of each kind. `fileKind` and `postable` use the same meanings as on the card. `face` is `sheet` for a spreadsheet, `slides` for a deck, `page` for another document, or null. The array is empty when the card has no reference files. Ready still posts the single card file, not a scrap.
+
+`frames` is the rest of a post, after the card file, in order. Each item is `{ id, fileKind }`. A post holds ten pictures in all, so `frames` holds at most nine. Only a JPEG, PNG, or WebP can be added. `POST /api/v1/social/cards/:id/frames` body `{ path }` returns `201` with `{ card }`. `PUT /api/v1/social/cards/:id/frames/order` body `{ ids }` sets the order. The first id is `piece` for the card file, or a frame id; that picture becomes the card file. `GET /api/v1/social/cards/:id/frames/:frameId` returns `{ downloadUrl }`. `DELETE /api/v1/social/cards/:id/frames/:frameId` removes that picture. The path is not logged and is not in the response. A send posts every picture on the card, in order. One picture uses that file. More than one picture goes as one carousel. A reel or a story still sends only the card file. Before a photo is sent it is made into a JPEG that Instagram will take: at most 1440 pixels wide, between 4:5 and 1.91:1, at most 8 MB. A story photo is 9:16. Every picture in one carousel uses the first picture's ratio. The doctor's saved file is left as it was.
+
+`contentType` is a photo (JPEG, PNG, WebP, GIF, HEIC, AVIF, BMP, TIFF), a video (MP4, MOV, WebM, M4V, 3GP, AVI, MKV), audio (MP3, M4A, WAV), or a document: PDF, Word, PowerPoint, Excel, plain text, CSV, RTF, or OpenDocument. A photo is at most 8 MB. A video is at most 100 MB. Audio is at most 15 MB. A document is at most 10 MB.
+
+`publishError` is null, `not_connected`, or `meta_rejected`. It is set when a scheduled send does not go out. The card stays on its day. The running API checks every minute and sends a due Ready card that can go out on its own. A card with music, stickers, or a product tag is left for the phone. `POST /cron/social-card-publish` does the same send. It logs counts and a status code only.
+
+`scheduledAt` is an ISO time, or null. PATCH may set it only when the card is Ready and has a file. Null clears it and leaves the card Ready. Storing the time does not publish. Setting a time gives the card one durable code if it does not have one. Clearing the time does not retire that code. A posted card keeps its time and stays on that day in Schedule, marked Posted. Deleting the card does.
+
+`pagePath` is `/d/:slug`, or `/d/:slug?c=` plus that card’s code once the code exists. It is null when the doctor has no public slug. The code is not a separate response field and is not logged. Chat codes in `visit_page_links` still expire after one hour.
+
+`sourceUrl` is an inspiration link, or null. Create and PATCH may send it. A non-empty value is an `http` or `https` link, at most 500 characters. It is not the Instagram post. Halo Aid does not fetch it and does not log it.
+
+`links` is the inspiration links kept on the card, each `{ id, url }`. There is no fixed count. PATCH may send the list. Each url follows the `sourceUrl` rule. The first link is also stored as `sourceUrl`. The values are not logged.
+
+`instagramUrl` is set by PATCH `{ instagramUrl }` on a Ready card that has a file. The value must be an `https` link to an Instagram post, reel, or story. That PATCH sets `stage` to `posted`, clears the time and the file, and keeps the page code, minting one if the card does not have one. The card leaves Schedule. Halo Aid does not fetch the URL and does not log it.
+
+`visitCount` is how many public bookings started from that card’s `?c=` code. A booking with no code, a retired code, or another doctor’s code does not change the card. The count is a number. The card does not receive a patient name, phone, patient id, or appointment id. The same booking also stores the calendar day, in the doctor’s timezone, so Analytics can place it in a week. That day row is not on the card. If the count fails, the booking still succeeds. `POST /api/v1/social/cards/:id/reuse` copies a posted card into a new `thoughts` card with the same title, format, topic, and words. The copy has no file, time, Instagram URL, page code, or visit count. The posted card stays as it is.
+
+`GET /api/v1/social/analytics?from&to` reads one doctor’s clinic numbers for an inclusive period of at most 90 days. `from` and `to` are `YYYY-MM-DD`. The response is counts, the doctor’s titles, the caption’s first line, and a short-lived picture address when a send kept one. Enquiries are new Instagram chats. Bookings are appointments from those chats, plus bookings from a card’s page link, each appointment once. A cancelled appointment is left out. Conversion is omitted when the period has no enquiries. A post’s own bookings are the link bookings for that card, plus a chat booking whose comment lead names that post, still one appointment once. Days follow the doctor’s timezone. The response has no patient, no phone, no appointment id, no comment, and no Instagram media id. When this account has granted insights, the same response adds `instagram.tiles` for views, reach, interactions, and followers gained, a `views` number on each day, and views, likes, comments, and saves on each post in the period. A missing measurement is null. An account that has not granted insights omits `instagram`. Those numbers are read from stored rows. Opening the tab does not call Instagram. `sentence` is one line computed from those same counts. `sentence.title` is set only when the line names a format or a topic. The line does not call a model, and it is not logged.
+
+List and create wrap the card as `{ cards }` and `{ card }`. Update returns `{ card }`.
+
+---
+
 ## 📝 Version
 
 **Last Updated:** 2026-09-13  

@@ -19,6 +19,7 @@ import { runAccountDeletionFinalizeJob } from '../workers/account-deletion-cron'
 import { runRecordingArchivalJob } from '../workers/recording-archival-cron';
 import { runDashboardEventsRetentionJob } from '../workers/dashboard-events-retention-cron';
 import { runInstagramTokenHealthJob } from '../workers/instagram-token-health-cron';
+import { runSocialCardPublishJob } from '../services/social-card-publish-service';
 import { runOutboundSpikeJob } from '../workers/outbound-spike-cron';
 import { runGhostAccountSweepJob } from '../workers/ghost-account-sweep-cron';
 import { runVoiceTranscriptionJob } from '../workers/voice-transcription-worker';
@@ -32,6 +33,14 @@ import { logger } from '../config/logger';
 
 const router = Router();
 const IST = 'Asia/Kolkata';
+
+function axiosStatus(err: unknown): number | undefined {
+  if (typeof err === 'object' && err !== null && 'response' in err) {
+    const response = (err as { response?: { status?: number } }).response;
+    return response?.status;
+  }
+  return undefined;
+}
 
 function verifyCronAuth(req: Request): boolean {
   const secret = env.CRON_SECRET;
@@ -258,6 +267,35 @@ router.post('/instagram-token-health', async (req: Request, res: Response) => {
     return res.status(500).json({
       success: false,
       error: { code: 'InternalError', message: 'Instagram token health job failed' },
+    });
+  }
+});
+
+/**
+ * POST /cron/social-card-publish
+ *
+ * Sends Ready cards whose time has arrived. Schedule every minute with CRON_SECRET.
+ * Logs counts and status codes only.
+ */
+router.post('/social-card-publish', async (req: Request, res: Response) => {
+  if (!verifyCronAuth(req)) {
+    return res.status(401).json({
+      success: false,
+      error: { code: 'Unauthorized', message: 'Invalid or missing cron secret' },
+    });
+  }
+
+  const correlationId = `cron-social-card-publish-${Date.now()}`;
+
+  try {
+    const data = await runSocialCardPublishJob(correlationId);
+    return res.status(200).json({ success: true, data });
+  } catch (err) {
+    const status = axiosStatus(err);
+    logger.error({ correlationId, status }, 'Cron social card publish failed');
+    return res.status(500).json({
+      success: false,
+      error: { code: 'InternalError', message: 'Social card publish job failed' },
     });
   }
 });

@@ -10,6 +10,7 @@
 import { Suspense, useCallback, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { formatDateTime } from "@/lib/format-date";
+import { ideaCaptureHref } from "@/components/dashboard/social/idea-capture";
 import {
   type ActiveTextConsult,
   parseShareTargetKeys,
@@ -24,7 +25,8 @@ type PagePhase =
   | "no-consults"
   | "chooser"
   | "no-files"
-  | "redirecting";
+  | "redirecting"
+  | "opening-idea";
 
 function formatConsultStart(iso: string | undefined): string {
   if (!iso) return "Active consult";
@@ -55,6 +57,9 @@ function ShareTargetPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const keysParam = searchParams?.get("keys") ?? "";
+  const sharedTitle = searchParams?.get("title") ?? "";
+  const sharedNote = searchParams?.get("note") ?? "";
+  const sharedLink = searchParams?.get("link") ?? "";
 
   const [phase, setPhase] = useState<PagePhase>("loading");
   const [activeConsults, setActiveConsults] = useState<ActiveTextConsult[]>([]);
@@ -78,14 +83,34 @@ function ShareTargetPageInner() {
 
     void (async () => {
       const keys = parseShareTargetKeys(keysParam);
+      const ideaHref = ideaCaptureHref({
+        title: sharedTitle,
+        note: sharedNote,
+        link: sharedLink,
+      });
+      const hasShareText = Boolean(sharedTitle.trim() || sharedNote.trim() || sharedLink.trim());
       if (keys.length === 0) {
-        if (!cancelled) setPhase("no-files");
+        if (!cancelled) {
+          if (hasShareText) {
+            setPhase("opening-idea");
+            router.replace(ideaHref);
+          } else {
+            setPhase("no-files");
+          }
+        }
         return;
       }
 
       const files = await readStagedFilesFromCache(keys);
       if (files.length === 0) {
-        if (!cancelled) setPhase("no-files");
+        if (!cancelled) {
+          if (hasShareText) {
+            setPhase("opening-idea");
+            router.replace(ideaHref);
+          } else {
+            setPhase("no-files");
+          }
+        }
         return;
       }
 
@@ -111,13 +136,24 @@ function ShareTargetPageInner() {
     return () => {
       cancelled = true;
     };
-  }, [keysParam, goToConsult]);
+  }, [keysParam, sharedTitle, sharedNote, sharedLink, goToConsult, router]);
 
-  if (phase === "loading" || phase === "redirecting") {
+  const ideaHref = ideaCaptureHref({
+    title: sharedTitle,
+    note: sharedNote,
+    link: sharedLink,
+    keys: stagedKeys,
+  });
+
+  if (phase === "loading" || phase === "redirecting" || phase === "opening-idea") {
     return (
       <main className="flex min-h-[100dvh] items-center justify-center bg-gray-50 px-4">
         <p className="text-sm text-gray-600">
-          {phase === "redirecting" ? "Opening your consult…" : "Preparing shared file…"}
+          {phase === "redirecting"
+            ? "Opening your consult…"
+            : phase === "opening-idea"
+              ? "Opening your idea…"
+              : "Preparing shared file…"}
         </p>
       </main>
     );
@@ -140,7 +176,9 @@ function ShareTargetPageInner() {
         <StatusCard
           title="No active text consult to share to"
           body="Open a consult first, then share photos or PDFs from your gallery. On Android, install Halo Aid as an app to see it in the share sheet."
-        />
+        >
+          <IdeaChoice href={ideaHref} />
+        </StatusCard>
       </main>
     );
   }
@@ -174,8 +212,22 @@ function ShareTargetPageInner() {
             );
           })}
         </ul>
+        <IdeaChoice href={ideaHref} />
       </StatusCard>
     </main>
+  );
+}
+
+function IdeaChoice({ href }: { href: string }) {
+  const router = useRouter();
+  return (
+    <button
+      type="button"
+      onClick={() => router.push(href)}
+      className="mt-4 h-10 w-full rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground"
+    >
+      Save as an idea
+    </button>
   );
 }
 

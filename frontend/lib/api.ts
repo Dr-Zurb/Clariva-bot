@@ -415,6 +415,7 @@ export interface InstagramHealthData {
 export interface InstagramStatusData {
   connected: boolean;
   username: string | null;
+  pictureUrl?: string | null;
   health?: InstagramHealthData;
 }
 

@@ -110,6 +110,7 @@ jest.mock('../../../src/services/public-clinic-booking-sms', () => ({
 }));
 
 import { processPublicClinicCheckout } from '../../../src/services/public-clinic-checkout-service';
+import * as socialCards from '../../../src/services/social-card-service';
 
 const SLOT = '2030-01-15T10:00:00.000Z';
 
@@ -291,6 +292,45 @@ describe('public clinic checkout', () => {
     });
     await processPublicClinicCheckout(intake({ conversationToken: 'expired' }), 'corr');
     expect((mockBook.mock.calls[0]?.[0] as { conversationId?: string }).conversationId).toBeUndefined();
+    expect(mockRecord).not.toHaveBeenCalled();
+  });
+
+  it('counts a card code and still books when that count fails', async () => {
+    const doctorId = '11111111-1111-4111-8111-111111111111';
+    const count = jest.spyOn(socialCards, 'recordSocialCardVisit').mockResolvedValue(undefined);
+    mockVerified.mockImplementation(async () => true);
+
+    await processPublicClinicCheckout(intake(), 'corr');
+    expect(count).toHaveBeenCalledWith(undefined, doctorId, 'corr');
+    expect(
+      (mockBook.mock.calls[0]?.[0] as { conversationId?: string }).conversationId
+    ).toBeUndefined();
+
+    count.mockClear();
+    mockBook.mockClear();
+    await processPublicClinicCheckout(intake({ conversationToken: '23456789AB' }), 'corr');
+    expect(mockVerify).not.toHaveBeenCalled();
+    expect(
+      (mockBook.mock.calls[0]?.[0] as { conversationId?: string }).conversationId
+    ).toBeUndefined();
+    expect(count).toHaveBeenCalledWith('23456789AB', doctorId, 'corr');
+
+    count.mockRejectedValue(new Error('db down'));
+    const result = await processPublicClinicCheckout(
+      intake({ conversationToken: '23456789AB' }),
+      'corr'
+    );
+    expect(result.appointmentId).toBe('44444444-4444-4444-8444-444444444444');
+    count.mockRestore();
+  });
+
+  it('leaves a chat code off the card count and off the conversation when it does not match', async () => {
+    mockVerified.mockImplementation(async () => true);
+    await processPublicClinicCheckout(intake({ conversationToken: '23456789' }), 'corr');
+    expect(mockVerify).not.toHaveBeenCalled();
+    expect(
+      (mockBook.mock.calls[0]?.[0] as { conversationId?: string }).conversationId
+    ).toBeUndefined();
     expect(mockRecord).not.toHaveBeenCalled();
   });
 

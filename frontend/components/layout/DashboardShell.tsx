@@ -17,6 +17,7 @@ import { useVerificationStatusQuery } from "@/hooks/queries/useVerificationStatu
 import { NavPerfTracker } from "@/lib/nav-perf/nav-timing";
 import { QueryProvider } from "@/components/providers/QueryProvider";
 import { useSessionAccessToken } from "@/hooks/useSessionAccessToken";
+import { warmSocial } from "@/components/dashboard/social/social-board-cache";
 import { cn } from "@/lib/utils";
 
 const SIDEBAR_COLLAPSED_KEY = "clariva.sidebar.collapsed";
@@ -136,6 +137,10 @@ function DashboardShellInner({
   const handleOpenPalette = useCallback(() => setPaletteOpen(true), []);
 
   const accessToken = token ?? "";
+  useEffect(() => {
+    if (!accessToken) return;
+    warmSocial(accessToken);
+  }, [accessToken]);
   const { counts } = useDashboardCounts(accessToken);
   const { data: onboarding } = useOnboardingStatusQuery(accessToken);
   const { data: verification } = useVerificationStatusQuery(accessToken);
@@ -180,6 +185,7 @@ function DashboardShellInner({
           collapsed={effectiveSidebarCollapsed}
           onToggleCollapse={handleToggleCollapse}
           hideGettingStarted={hideGettingStarted}
+          token={accessToken}
         />
         <main
           className={cn(

@@ -9,6 +9,7 @@ import { logger } from '../config/logger';
 import { DoctorNotVerifiedError, InternalError, UnauthorizedError, ValidationError } from '../utils/errors';
 import { verifyBookingToken } from '../utils/booking-token';
 import { findVisitPageLink, isVisitPageCode } from './visit-page-link-service';
+import { isSocialCardCode, recordSocialCardVisit } from './social-card-service';
 import { handleSupabaseError } from '../utils/db-helpers';
 import { getDoctorSettings } from './doctor-settings-service';
 import { isSlotOpenForVisit } from './availability-service';
@@ -75,6 +76,7 @@ async function resolveOptionalConversation(
 ): Promise<OptionalConversation> {
   const raw = token?.trim();
   if (!raw) return { kind: 'none' };
+  if (isSocialCardCode(raw)) return { kind: 'none' };
   if (isVisitPageCode(raw)) {
     const link = await findVisitPageLink(raw, correlationId);
     if (!link || link.doctorId !== doctorId) return { kind: 'none' };
@@ -258,6 +260,12 @@ export async function processPublicClinicCheckout(
     },
     correlationId
   );
+
+  try {
+    await recordSocialCardVisit(input.conversationToken, doctorId, correlationId, appointment.id);
+  } catch {
+    logger.info({ correlationId }, 'social_card_visit_count_failed');
+  }
 
   const adminClient = getSupabaseAdminClient();
   const sessionResolved =

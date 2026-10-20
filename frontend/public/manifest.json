@@ -22,7 +22,17 @@
     "params": {
       "title": "title",
       "text": "text",
+      "url": "url",
       "files": [{ "name": "files", "accept": ["image/*", "application/pdf"] }]
     }
-  }
+  },
+  "shortcuts": [
+    {
+      "name": "New idea",
+      "short_name": "New idea",
+      "description": "Save a thought for later",
+      "url": "/dashboard/social/idea",
+      "icons": [{ "src": "/icon-halo.svg", "sizes": "any", "type": "image/svg+xml" }]
+    }
+  ]
 }

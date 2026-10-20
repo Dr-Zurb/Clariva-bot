@@ -38,10 +38,12 @@ import { instagramAccountNameForGreeting } from '../utils/instagram-greeting-cop
 const INSTAGRAM_OAUTH_AUTHORIZE = 'https://www.instagram.com/oauth/authorize';
 const INSTAGRAM_OAUTH_ACCESS_TOKEN = 'https://api.instagram.com/oauth/access_token';
 const INSTAGRAM_GRAPH_BASE = 'https://graph.instagram.com';
-/** Business Login scopes for the first App Review file (basic + messages). Comments stay in-repo; add the scope back when that file is submitted. */
+/** Business Login scopes. The review file of 8 Oct stays basic + messages. Posting and insights are requested so a test account can grant them on reconnect. Comments stay out. */
 const INSTAGRAM_BUSINESS_SCOPES = [
   'instagram_business_basic',
   'instagram_business_manage_messages',
+  'instagram_business_content_publish',
+  'instagram_business_manage_insights',
 ];
 /** Messages only. Comments and reactions are not in this review file's token. */
 export const INSTAGRAM_DM_SUBSCRIBED_FIELDS = 'messages';
@@ -436,6 +438,46 @@ function summaryFromCachedRow(row: DoctorInstagramHealthRow): InstagramHealthSum
   };
 }
 
+const PROFILE_PICTURE_TTL_MS = 60 * 60 * 1000;
+const profilePictureCache = new Map<string, { url: string; expiresAt: number }>();
+
+/**
+ * Profile photo of the connected Instagram account. The address expires, so it is
+ * read when asked and kept for an hour. Failures leave the card without a photo.
+ * The address is never logged.
+ */
+export async function getInstagramProfilePicture(
+  doctorId: string,
+  accessToken: string,
+  correlationId: string
+): Promise<string | null> {
+  const cached = profilePictureCache.get(doctorId);
+  if (cached && cached.expiresAt > Date.now()) return cached.url;
+
+  const token = accessToken.trim();
+  if (!token) return null;
+
+  try {
+    const res = await axios.get<{ profile_picture_url?: string }>(`${INSTAGRAM_GRAPH_BASE}/v18.0/me`, {
+      params: { fields: 'profile_picture_url', access_token: token },
+      timeout: META_HTTP_TIMEOUT_MS,
+    });
+    const url = res.data?.profile_picture_url;
+    if (typeof url !== 'string' || !url.startsWith('https://')) return null;
+    profilePictureCache.set(doctorId, { url, expiresAt: Date.now() + PROFILE_PICTURE_TTL_MS });
+    return url;
+  } catch (err: unknown) {
+    logger.warn(
+      {
+        correlationId,
+        status: axios.isAxiosError(err) ? err.response?.status : undefined,
+      },
+      'Instagram profile photo lookup failed'
+    );
+    return null;
+  }
+}
+
 /**
  * Connection + health for dashboard (Instagram Graph /me, cached 5 minutes).
  */
@@ -445,12 +487,14 @@ export async function getInstagramDashboardStatus(
 ): Promise<{
   connected: boolean;
   username: string | null;
+  pictureUrl: string | null;
   health: InstagramHealthSummary;
 }> {
   const basic = await getConnectionStatus(doctorId, correlationId);
   if (!basic.connected) {
     return {
       ...basic,
+      pictureUrl: null,
       health: notConnectedHealth(),
     };
   }
@@ -474,6 +518,7 @@ export async function getInstagramDashboardStatus(
   if (!row?.instagram_access_token) {
     return {
       ...basic,
+      pictureUrl: null,
       health: {
         level: 'unknown',
         checkedAt: null,
@@ -496,7 +541,11 @@ export async function getInstagramDashboardStatus(
     row.instagram_health_level !== 'unknown';
 
   if (cacheFresh) {
-    return { ...basic, health: summaryFromCachedRow(row) };
+    return {
+      ...basic,
+      pictureUrl: await getInstagramProfilePicture(doctorId, row.instagram_access_token, correlationId),
+      health: summaryFromCachedRow(row),
+    };
   }
 
   const probe = await probeInstagramUserToken(row.instagram_access_token, correlationId);
@@ -508,9 +557,15 @@ export async function getInstagramDashboardStatus(
   const tokenExpiresIso = summary.tokenExpiresAt ?? row.instagram_token_expires_at;
 
   await persistInstagramHealth(doctorId, summary, tokenExpiresIso, correlationId);
+  const pictureUrl = await getInstagramProfilePicture(
+    doctorId,
+    row.instagram_access_token,
+    correlationId
+  );
 
   return {
     ...basic,
+    pictureUrl,
     health: {
       level: summary.level,
       checkedAt: new Date().toISOString(),
@@ -1126,6 +1181,11 @@ export async function saveDoctorInstagram(
       throw new ConflictError('This Instagram page is already linked to another account');
     }
     handleSupabaseError(error, correlationId);
+  }
+
+  const cleared = await supabase.from('doctor_instagram').update({ insights_status: null }).eq('doctor_id', doctorId);
+  if (cleared.error && cleared.error.code !== 'PGRST204' && cleared.error.code !== '42703') {
+    logger.warn({ correlationId, errorCode: cleared.error.code }, 'instagram connect: insights status not cleared');
   }
 
   logger.info(

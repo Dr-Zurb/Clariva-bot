@@ -9,6 +9,7 @@ import {
   ListChecks,
   PanelLeftClose,
   PanelLeftOpen,
+  Sparkles,
   User,
   Users,
 } from "lucide-react";
@@ -21,6 +22,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import type { DashboardCounts } from "@/hooks/useDashboardCounts";
+import { warmSocial } from "@/components/dashboard/social/social-board-cache";
 
 interface NavItem {
   href: string;
@@ -60,6 +62,7 @@ const mainNavItems: NavItem[] = [
     icon: Bell,
     badgeKey: "dashboardEventsUnread",
   },
+  { href: "/dashboard/social", label: "Social", icon: Sparkles },
 ];
 
 interface SidebarProps {
@@ -72,6 +75,8 @@ interface SidebarProps {
   onToggleCollapse?: () => void;
   /** Hide after setup complete + verified (GS-D5). */
   hideGettingStarted?: boolean;
+  /** Warms the Social board on hover so the first open is already in memory. */
+  token?: string;
 }
 
 /**
@@ -92,6 +97,7 @@ export function Sidebar({
   collapsed = false,
   onToggleCollapse,
   hideGettingStarted = false,
+  token = "",
 }: SidebarProps) {
   const pathname = usePathname();
 
@@ -121,10 +127,17 @@ export function Sidebar({
 
     const count = badgeKey != null && counts != null ? counts[badgeKey] : 0;
 
+    const prefetchSocial = () => {
+      if (href === "/dashboard/social" && token) warmSocial(token);
+    };
+
     const linkEl = (
       <Link
         href={href}
         onClick={onClose}
+        onPointerEnter={prefetchSocial}
+        onPointerDown={prefetchSocial}
+        onFocus={prefetchSocial}
         aria-current={isActive ? "page" : undefined}
         className={cn(
           navLinkChrome,

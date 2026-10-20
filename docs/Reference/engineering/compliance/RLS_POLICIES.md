@@ -524,6 +524,10 @@ auth.jwt() ->> 'role' = 'admin'
 
 ---
 
+## Storage — `social-card-files` (migration 247)
+
+Private bucket for a marketing file on a social card. Path starts with `{doctor_id}/`. Doctors get SELECT-own on that first folder. No INSERT, UPDATE, or DELETE policies. The service role mints the signed upload URL and deletes the object when the card or the file is removed. The original file name is not stored.
+
 ## Storage — `clinic-branding` (migration 212)
 
 Private bucket. Path `{doctor_id}/logo.{png|jpg}`. Doctors get SELECT-own on the first folder segment (`auth.uid()`). No INSERT/UPDATE/DELETE policies — writes go through the service-role backend (signed upload URL + register). Public patients read via the HMAC-gated `/api/v1/public/prescriptions/:id/logo` route, never `getPublicUrl`.

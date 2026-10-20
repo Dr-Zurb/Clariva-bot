@@ -6,6 +6,8 @@ Add new items **below** this line (or at the top of the list—stay consistent).
 
 ## Open items
 
+- [ ] 2026-10-13 — **[social · parked]** SMM/editor seat, after launch. Launch assumes the doctor does ideas, filming, and posting. Later: a staff login on the doctor's account for a social media manager or editor. Doctor keeps ideas and approve / reject / override. Manager sees only cards the doctor sends, and sends the cut and a time back. Not the appointment or intake staff seat, and not a separate product. Chart, visit counts, and booking names stay with the doctor.
+- [ ] 2026-10-12 — **[social · parked]** Phone capture into Thoughts and ideas: a one-line page the doctor pins to the home screen. Share from another app only after that is used. Do not sync Apple Notes, Google Keep, or Microsoft To Do, and do not pull chart notes. Not in v1.
 - [ ] 2026-10-02 — **[instagram · parked]** Booking page still says "Book" and "appointment". Instagram DMs now say "visit" for queue, slot, and mixed days. Revisit the page wording later. Do not do it inside the DM reply change.
 - [ ] 2026-09-12 — **[desk · parked]** Separate staff UI opening prep from Today. Prep-only logins now search on Check-in (register/pay/book hidden). Plan residual: `docs/Work/Product plans/plan-desk-visit-prep.md`.
 - [ ] 2026-09-07 — **[cockpit · dark mode]** Ship dark mode toggle. `.dark` tokens already complete in `frontend/app/globals.css:73-103`, `darkMode: ["class"]` set in `frontend/tailwind.config.ts`. Needs ThemeProvider + `dark` class on `<html>` in `frontend/app/layout.tsx`. Helps cockpit surface separation after the canvas-depth pass.

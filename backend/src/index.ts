@@ -40,6 +40,14 @@ import {
   startVideoEscalationPollWorker,
   type VideoEscalationPollHandle,
 } from './workers/video-escalation-poll-cron';
+import {
+  startSocialCardPublishWorker,
+  type SocialCardPublishWorkerHandle,
+} from './workers/social-card-publish-cron';
+import {
+  startSocialInsightsWorker,
+  type SocialInsightsWorkerHandle,
+} from './workers/social-insights-cron';
 import { startChatPushListener, stopChatPushListener } from './services/chat-push-listener';
 import { correlationId } from './middleware/correlation-id';
 import { requestTiming } from './middleware/request-timing';
@@ -488,6 +496,10 @@ let opdOverrunWorker: OpdOverrunWorkerHandle | null = null;
 let previsitNotifyWorker: PrevisitNotifyWorkerHandle | null = null;
 // rec-22 / rec-27 — 5s wake for consent timeout + grant expiry
 let videoEscalationPollWorker: VideoEscalationPollHandle | null = null;
+// Sends a Ready card when its time has arrived. Off in test.
+let socialCardPublishWorker: SocialCardPublishWorkerHandle | null = null;
+// Reads Instagram numbers into stored rows. Off in test. The tab does not call Instagram.
+let socialInsightsWorker: SocialInsightsWorkerHandle | null = null;
 
 // Initialize database and start server
 // Database connection must succeed before server starts accepting requests
@@ -524,6 +536,8 @@ initializeDatabase()
       // rec-22 / rec-27: wake consent-timeout + grant-expiry every 5s.
       // Safe alongside POST /cron/video-* (atomic stamps). Off in test.
       videoEscalationPollWorker = startVideoEscalationPollWorker();
+      socialCardPublishWorker = startSocialCardPublishWorker();
+      socialInsightsWorker = startSocialInsightsWorker();
       // task-text-D6b: Realtime INSERT → Web Push fan-out (no-op when VAPID unset).
       startChatPushListener();
     });
@@ -583,6 +597,14 @@ const gracefulShutdown = (signal: string) => {
       if (videoEscalationPollWorker) {
         videoEscalationPollWorker.stop();
         videoEscalationPollWorker = null;
+      }
+      if (socialCardPublishWorker) {
+        socialCardPublishWorker.stop();
+        socialCardPublishWorker = null;
+      }
+      if (socialInsightsWorker) {
+        socialInsightsWorker.stop();
+        socialInsightsWorker = null;
       }
       stopChatPushListener();
       await stopWebhookWorker();

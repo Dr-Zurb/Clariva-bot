@@ -53,7 +53,7 @@
  * Next app.
  */
 
-const SW_VERSION = "v4-2026-05-24-d6c";
+const SW_VERSION = "v5-2026-10-20-idea";
 const SHARE_TARGET_CACHE = "share-target-staging-v1";
 const SHARE_TARGET_STALE_MS = 30 * 60 * 1000;
 
@@ -147,15 +147,30 @@ self.addEventListener("fetch", (event) => {
   event.respondWith(handleShareTarget(event));
 });
 
+function shareField(formData, name, max) {
+  const value = formData.get(name);
+  if (typeof value !== "string") return "";
+  return value.trim().slice(0, max);
+}
+
+function applyShareFields(target, title, note, link) {
+  if (title) target.searchParams.set("title", title);
+  if (note) target.searchParams.set("note", note);
+  if (link) target.searchParams.set("link", link);
+}
+
 async function handleShareTarget(event) {
   const formData = await event.request.formData();
   const files = formData.getAll("files");
+  const title = shareField(formData, "title", 200);
+  const note = shareField(formData, "text", 2000);
+  const link = shareField(formData, "url", 500);
   const cache = await caches.open(SHARE_TARGET_CACHE);
   const stagedKeys = [];
   const stagedAt = String(Date.now());
 
   for (const file of files) {
-    if (!(file instanceof File)) continue;
+    if (!(file instanceof File) || file.size === 0) continue;
     const key = `share-target-${crypto.randomUUID()}`;
     await cache.put(
       key,
@@ -169,10 +184,18 @@ async function handleShareTarget(event) {
     stagedKeys.push(key);
   }
 
+  // A note or link with no file is an idea. Files stay on the consult landing.
+  if (stagedKeys.length === 0 && (title || note || link)) {
+    const ideaUrl = new URL("/dashboard/social/idea", self.location.origin);
+    applyShareFields(ideaUrl, title, note, link);
+    return Response.redirect(ideaUrl.href, 303);
+  }
+
   const redirectUrl = new URL("/c/share-target", self.location.origin);
   if (stagedKeys.length > 0) {
     redirectUrl.searchParams.set("keys", stagedKeys.join(","));
   }
+  applyShareFields(redirectUrl, title, note, link);
   return Response.redirect(redirectUrl.href, 303);
 }
 

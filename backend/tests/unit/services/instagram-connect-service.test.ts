@@ -141,6 +141,7 @@ describe('getInstagramDashboardStatus (RBH-10)', () => {
 
     expect(r.connected).toBe(false);
     expect(r.username).toBeNull();
+    expect(r.pictureUrl).toBeNull();
     expect(r.health.level).toBe('not_connected');
     expect(r.health.reconnectRecommended).toBe(true);
     expect(from).toHaveBeenCalledWith('doctor_instagram');
@@ -179,13 +180,18 @@ describe('getInstagramDashboardStatus (RBH-10)', () => {
       .mockReturnValueOnce(statusChain)
       .mockReturnValueOnce(updateChain);
     mockedDb.getSupabaseAdminClient.mockReturnValue({ from } as never);
-    mockedAxios.get.mockResolvedValueOnce({
-      data: { user_id: '17841433414940360', username: 'halo.aid' },
-    } as never);
+    mockedAxios.get
+      .mockResolvedValueOnce({
+        data: { user_id: '17841433414940360', username: 'halo.aid' },
+      } as never)
+      .mockResolvedValueOnce({
+        data: { profile_picture_url: 'https://cdn.example/photo.jpg' },
+      } as never);
 
     const r = await getInstagramDashboardStatus(doctorId, 'corr-health-ok');
 
     expect(r.connected).toBe(true);
+    expect(r.pictureUrl).toBe('https://cdn.example/photo.jpg');
     expect(r.health.level).toBe('ok');
     expect(r.health.message).toMatch(/healthy/i);
     expect(mockedAxios.get).toHaveBeenCalledWith(
@@ -194,6 +200,15 @@ describe('getInstagramDashboardStatus (RBH-10)', () => {
         params: expect.objectContaining({
           access_token: 'ig-user-tok',
           fields: 'user_id,username',
+        }),
+      })
+    );
+    expect(mockedAxios.get).toHaveBeenCalledWith(
+      'https://graph.instagram.com/v18.0/me',
+      expect.objectContaining({
+        params: expect.objectContaining({
+          access_token: 'ig-user-tok',
+          fields: 'profile_picture_url',
         }),
       })
     );
@@ -311,6 +326,7 @@ describe('Instagram Login OAuth (ilr-18)', () => {
     expect(url).toContain('client_id=ig-app-id-test');
     expect(url).toContain('instagram_business_basic');
     expect(url).toContain('instagram_business_manage_messages');
+    expect(url).toContain('instagram_business_content_publish');
     expect(url).not.toContain('instagram_business_manage_comments');
     expect(url).not.toContain('pages_show_list');
     expect(url).not.toContain('facebook.com');

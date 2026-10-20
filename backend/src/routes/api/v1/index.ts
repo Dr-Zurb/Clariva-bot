@@ -47,6 +47,9 @@ import authRoutes from './auth';
 import clinicStaffRoutes from './clinic-staff';
 import adminClinicStaffRoutes from './admin-clinic-staff';
 import visitNarrativeRoutes from './visit-narrative';
+import socialCardRoutes from './social-cards';
+import socialColumnRoutes from './social-columns';
+import socialAnalyticsRoutes from './social-analytics';
 
 const router = Router();
 
@@ -210,5 +213,10 @@ router.use('/push', pushRoutes);
 
 // visit-narrative · vnt-02: transcript → span-anchored draft (doctor only)
 router.use('/visit-narrative', visitNarrativeRoutes);
+
+// social-assist · soc-03: doctor marketing cards
+router.use('/social/cards', socialCardRoutes);
+router.use('/social/columns', socialColumnRoutes);
+router.use('/social/analytics', socialAnalyticsRoutes);
 
 export default router;

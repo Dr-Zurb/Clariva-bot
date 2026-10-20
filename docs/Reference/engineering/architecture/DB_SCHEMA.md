@@ -234,6 +234,87 @@ created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 
 ---
 
+### `social_cards`
+
+**Purpose:** One marketing card for a doctor (soc-03, soc-05, soc-07, soc-10, soc-11, soc-12, soc-13, soc-20). Column, title, optional format and topic, the words, an optional file key, an optional time, an optional durable page code, an optional pasted Instagram URL once posted, and a visit count. Not a patient record. Ready requires the file. A time requires Ready and the file, or a posted card keeping the time it went out. Posted requires the URL and has no file. A named column does not hold a file or a time.
+
+**Columns:**
+```sql
+id          UUID PRIMARY KEY DEFAULT gen_random_uuid()
+doctor_id   UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE
+stage       TEXT NOT NULL DEFAULT 'thoughts'
+            CHECK (stage IN ('thoughts', 'chosen', 'making', 'ready', 'custom', 'posted'))
+title       TEXT NOT NULL
+format      TEXT NULL CHECK (format IS NULL OR format IN ('post', 'reel', 'story'))
+topic       TEXT NULL
+words       JSONB NOT NULL DEFAULT '{}'
+file_path   TEXT NULL
+source_url  TEXT NULL
+scheduled_at TIMESTAMPTZ NULL
+link_code   TEXT NULL
+instagram_url TEXT NULL
+visit_count INTEGER NOT NULL DEFAULT 0
+column_id   UUID NULL REFERENCES social_columns(id) ON DELETE RESTRICT
+deleted_at  TIMESTAMPTZ NULL
+publish_attempt_at TIMESTAMPTZ NULL
+publish_error TEXT NULL
+instagram_media_id TEXT NULL
+thumb_path  TEXT NULL
+created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+```
+
+**Indexes:**
+- `social_cards_doctor_updated_idx` ON `(doctor_id, updated_at DESC)`
+- `social_cards_link_code_idx` UNIQUE ON `(link_code)` WHERE `link_code IS NOT NULL`
+
+**Check:** `social_cards_ready_has_file` — `ready` has a `file_path`. Any other stage may have one. `social_cards_time_needs_file` — `scheduled_at` is set when the card is Ready and has a file, or when the card is posted and keeps the time it went out. The time is not a publish. `social_cards_source_url_len` — `source_url` is empty or 1–500 characters. It is an inspiration link, not the Instagram post. Do not log it. Do not log the object key. `publish_error` is null, `not_connected`, or `meta_rejected`. `instagram_media_id` is the id from a send. Pasting a URL does not set it. `thumb_path` is the small picture kept after the file is removed. Do not log either.
+
+**Link code:** `link_code` is unique when set. No expiry and no conversation. It is not a `visit_page_links` row. Do not log the value.
+
+**Bin:** `deleted_at` hides the card from the board. The file stays so it can be restored. Delete on a binned card, or Empty bin, removes that row, its file, and its code immediately. Thirty days later the service does the same for anything still in the bin.
+
+**Posted:** `social_cards_posted_has_url` — `posted` has an `instagram_url`, and every other stage has none. Pasting the URL does not call Instagram. Do not log the URL.
+
+**Visits:** `visit_count` is bookings that started from this card’s code. It is a number. The card has no patient, phone, or appointment id. Deleting an appointment does not rewind the count. A new card from Use again starts at 0.
+
+**Link bookings:** `social_card_link_bookings` stores the calendar day of a booking from a card’s page link. Columns are `id`, `doctor_id`, `card_id`, `booked_on`, `appointment_id`, `created_at`. `appointment_id` dedupes and is never returned and never logged. There is no patient column. RLS owner select where `doctor_id = auth.uid()`.
+
+**Instagram numbers:** `social_card_stats` is one row per card: views, reach, likes, comments, saves, shares, watch time, and when it was measured. An empty cell is unmeasured. `social_account_days` is one row per doctor per day: the follower count that day, and that day’s views when Instagram returns a daily series. `social_account_reach` stores reach, interactions, and views for 7, 30, and 90 days, including the previous window. Those views are the period total. Daily reach is not added. `doctor_instagram.insights_status` is null, `ready`, or `missing`. No comment text. RLS owner select on `doctor_id`.
+
+**File store:** private bucket `social-card-files`. Object key is `{doctor_id}/{object_id}.ext` or `{doctor_id}/{card_id}/{object_id}.ext`. SELECT-own on the first folder. No storage write policies. Not the visit-document bucket and not clinic branding.
+
+**RLS:** Enabled. Owner select and modify where `doctor_id = auth.uid()`. Service role still filters by `doctor_id`.
+
+**See:** [CONTRACTS.md](./CONTRACTS.md) social cards.
+
+---
+
+### `social_columns`
+
+**Purpose:** Columns on the doctor’s board (soc-20). The four opening columns are thoughts, chosen, making, and ready. A named column has kind `custom` and sits immediately before Ready. Not a patient record. Do not log the name.
+
+**Columns:**
+```sql
+id          UUID PRIMARY KEY DEFAULT gen_random_uuid()
+doctor_id   UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE
+kind        TEXT NOT NULL CHECK (kind IN ('thoughts', 'chosen', 'making', 'ready', 'custom'))
+name        TEXT NOT NULL
+position    INTEGER NOT NULL CHECK (position >= 0)
+created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+UNIQUE (doctor_id, position)
+```
+
+**Indexes:**
+- `social_columns_one_opening_idx` UNIQUE ON `(doctor_id, kind)` WHERE `kind <> 'custom'`
+
+**RLS:** Enabled. Owner select and owner modify where `doctor_id = auth.uid()`. Deleting the account deletes the columns. Deleting a named column does not delete its cards; the service moves those cards to thoughts first. `social_cards.column_id` is `ON DELETE RESTRICT`.
+
+**See:** [CONTRACTS.md](./CONTRACTS.md) social cards.
+
+---
+
 ### `messages`
 
 **Purpose:** Store individual messages in conversations. PHI in content (encrypted at rest).

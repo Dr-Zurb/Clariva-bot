@@ -25,7 +25,7 @@ The single place I look when planning a week. If a thread isn't here, it doesn't
 | L10 | Meta platform-action clause | `NEXT` | Send the L10 draft below to ⟨attorney⟩ — briefing points only; counsel writes the clause |
 | M1 | Meta — data deletion callback | `ACTIVE` | Optional Send Request if this Facebook account ever connected Halo Aid |
 | M2 | Meta — business verification | `PARKED` | Later: open WhatsApp “needs more information” |
-| M3 | Meta — app review submission | `ACTIVE` | Record one screencast: Connect → DM hours/book (no comments) |
+| M3 | Meta — app review submission | `WAITING` | Disconnect @haloaid.test so the reviewer finds Not connected |
 | M4 | Meta — post-review account canary | `PARKED` | Unpark only after M3 Advanced Access is approved — then stand up 2–3 owned canaries |
 | P1 | Desk / receptionist | `ACTIVE` | Review history-link spec; promote p1; then Opus `hl-01` |
 | P2 | Cockpit / EHR | `PARKED` | — |
@@ -251,7 +251,22 @@ Same Security Centre screen still shows **WhatsApp needs more information**. Not
 
 **Next action:** Later — open WhatsApp “needs more information” / View details.
 
-### M3 · App review submission — `ACTIVE`
+### M3 · App review submission — `WAITING`
+**Submitted Thu 8 Oct 2026, evening IST.** Dashboard status: **Review in progress**. Meta's own line: most submissions are reviewed within 20 days, and it can take longer. Do not treat that as a decision date.
+
+New requests, each "In 1 use case":
+
+- `instagram_business_basic`
+- `instagram_business_manage_messages`
+
+Comments are not in this file. Do not open Tech Provider Access verification. Do not resubmit while this is in progress.
+
+The reviewer signs in at https://haloaid.com/login. The Halo Aid test login is in the reviewer instructions. No Instagram password is in the form.
+
+Hosting for the wait, checked the same evening: Frontend and Backend on Render are both the $7 instance (0.5 CPU / 512 MB), so they do not sleep. `haloaid.com` and the API both returned 200 in under a second, and the homepage was the real page. Render maintenance notice: **14 Oct 2026, 6:30 am IST**. A paid service comes back on its own.
+
+Supabase stays on the free plan. Database is about 65 MB after the 8 Oct audit-log cleanup (under 0.5 GB). This cycle's egress is under 5 GB. The orange grace banner is last month's egress and stays until **31 Oct 2026**; restriction that day only if an enforced quota is still over. Log ingestion is over 1 GB and marked Upcoming. Supabase says that meter is not enforced until early 2027.
+
 Instagram Login app only (not Facebook Page / `pages_*`). **First file** — request **Advanced Access** for these two:
 
 - `instagram_business_basic`
@@ -318,8 +333,8 @@ When someone comments on the clinic’s Feed post asking about appointments, we 
 4. **Record** the two shot lists above. Dummy only. Say the one line on the messages tape.
 5. **Submit** Advanced Access for `basic` + `messages`. Paste the two justifications. Clock is weeks.
 
-**Next action:** Deploy the one-link reply, then paste the two descriptions and record the two screencasts.
-**Unblocked by:** M2 verified (13 Sep). M1 callback is live enough. Policy URLs are live.
+**Next action:** Disconnect @haloaid.test on Settings → Integrations, so the reviewer starts from Not connected and uses their own professional account.
+**Unblocked by:** submitted 8 Oct 2026. M2 verified. Policy URLs live.
 
 A pass here does **not** unlock a paying clinic. Next gate is **M4**.
 
