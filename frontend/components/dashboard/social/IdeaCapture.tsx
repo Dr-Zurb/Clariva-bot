@@ -7,6 +7,7 @@
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import Link from "next/link";
+import { fallbackLinkTitle } from "@/lib/text/link-card-title";
 import { FILE_ACCEPT, normalizeLink } from "./idea-composer";
 import { seedIdeaCapture } from "./idea-capture";
 import {
@@ -38,7 +39,9 @@ export function IdeaCapture({
   fileKeys?: string;
 }) {
   const seeded = seedIdeaCapture({ title, note, link });
+  const fromLink = Boolean(seeded.link);
   const titleRef = useRef<HTMLInputElement>(null);
+  const titleEdited = useRef(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const [draftTitle, setDraftTitle] = useState(seeded.title);
   const [draftNote, setDraftNote] = useState(seeded.note);
@@ -47,6 +50,25 @@ export function IdeaCapture({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    const sharedLink = seeded.link;
+    if (!sharedLink || titleEdited.current) return;
+    if (seeded.title !== fallbackLinkTitle(sharedLink)) return;
+    const controller = new AbortController();
+    void fetch(`/api/social/link-title?url=${encodeURIComponent(sharedLink)}`, { signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) return "";
+        const body = (await response.json()) as { title?: unknown };
+        return typeof body.title === "string" ? body.title.trim().slice(0, 200) : "";
+      })
+      .then((next) => {
+        if (!next || titleEdited.current) return;
+        setDraftTitle((current) => (current === seeded.title ? next : current));
+      })
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, [seeded.link, seeded.title]);
 
   useEffect(() => {
     const keys = parseShareTargetKeys(fileKeys);
@@ -133,7 +155,9 @@ export function IdeaCapture({
     <div className="mx-auto w-full max-w-md">
       <h1 className="text-xl font-semibold text-foreground">New idea</h1>
       <p className="mt-1 text-sm text-muted-foreground">
-        It goes to Thoughts and ideas. You can shape it on the board later.
+        {fromLink
+          ? "Add what you want to use from this. The link stays on the card."
+          : "It goes to Thoughts and ideas. You can shape it on the board later."}
       </p>
       {saved ? (
         <p className="mt-4 rounded-md border border-border bg-muted/40 px-3 py-2 text-sm text-foreground" role="status">
@@ -153,10 +177,11 @@ export function IdeaCapture({
           value={draftTitle}
           maxLength={200}
           required
-          autoFocus
+          autoFocus={!fromLink}
           placeholder="A short title"
           className={fieldClass}
           onChange={(event) => {
+            titleEdited.current = true;
             setDraftTitle(event.target.value);
             if (saved) setSaved(false);
           }}
@@ -169,7 +194,8 @@ export function IdeaCapture({
           value={draftNote}
           rows={4}
           maxLength={2000}
-          placeholder="A note, if you want one"
+          autoFocus={fromLink}
+          placeholder={fromLink ? "What to use from this" : "A note, if you want one"}
           className={fieldClass}
           onChange={(event) => setDraftNote(event.target.value)}
         />

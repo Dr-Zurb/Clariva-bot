@@ -1,9 +1,10 @@
 /**
- * On-the-go idea capture — title required, Thoughts stage, shared link becomes the title.
+ * On-the-go idea capture — title required, Thoughts stage.
+ * A shared link opens this screen and is saved only when Add is pressed.
  */
 
 import React from "react";
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { IdeaCapture } from "../IdeaCapture";
 import { ideaCaptureHref, seedIdeaCapture } from "../idea-capture";
@@ -60,14 +61,53 @@ beforeEach(() => {
   createMock.mockResolvedValue({ id: "card-1" } as Awaited<ReturnType<typeof createSocialCard>>);
   updateMock.mockResolvedValue({ id: "card-1" } as Awaited<ReturnType<typeof updateSocialCard>>);
   attachMock.mockResolvedValue({ id: "card-1" } as Awaited<ReturnType<typeof attachSocialCardFile>>);
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => new Response(JSON.stringify({ title: null }), { status: 200 })),
+  );
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
 });
 
 describe("seedIdeaCapture", () => {
-  it("turns a shared link into the title", () => {
-    expect(seedIdeaCapture({ note: "https://example.com/fees" })).toEqual({
-      title: "https://example.com/fees",
+  it("names an Instagram reel and keeps the address as the link", () => {
+    expect(seedIdeaCapture({ note: "https://www.instagram.com/reel/abc" })).toEqual({
+      title: "Instagram reel",
       note: "",
-      link: "https://example.com/fees",
+      link: "https://www.instagram.com/reel/abc",
+    });
+  });
+
+  it("keeps a caption and pulls the address out of it", () => {
+    expect(
+      seedIdeaCapture({ note: "Use the fee line https://www.instagram.com/p/abc" }),
+    ).toEqual({
+      title: "Instagram post",
+      note: "Use the fee line",
+      link: "https://www.instagram.com/p/abc",
+    });
+  });
+
+  it("keeps a title the other app sent", () => {
+    expect(
+      seedIdeaCapture({
+        title: "Clinic hours",
+        link: "https://www.youtube.com/watch?v=abc",
+      }),
+    ).toEqual({
+      title: "Clinic hours",
+      note: "",
+      link: "https://www.youtube.com/watch?v=abc",
+    });
+  });
+
+  it("uses a short label when the shared title is only the address", () => {
+    expect(seedIdeaCapture({ title: "https://youtu.be/abc" })).toEqual({
+      title: "YouTube",
+      note: "",
+      link: "https://youtu.be/abc",
     });
   });
 
@@ -114,6 +154,43 @@ describe("IdeaCapture", () => {
     fireEvent.click(screen.getByRole("button", { name: "Add" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Use a link");
     expect(createMock).not.toHaveBeenCalled();
+  });
+
+  it("opens a shared link without saving", () => {
+    render(<IdeaCapture token="token" note="https://www.instagram.com/reel/abc" />);
+    expect(screen.getByLabelText("Title")).toHaveValue("Instagram reel");
+    expect(screen.getByLabelText("Link")).toHaveValue("https://www.instagram.com/reel/abc");
+    expect(screen.getByLabelText("Note")).toHaveValue("");
+    expect(screen.getByLabelText("Note")).toHaveFocus();
+    expect(screen.getByPlaceholderText("What to use from this")).toBeInTheDocument();
+    expect(createMock).not.toHaveBeenCalled();
+  });
+
+  it("replaces a YouTube label with the video title", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ title: "Fever season reel" }), { status: 200 })),
+    );
+    render(<IdeaCapture token="token" link="https://www.youtube.com/watch?v=abc" />);
+    expect(await screen.findByDisplayValue("Fever season reel")).toBeInTheDocument();
+    expect(createMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps a title the doctor typed while the lookup is still running", async () => {
+    let finish: (response: Response) => void = () => undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        () =>
+          new Promise<Response>((resolve) => {
+            finish = resolve;
+          }),
+      ),
+    );
+    render(<IdeaCapture token="token" link="https://www.youtube.com/watch?v=abc" />);
+    fireEvent.change(screen.getByLabelText("Title"), { target: { value: "My line" } });
+    finish(new Response(JSON.stringify({ title: "Video name" }), { status: 200 }));
+    await waitFor(() => expect(screen.getByLabelText("Title")).toHaveValue("My line"));
   });
 
   it("attaches the first shared file", async () => {

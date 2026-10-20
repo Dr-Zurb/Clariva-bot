@@ -2,6 +2,7 @@ import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { resolveAuthGate } from "@/lib/auth/middleware-gates";
 import { publicRequestOrigin } from "@/lib/auth/public-origin";
+import { shareFieldText, shareLinkRedirect } from "@/lib/text/share-link-redirect";
 
 /**
  * Next.js middleware: refreshes Supabase session and routes by auth +
@@ -14,6 +15,12 @@ import { publicRequestOrigin } from "@/lib/auth/public-origin";
 export async function middleware(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
   const origin = publicRequestOrigin(request);
+
+  // Android share sheet POSTs the link here. The service worker usually
+  // answers first. When it does not, Next has no POST page and shows 404.
+  if (request.method === "POST" && pathname === "/c/share-target") {
+    return shareTargetPost(request, origin);
+  }
 
   // Patients tab cutover (2026-05-18): redirect legacy /dashboard/patients[/...] to v2.
   // Removed in pr-14 when v1 routes are deleted (harmless if left longer).
@@ -76,8 +83,26 @@ export async function middleware(request: NextRequest) {
   return response;
 }
 
+async function shareTargetPost(request: NextRequest, origin: string) {
+  let title = "";
+  let note = "";
+  let link = "";
+  let hasFile = false;
+  try {
+    const form = await request.formData();
+    title = shareFieldText(form.get("title"), 200);
+    note = shareFieldText(form.get("text"), 2000);
+    link = shareFieldText(form.get("url"), 500);
+    hasFile = form.getAll("files").some((item) => item instanceof File && item.size > 0);
+  } catch {
+    return NextResponse.redirect(new URL("/c/share-target", origin), 303);
+  }
+  return NextResponse.redirect(shareLinkRedirect(origin, { title, note, link, hasFile }), 303);
+}
+
 export const config = {
   matcher: [
+    "/c/share-target",
     "/dashboard",
     "/dashboard/:path*",
     "/admin",
