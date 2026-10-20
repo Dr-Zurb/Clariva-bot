@@ -1,10 +1,9 @@
 /**
  * Pure helpers for the on-the-go idea capture page.
- * A shared address fills the link. The title is a real name when we have one,
- * otherwise a short label. The card is created only when Add is pressed.
+ * A shared address fills the link. The doctor types the title.
+ * The card is created only when Add is pressed.
  */
 
-import { fallbackLinkTitle } from "@/lib/text/link-card-title";
 import { normalizeLink } from "./idea-composer";
 
 const TITLE_MAX = 200;
@@ -58,9 +57,8 @@ export function seedIdeaCapture(input: {
   const normalizedLink = normalizeLink(link);
   if (normalizedLink) link = normalizedLink;
 
-  if (title && link && normalizeLink(title) === link) title = "";
-  if (!title && link) title = fallbackLinkTitle(link).slice(0, TITLE_MAX);
-  if (!title && note) {
+  if (link) title = "";
+  else if (!title && note) {
     title = note.slice(0, TITLE_MAX);
     if (note.length <= TITLE_MAX) note = "";
   }
