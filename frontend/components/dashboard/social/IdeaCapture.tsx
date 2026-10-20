@@ -185,10 +185,19 @@ export function IdeaCapture({
         onSubmit={(event) => void onSubmit(event)}
       >
         <div className="space-y-3">
-          <h1 className="text-xl font-semibold text-foreground">New idea</h1>
+          <div className="sticky top-0 z-10 flex items-center justify-between gap-3 bg-background">
+            <h1 className="text-xl font-semibold text-foreground">New idea</h1>
+            <button
+              type="submit"
+              disabled={busy || draftTitle.trim().length === 0}
+              className="h-9 shrink-0 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground disabled:opacity-50"
+            >
+              {busy ? "Saving…" : "Add"}
+            </button>
+          </div>
           {saved ? (
             <p
-              className="mt-4 rounded-md border border-border bg-muted/40 px-3 py-2 text-sm text-foreground"
+              className="rounded-md border border-border bg-muted/40 px-3 py-2 text-sm text-foreground"
               role="status"
             >
               Saved to Thoughts.{" "}
@@ -290,19 +299,10 @@ export function IdeaCapture({
           </div>
         </div>
         {error ? (
-          <p className="shrink-0 pt-2 text-sm text-destructive" role="alert">
+          <p className="pt-2 text-sm text-destructive" role="alert">
             {error}
           </p>
         ) : null}
-        <div className="shrink-0 bg-background pt-3">
-          <button
-            type="submit"
-            disabled={busy || draftTitle.trim().length === 0}
-            className="h-11 w-full rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground disabled:opacity-50"
-          >
-            {busy ? "Saving…" : "Add"}
-          </button>
-        </div>
       </form>
     </div>
   );
