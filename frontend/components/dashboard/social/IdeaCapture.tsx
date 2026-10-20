@@ -2,12 +2,12 @@
 
 /**
  * On-the-go capture for Thoughts and ideas.
- * One title, an optional note, and one photo or link. The board studio stays on the desktop Add dialog.
+ * One title, an optional note, and one file or link. The board studio stays on the desktop Add dialog.
  */
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import Link from "next/link";
-import { normalizeLink } from "./idea-composer";
+import { FILE_ACCEPT, normalizeLink } from "./idea-composer";
 import { seedIdeaCapture } from "./idea-capture";
 import { shrinkIdeaPhoto } from "./idea-photo";
 import {
@@ -39,7 +39,8 @@ export function IdeaCapture({
 }) {
   const seeded = seedIdeaCapture({ title, note, link });
   const rootRef = useRef<HTMLDivElement>(null);
-  const fileRef = useRef<HTMLInputElement>(null);
+  const galleryRef = useRef<HTMLInputElement>(null);
+  const filesRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const shotRef = useRef<File | null>(null);
@@ -204,7 +205,24 @@ export function IdeaCapture({
     setDraftNote("");
     setDraftLink("");
     setFile(null);
-    if (fileRef.current) fileRef.current.value = "";
+    if (galleryRef.current) galleryRef.current.value = "";
+    if (filesRef.current) filesRef.current.value = "";
+  }
+
+  function chooseFile(next: File | null, input: HTMLInputElement) {
+    if (!next) {
+      setFile(null);
+      return;
+    }
+    const fileIssue = socialFileIssue(next);
+    if (fileIssue) {
+      setError(fileIssue);
+      setFile(null);
+      input.value = "";
+      return;
+    }
+    setError(null);
+    setFile(next);
   }
 
   async function onSubmit(event: FormEvent) {
@@ -382,28 +400,22 @@ export function IdeaCapture({
                 onChange={(event) => setDraftLink(event.target.value)}
               />
               <div>
+                <p className="mb-2 text-sm font-medium text-foreground">Add a file</p>
                 <input
-                  ref={fileRef}
-                  id="idea-file"
+                  ref={galleryRef}
+                  id="idea-gallery"
                   type="file"
                   accept="image/*"
                   className="sr-only"
-                  onChange={(event) => {
-                    const next = event.target.files?.[0] ?? null;
-                    if (!next) {
-                      setFile(null);
-                      return;
-                    }
-                    const fileIssue = socialFileIssue(next);
-                    if (fileIssue) {
-                      setError(fileIssue);
-                      setFile(null);
-                      event.target.value = "";
-                      return;
-                    }
-                    setError(null);
-                    setFile(next);
-                  }}
+                  onChange={(event) => chooseFile(event.target.files?.[0] ?? null, event.target)}
+                />
+                <input
+                  ref={filesRef}
+                  id="idea-files"
+                  type="file"
+                  accept={FILE_ACCEPT}
+                  className="sr-only"
+                  onChange={(event) => chooseFile(event.target.files?.[0] ?? null, event.target)}
                 />
                 {file ? (
                   <div className="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2 text-sm">
@@ -415,26 +427,33 @@ export function IdeaCapture({
                       className="shrink-0 text-muted-foreground hover:text-foreground"
                       onClick={() => {
                         setFile(null);
-                        if (fileRef.current) fileRef.current.value = "";
+                        if (galleryRef.current) galleryRef.current.value = "";
+                        if (filesRef.current) filesRef.current.value = "";
                       }}
                     >
                       Remove
                     </button>
                   </div>
                 ) : (
-                  <div className="flex gap-2">
+                  <div className="grid grid-cols-3 gap-2">
                     <button
                       type="button"
-                      className="inline-flex h-10 items-center rounded-md border border-border px-3 text-sm text-foreground"
+                      className="inline-flex h-10 items-center justify-center rounded-md border border-border px-2 text-sm text-foreground"
                       onClick={() => void openCamera()}
                     >
                       Camera
                     </button>
                     <label
-                      htmlFor="idea-file"
-                      className="inline-flex h-10 cursor-pointer items-center rounded-md border border-border px-3 text-sm text-foreground"
+                      htmlFor="idea-gallery"
+                      className="inline-flex h-10 cursor-pointer items-center justify-center rounded-md border border-border px-2 text-sm text-foreground"
                     >
                       Gallery
+                    </label>
+                    <label
+                      htmlFor="idea-files"
+                      className="inline-flex h-10 cursor-pointer items-center justify-center rounded-md border border-border px-2 text-sm text-foreground"
+                    >
+                      Files
                     </label>
                   </div>
                 )}

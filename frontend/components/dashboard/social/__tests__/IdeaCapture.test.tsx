@@ -7,6 +7,7 @@ import React from "react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { IdeaCapture } from "../IdeaCapture";
+import { FILE_ACCEPT } from "../idea-composer";
 import { ideaCaptureHref, seedIdeaCapture } from "../idea-capture";
 import { createSocialCard, prepareSocialCardFile } from "../social-cards";
 import { readStagedFilesFromCache } from "@/lib/text/share-target-bridge";
@@ -157,6 +158,13 @@ describe("IdeaCapture", () => {
     fireEvent.click(screen.getByRole("button", { name: "Back" }));
     expect(screen.getByRole("button", { name: "Add" })).toBeInTheDocument();
     expect(stop).toHaveBeenCalled();
+  });
+
+  it("keeps gallery for recent photos and files for any card resource", () => {
+    render(<IdeaCapture token="token" />);
+    expect(screen.getByText("Add a file")).toBeInTheDocument();
+    expect(screen.getByLabelText("Gallery")).toHaveAttribute("accept", "image/*");
+    expect(screen.getByLabelText("Files")).toHaveAttribute("accept", FILE_ACCEPT);
   });
 
   it("opens a shared link with an empty title", () => {
