@@ -143,6 +143,22 @@ describe("IdeaCapture", () => {
     expect(createMock).not.toHaveBeenCalled();
   });
 
+  it("keeps the camera in the sheet", async () => {
+    const stop = vi.fn();
+    const getUserMedia = vi.fn(async () => ({ getTracks: () => [{ stop }] }));
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: { getUserMedia },
+    });
+    render(<IdeaCapture token="token" />);
+    fireEvent.click(screen.getByRole("button", { name: "Camera" }));
+    expect(await screen.findByRole("button", { name: "Back" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    expect(screen.getByRole("button", { name: "Add" })).toBeInTheDocument();
+    expect(stop).toHaveBeenCalled();
+  });
+
   it("opens a shared link with an empty title", () => {
     render(<IdeaCapture token="token" note="https://www.instagram.com/reel/abc" />);
     expect(screen.getByLabelText("Title")).toHaveValue("");
