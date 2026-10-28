@@ -1693,7 +1693,7 @@ function PostingChoice({
           onClick={() => onChange(true)}
           className={`h-8 rounded-md text-sm disabled:opacity-50 ${byHand ? "bg-primary text-primary-foreground" : "text-muted-foreground"}`}
         >
-          I'll post it
+          I&apos;ll post it
         </button>
     </div>
   );
