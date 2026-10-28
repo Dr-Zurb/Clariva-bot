@@ -13,7 +13,7 @@ const cards = [
     href: "/dashboard/settings/practice-setup",
     label: "Practice setup",
     description:
-      "Practice info, pricing, booking rules, messaging, and availability",
+      "Practice info, pricing, booking rules, appointment notes, and availability",
     icon: <Building2 className="h-6 w-6" aria-hidden />,
   },
   {
@@ -25,7 +25,7 @@ const cards = [
   {
     href: "/dashboard/settings/integrations",
     label: "Integrations",
-    description: "Connect Instagram and control automated replies",
+    description: "Connect Instagram to post your cards",
     icon: <Plug className="h-6 w-6" aria-hidden />,
   },
   {

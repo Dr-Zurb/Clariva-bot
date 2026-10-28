@@ -27,6 +27,7 @@ import * as queue from '../../../src/config/queue';
 import * as auditLogger from '../../../src/utils/audit-logger';
 import { logger } from '../../../src/config/logger';
 import { UnauthorizedError } from '../../../src/utils/errors';
+import { env } from '../../../src/config/env';
 
 jest.mock('../../../src/config/env', () => ({
   env: {
@@ -35,6 +36,7 @@ jest.mock('../../../src/config/env', () => ({
     INSTAGRAM_APP_SECRET: 'test_app_secret',
     FACEBOOK_APP_SECRET: 'test_facebook_app_secret',
     REDIS_URL: '',
+    META_INBOUND_ENABLED: true,
   },
 }));
 jest.mock('../../../src/config/logger', () => ({
@@ -119,11 +121,13 @@ describe('Webhook Controller', () => {
     mockIsEcho.mockReturnValue(false);
     mockExtractDedup.mockReturnValue(null);
     (webhookEventId.isInstagramCommentPayload as jest.Mock).mockReturnValue(false);
+    (webhookEventId.isFacebookPageCommentPayload as jest.Mock).mockReturnValue(false);
     (webhookEventId.generateFallbackEventId as jest.Mock).mockReturnValue('fallback_event_id');
     (webhookVerification.isWebhookSecretConfigured as jest.Mock).mockReturnValue(true);
     (webhookVerification.isFacebookWebhookSecretConfigured as jest.Mock).mockReturnValue(true);
     (webhookVerification.getWebhookSecretLength as jest.Mock).mockReturnValue(16);
     (webhookVerification.getFacebookWebhookSecretLength as jest.Mock).mockReturnValue(24);
+    (env as { META_INBOUND_ENABLED: boolean }).META_INBOUND_ENABLED = true;
   });
 
   describe('1.2 GET /webhooks/instagram - Verification', () => {
@@ -880,6 +884,103 @@ describe('Webhook Controller', () => {
       expect(res.status).toHaveBeenCalledWith(200);
       expect(res.json).toHaveBeenCalled();
       expect(next).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('inbound replies parked', () => {
+    beforeEach(() => {
+      (env as { META_INBOUND_ENABLED: boolean }).META_INBOUND_ENABLED = false;
+    });
+
+    async function post(body: unknown, signatureValid: boolean, provider: 'instagram' | 'facebook') {
+      if (provider === 'facebook') {
+        mockVerifyFacebook.mockReturnValue(signatureValid);
+      } else {
+        mockVerify.mockReturnValue(signatureValid);
+      }
+      const rawBody = Buffer.from(JSON.stringify(body));
+      const req = {
+        body,
+        rawBody,
+        headers: { 'x-hub-signature-256': 'sha256=abc' },
+        correlationId: 'test-corr-parked',
+        ip: '127.0.0.1',
+      } as unknown as Request;
+      const res = mockRes();
+      await new Promise<void>((resolve, reject) => {
+        (res.json as jest.Mock).mockImplementation(() => {
+          resolve();
+          return res;
+        });
+        (handleInstagramWebhook as (req: Request, res: Response, next: (err: unknown) => void) => void)(
+          req,
+          res,
+          (err: unknown) => {
+            if (err) reject(err);
+          }
+        );
+      });
+      return res;
+    }
+
+    it('acknowledges an Instagram DM without queueing or an idempotency row', async () => {
+      const res = await post(
+        {
+          object: 'instagram',
+          entry: [
+            {
+              id: 'evt_park_dm',
+              messaging: [{ message: { mid: 'mid.park.1', text: 'hello' } }],
+            },
+          ],
+        },
+        true,
+        'instagram'
+      );
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(mockAdd).not.toHaveBeenCalled();
+      expect(mockIsProcessed).not.toHaveBeenCalled();
+      expect(mockMarkProcessing).not.toHaveBeenCalled();
+      expect(auditLogger.logAuditEvent).not.toHaveBeenCalled();
+    });
+
+    it('acknowledges an Instagram comment without queueing', async () => {
+      const res = await post(
+        {
+          object: 'instagram',
+          entry: [
+            {
+              id: 'evt_park_comment',
+              changes: [{ field: 'comments', value: { id: 'c1' } }],
+            },
+          ],
+        },
+        true,
+        'instagram'
+      );
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(mockAdd).not.toHaveBeenCalled();
+      expect(mockIsProcessed).not.toHaveBeenCalled();
+    });
+
+    it('acknowledges a Facebook Page comment without queueing', async () => {
+      (webhookEventId.isFacebookPageCommentPayload as jest.Mock).mockReturnValue(true);
+      const res = await post(
+        {
+          object: 'page',
+          entry: [
+            {
+              id: 'page_1',
+              changes: [{ field: 'feed', value: { item: 'comment', comment_id: 'c2' } }],
+            },
+          ],
+        },
+        true,
+        'facebook'
+      );
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(mockAdd).not.toHaveBeenCalled();
+      expect(mockIsProcessed).not.toHaveBeenCalled();
     });
   });
 });

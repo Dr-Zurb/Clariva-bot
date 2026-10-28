@@ -18,7 +18,7 @@ export default async function GettingStartedPage() {
         <h1 className="text-2xl font-semibold text-foreground">Getting started</h1>
         <p className="mt-1 text-muted-foreground">
           Verify your license, then practice basics so patients can book.
-          Connect socials if patients message you there.
+          Connect Instagram to post your cards.
         </p>
       </div>
       <GettingStartedClient token={token} />

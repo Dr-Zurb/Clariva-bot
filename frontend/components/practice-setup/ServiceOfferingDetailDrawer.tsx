@@ -396,12 +396,12 @@ export function ServiceOfferingDetailDrawer({
               >
                 <p className="font-semibold">
                   {s.scopeMode === "strict"
-                    ? "Strict matching with no hints — the bot will route almost nothing here."
-                    : "No routing hints yet — the bot may struggle to match patients correctly."}
+                    ? "Strict matching with no hints — almost nothing will match this service."
+                    : "No routing hints yet — matching may miss patients for this service."}
                 </p>
                 <p className="mt-0.5 text-[11px] opacity-90">
                   {s.scopeMode === "strict"
-                    ? "Fix before saving or switch to flexible so the bot can at least guess from the label."
+                    ? "Fix before saving or switch to flexible so the label can still match."
                     : "Optional — consider filling them so the matcher has something concrete to latch onto."}
                 </p>
                 <div className="mt-1.5 flex flex-wrap items-center gap-2">

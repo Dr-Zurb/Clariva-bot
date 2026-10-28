@@ -1,8 +1,40 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useState, useRef, type DragEvent, type RefObject } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useState,
+  useRef,
+  type CSSProperties,
+  type DragEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as PressEvent,
+  type RefObject,
+} from "react";
 import { createPortal } from "react-dom";
-import { ArrowRight, AudioLines, Check, ChevronLeft, ChevronRight, Columns2, Copy, ExternalLink, FileText, Film, GripVertical, Heading, Image as ImageIcon, LayoutGrid, Link2, List, ListChecks, ListOrdered, Minus, Paperclip, Presentation, Quote, Table2, Tag, X } from "lucide-react";
+import { ArrowRight, AudioLines, Bold, Check, ChevronLeft, ChevronRight, Columns2, Copy, ExternalLink, FileText, Film, GripVertical, Heading1, Heading2, Heading3, Image as ImageIcon, Italic, LayoutGrid, Link2, List, ListChecks, ListOrdered, Minus, Paperclip, Presentation, Quote, Rows2, Strikethrough, Table2, Tag, Type, Underline, X } from "lucide-react";
+import {
+  NOTE_COLORS,
+  editPlain,
+  joinPlain,
+  paintColor,
+  plainChange,
+  plainText,
+  readRange,
+  readRuns,
+  selectionStyle,
+  splitPlain,
+  styleBefore,
+  styleToken,
+  toggleStyle,
+  writeRange,
+  namedColor,
+  toneValue,
+  type MarkStyle,
+  type NoteColor,
+  type StyleFlag,
+  type ToneColor,
+} from "./note-marks";
 
 export const FILE_ACCEPT = [
   "image/jpeg",
@@ -55,7 +87,29 @@ export const NOTE_MAX = 4000;
 
 const WRITING = new Set<LineKind>(["text", "heading", "list", "bullet", "number", "quote"]);
 
-type NoteLine = { kind: LineKind; body: string; done?: boolean };
+type HeadingLevel = 1 | 2 | 3;
+
+type NoteLine = { kind: LineKind; body: string; done?: boolean; name?: string; embed?: boolean; width?: number; level?: HeadingLevel };
+
+const HEADING_ICON = { 1: Heading1, 2: Heading2, 3: Heading3 } as const;
+
+const HEADING_LOOK: Record<HeadingLevel, string> = {
+  1: "min-h-8 text-2xl font-medium leading-8",
+  2: "min-h-7 text-lg font-medium leading-7",
+  3: "min-h-6 text-base font-medium leading-6",
+};
+
+function headingChoice(id: string): HeadingLevel | null {
+  if (id === "heading1") return 1;
+  if (id === "heading2") return 2;
+  if (id === "heading3") return 3;
+  return null;
+}
+
+function lineHeading(line: NoteLine | undefined): HeadingLevel {
+  if (line?.level === 1 || line?.level === 3) return line.level;
+  return 2;
+}
 
 /** Ten files for each kind: photo, video, audio, and document. */
 export const SCRAP_CAP = 10;
@@ -127,22 +181,85 @@ export function fileOpenFromUrl(url: string): FileOpen | null {
 export type ShelfFile = {
   id: string;
   preview: string | null;
+  name?: string | null;
+  pending?: boolean;
+  /** 0–100 while a file is still uploading. */
+  progress?: number;
+  failed?: boolean;
   video?: boolean;
   audio?: boolean;
   page?: boolean;
   face?: FileFace | null;
   openAs?: FileOpen | null;
+  /** False keeps a picture or video as its filename. Omitted pictures stay embedded. */
+  embed?: boolean;
+  /** Picture width as a share of the block, 20–100. Omitted means natural size. */
+  width?: number;
 };
 
-export function placeFile(note: string, id: string, line: number): string {
-  if (note.includes(`!file:${id}`)) return note;
+export function pictureWidth(value: number): number {
+  return Math.min(100, Math.max(20, Math.round(value)));
+}
+
+function fileMarker(id: string, name?: string): { body: string; name?: string } {
+  const clean = name?.trim().replace(/\s+/g, " ").slice(0, 180);
+  return clean ? { body: id, name: clean } : { body: id };
+}
+
+function readFileMarker(rest: string): { body: string; name?: string; embed?: boolean; width?: number } {
+  const gap = rest.indexOf(" ");
+  if (gap <= 0) return { body: rest };
+  const tokens = rest.slice(gap + 1).split(" ");
+  const mode: { embed?: boolean; width?: number } = {};
+  while (tokens.length > 0 && tokens[tokens.length - 1].startsWith("=")) {
+    const flag = tokens.pop() as string;
+    if (flag === "=name") mode.embed = false;
+    else if (flag === "=embed") mode.embed = true;
+    else {
+      const sized = /^=w(\d{2,3})$/.exec(flag);
+      if (sized) mode.width = pictureWidth(Number(sized[1]));
+    }
+  }
+  const encoded = tokens.join(" ");
+  if (!encoded) return { body: rest.slice(0, gap), ...mode };
+  try {
+    return { ...fileMarker(rest.slice(0, gap), decodeURIComponent(encoded)), ...mode };
+  } catch {
+    return { ...fileMarker(rest.slice(0, gap), encoded), ...mode };
+  }
+}
+
+export function placeFile(note: string, id: string, line: number, name?: string): string {
   const lines = splitNote(note);
+  if (lines.some((item) => item.kind === "file" && item.body === id)) return note;
   const at = Math.min(Math.max(line, 0), lines.length);
-  const marker: NoteLine = { kind: "file", body: id };
+  const marker: NoteLine = { kind: "file", ...fileMarker(id, name) };
   if (lines[at]?.kind === "text" && lines[at].body === "") lines[at] = marker;
   else lines.splice(at + 1, 0, marker);
   const joined = joinNote(lines);
   return joined.length > NOTE_MAX ? note : joined;
+}
+
+export function nameFile(note: string, id: string, name?: string): string {
+  const marked = fileMarker(id, name);
+  if (!marked.name) return note;
+  let changed = false;
+  const lines = splitNote(note).map((line) => {
+    if (line.kind !== "file" || line.body !== id || line.name) return line;
+    changed = true;
+    return { ...line, name: marked.name };
+  });
+  return changed ? joinNote(lines) : note;
+}
+
+export function swapFile(note: string, fromId: string, toId: string): string {
+  let changed = false;
+  const lines = splitNote(note).map((line) => {
+    if (line.kind !== "file" || line.body !== fromId) return line;
+    changed = true;
+    return { ...line, body: toId };
+  });
+  return changed ? joinNote(lines) : note;
 }
 
 export function stripFile(note: string, id: string): string {
@@ -151,7 +268,9 @@ export function stripFile(note: string, id: string): string {
 }
 
 const MENU = [
-  { id: "heading", label: "Heading", icon: Heading },
+  { id: "heading1", label: "Heading 1", icon: Heading1 },
+  { id: "heading2", label: "Heading 2", icon: Heading2 },
+  { id: "heading3", label: "Heading 3", icon: Heading3 },
   { id: "bullet", label: "Bullet", icon: List },
   { id: "number", label: "Numbered", icon: ListOrdered },
   { id: "list", label: "To-do", icon: ListChecks },
@@ -159,20 +278,36 @@ const MENU = [
   { id: "columns", label: "Columns", icon: Columns2 },
   { id: "rule", label: "Divider", icon: Minus },
   { id: "file", label: "File", icon: Paperclip },
-  { id: "link", label: "Link", icon: Link2 },
+] as const;
+
+const TURN = [
+  { id: "text", label: "Text", icon: Type },
+  { id: "heading1", label: "Heading 1", icon: Heading1 },
+  { id: "heading2", label: "Heading 2", icon: Heading2 },
+  { id: "heading3", label: "Heading 3", icon: Heading3 },
+  { id: "bullet", label: "Bullet", icon: List },
+  { id: "number", label: "Numbered", icon: ListOrdered },
+  { id: "list", label: "To-do", icon: ListChecks },
+  { id: "quote", label: "Quote", icon: Quote },
 ] as const;
 
 const LINE_DRAG = "application/x-clariva-line";
 export const LIFT_DRAG = "application/x-clariva-lift";
 
 function parseLine(line: string): NoteLine {
-  if (line === "!cols") return { kind: "cols", body: "" };
+  if (line === "!cols" || line.startsWith("!cols ")) {
+    const ratio = Number(line.slice(5).trim());
+    const body = Number.isInteger(ratio) && ratio >= 20 && ratio <= 80 ? String(ratio) : "";
+    return { kind: "cols", body };
+  }
   if (line === "!|") return { kind: "split", body: "" };
   if (line === "!/") return { kind: "endcols", body: "" };
   if (line === "!hr") return { kind: "rule", body: "" };
-  if (line.startsWith("!file:")) return { kind: "file", body: line.slice(6) };
+  if (line.startsWith("!file:")) return { kind: "file", ...readFileMarker(line.slice(6)) };
   if (line.startsWith("!link:")) return { kind: "link", body: line.slice(6) };
-  if (line.startsWith("# ")) return { kind: "heading", body: line.slice(2) };
+  if (line === "#1" || line.startsWith("#1 ")) return { kind: "heading", level: 1, body: line.startsWith("#1 ") ? line.slice(3) : "" };
+  if (line === "#3" || line.startsWith("#3 ")) return { kind: "heading", level: 3, body: line.startsWith("#3 ") ? line.slice(3) : "" };
+  if (line === "#" || line.startsWith("# ")) return { kind: "heading", level: 2, body: line.startsWith("# ") ? line.slice(2) : "" };
   if (line.startsWith("- [x] ") || line === "- [x]") return { kind: "list", body: line.slice(6), done: true };
   if (line.startsWith("- [ ] ") || line === "- [ ]") return { kind: "list", body: line.slice(6), done: false };
   if (line.startsWith("- ")) return { kind: "list", body: line.slice(2), done: false };
@@ -238,6 +373,62 @@ export function normalizeLinks(value: string): string[] {
   return found;
 }
 
+export function linkSpans(value: string): Array<{ text: string; url: string | null; from: number; to: number }> {
+  const spans: Array<{ text: string; url: string | null; from: number; to: number }> = [];
+  let last = 0;
+  for (const match of value.matchAll(LINK_IN_TEXT)) {
+    const raw = match[0];
+    const start = match.index ?? 0;
+    if (start < last) continue;
+    const trimmed = raw.replace(/[),.;!?]+$/g, "");
+    const url = normalizeLink(trimmed);
+    if (!url) continue;
+    if (start > last) spans.push({ text: value.slice(last, start), url: null, from: last, to: start });
+    const end = start + trimmed.length;
+    spans.push({ text: value.slice(start, end), url, from: start, to: end });
+    last = end;
+  }
+  if (last < value.length || spans.length === 0) {
+    spans.push({ text: value.slice(last), url: null, from: last, to: value.length });
+  }
+  return spans;
+}
+
+export function linksInNote(note: string, known: readonly ResourceLink[] = []): ResourceLink[] {
+  const found: string[] = [];
+  const seen = new Set<string>();
+  function add(url: string | null): void {
+    if (!url || seen.has(url)) return;
+    seen.add(url);
+    found.push(url);
+  }
+  for (const line of splitNote(note)) {
+    if (line.kind === "link") {
+      const knownUrl = known.find((item) => item.id === line.body)?.url ?? null;
+      add(knownUrl ?? normalizeLink(line.body));
+      continue;
+    }
+    if (!WRITING.has(line.kind)) continue;
+    for (const url of normalizeLinks(plainText(line.body))) add(url);
+  }
+  return found.map((url) => known.find((item) => item.url === url) ?? { id: `url:${url}`, url });
+}
+
+export function forgetLink(note: string, item: { id: string; url: string }): string {
+  const lines = splitNote(note).flatMap((line) => {
+    if (line.kind === "link" && (line.body === item.id || line.body === item.url)) return [];
+    if (!WRITING.has(line.kind)) return [line];
+    const plain = linkSpans(plainText(line.body))
+      .filter((span) => span.url !== item.url)
+      .map((span) => span.text)
+      .join("")
+      .replace(/[^\S\n]{2,}/g, " ")
+      .trim();
+    return [{ ...line, body: editPlain(line.body, plain) }];
+  });
+  return joinNote(lines.length > 0 ? lines : [{ kind: "text", body: "" }]);
+}
+
 export function linkHost(url: string): string {
   return linkMark(url).host;
 }
@@ -294,6 +485,213 @@ function insideColumns(lines: readonly NoteLine[], index: number): boolean {
   return depth > 0;
 }
 
+/** The `!cols` … `!/` block that holds `index`, or null when the line sits outside columns. */
+function columnBlock(lines: readonly NoteLine[], index: number): { at: number; end: number } | null {
+  let at = -1;
+  for (let i = index; i >= 0; i -= 1) {
+    const kind = lines[i]?.kind;
+    if (kind === "cols") {
+      at = i;
+      break;
+    }
+    if (kind === "endcols" && i !== index) return null;
+  }
+  if (at < 0) return null;
+  let end = lines.length;
+  for (let i = at + 1; i < lines.length; i += 1) {
+    if (lines[i]?.kind === "endcols") {
+      end = i;
+      break;
+    }
+  }
+  return { at, end };
+}
+
+/** Lines of a columns block as one flow: left side first, then the right side. */
+function unstackColumns(lines: readonly NoteLine[], at: number, end: number, skip?: number): NoteLine[] {
+  const inside = lines.slice(at + 1, end).filter((line, offset) => isContent(line) && at + 1 + offset !== skip);
+  const next = [...lines.slice(0, at), ...inside, ...lines.slice(Math.min(end + 1, lines.length))];
+  return next.some(isContent) ? next : [{ kind: "text", body: "" }];
+}
+
+function blankLine(): NoteLine {
+  return { kind: "text", body: "" };
+}
+
+function splitOf(lines: readonly NoteLine[], block: { at: number; end: number }): number {
+  for (let i = block.at + 1; i < block.end; i += 1) {
+    if (lines[i]?.kind === "split") return i;
+  }
+  return -1;
+}
+
+function contentBetween(
+  lines: readonly NoteLine[],
+  start: number,
+  end: number,
+  skipLow = -1,
+  skipHigh = -1
+): NoteLine[] {
+  const out: NoteLine[] = [];
+  for (let i = start; i < end; i += 1) {
+    if (skipLow >= 0 && i >= skipLow && i <= skipHigh) continue;
+    const line = lines[i];
+    if (isContent(line)) out.push(line);
+  }
+  return out;
+}
+
+/** A run of blocks that can move together. Null when the selection crosses a column edge. */
+function selectionRun(
+  lines: readonly NoteLine[],
+  index: number,
+  span: { anchor: number; focus: number } | null
+): { low: number; high: number } | null {
+  const covered = span !== null && index >= Math.min(span.anchor, span.focus) && index <= Math.max(span.anchor, span.focus);
+  const low = covered && span ? Math.min(span.anchor, span.focus) : index;
+  const high = covered && span ? Math.max(span.anchor, span.focus) : index;
+  if (low < 0 || high >= lines.length) return null;
+  for (let i = low; i <= high; i += 1) {
+    if (!isContent(lines[i])) return null;
+  }
+  const home = columnBlock(lines, low);
+  if (home) {
+    const other = columnBlock(lines, high);
+    if (!other || other.at !== home.at) return null;
+    const split = splitOf(lines, home);
+    if (split >= 0 && low <= split && high >= split) return null;
+  }
+  return { low, high };
+}
+
+function columnMoves(
+  lines: readonly NoteLine[],
+  index: number,
+  span: { anchor: number; focus: number } | null
+): { left: boolean; right: boolean; out: boolean } {
+  const run = selectionRun(lines, index, span);
+  if (!run) return { left: false, right: false, out: false };
+  const home = columnBlock(lines, run.low);
+  if (!home) return { left: true, right: true, out: false };
+  const split = splitOf(lines, home);
+  if (split < 0) return { left: false, right: false, out: false };
+  const onRight = run.low > split;
+  return { left: onRight, right: !onRight, out: true };
+}
+
+function rebuildColumns(
+  lines: readonly NoteLine[],
+  block: { at: number; end: number },
+  left: NoteLine[],
+  right: NoteLine[],
+  after: NoteLine[] = []
+): NoteLine[] | null {
+  const split = splitOf(lines, block);
+  if (split < 0 || lines[block.at]?.kind !== "cols") return null;
+  const leftLines = left.length > 0 ? left : [blankLine()];
+  const rightLines = right.length > 0 ? right : [blankLine()];
+  const endLine = lines[block.end]?.kind === "endcols" ? [lines[block.end]] : [];
+  return [
+    ...lines.slice(0, block.at),
+    lines[block.at],
+    ...leftLines,
+    lines[split],
+    ...rightLines,
+    ...endLine,
+    ...after,
+    ...lines.slice(block.end + endLine.length),
+  ];
+}
+
+function movedLanding(at: number, left: NoteLine[], right: NoteLine[], side: "left" | "right", count: number): number {
+  const leftCount = Math.max(left.length, 1);
+  const rightCount = Math.max(right.length, 1);
+  if (side === "left") return at + 1 + leftCount - count;
+  return at + 1 + leftCount + 1 + rightCount - count;
+}
+
+function shiftedColumns(
+  lines: readonly NoteLine[],
+  run: { low: number; high: number },
+  side: "left" | "right"
+): { next: NoteLine[]; landing: number } | null {
+  const home = columnBlock(lines, run.low);
+  if (!home) return null;
+  const split = splitOf(lines, home);
+  if (split < 0) return null;
+  const moving = lines.slice(run.low, run.high + 1);
+  const leftKept = contentBetween(lines, home.at + 1, split, run.low, run.high);
+  const rightKept = contentBetween(lines, split + 1, home.end, run.low, run.high);
+  const left = side === "left" ? [...leftKept, ...moving] : leftKept;
+  const right = side === "right" ? [...rightKept, ...moving] : rightKept;
+  const next = rebuildColumns(lines, home, left, right);
+  if (!next) return null;
+  return { next, landing: movedLanding(home.at, left, right, side, moving.length) };
+}
+
+function liftedOut(
+  lines: readonly NoteLine[],
+  run: { low: number; high: number }
+): { next: NoteLine[]; landing: number } | null {
+  const home = columnBlock(lines, run.low);
+  if (!home) return null;
+  const split = splitOf(lines, home);
+  if (split < 0) return null;
+  const moving = lines.slice(run.low, run.high + 1);
+  const left = contentBetween(lines, home.at + 1, split, run.low, run.high);
+  const right = contentBetween(lines, split + 1, home.end, run.low, run.high);
+  const next = rebuildColumns(lines, home, left, right, moving);
+  if (!next) return null;
+  const landing = home.at + 1 + Math.max(left.length, 1) + 1 + Math.max(right.length, 1) + 1;
+  return { next, landing };
+}
+
+function adjacentPair(lines: readonly NoteLine[], run: { low: number; high: number }): { at: number; end: number } | null {
+  if (lines[run.low - 1]?.kind === "endcols") return columnBlock(lines, run.low - 1);
+  if (lines[run.high + 1]?.kind === "cols") return columnBlock(lines, run.high + 1);
+  return null;
+}
+
+function joinedColumns(
+  lines: readonly NoteLine[],
+  run: { low: number; high: number },
+  target: { at: number; end: number },
+  side: "left" | "right"
+): { next: NoteLine[]; landing: number } | null {
+  const split = splitOf(lines, target);
+  if (split < 0) return null;
+  const moving = lines.slice(run.low, run.high + 1);
+  const without = [...lines.slice(0, run.low), ...lines.slice(run.high + 1)];
+  const shift = run.high < target.at ? moving.length : 0;
+  const block = { at: target.at - shift, end: target.end - shift };
+  const leftKept = contentBetween(lines, target.at + 1, split);
+  const rightKept = contentBetween(lines, split + 1, target.end);
+  const left = side === "left" ? [...leftKept, ...moving] : leftKept;
+  const right = side === "right" ? [...rightKept, ...moving] : rightKept;
+  const next = rebuildColumns(without, block, left, right);
+  if (!next) return null;
+  return { next, landing: movedLanding(block.at, left, right, side, moving.length) };
+}
+
+function createdColumns(
+  lines: readonly NoteLine[],
+  run: { low: number; high: number },
+  side: "left" | "right"
+): { next: NoteLine[]; focus: number } {
+  const moving = lines.slice(run.low, run.high + 1);
+  const next = [
+    ...lines.slice(0, run.low),
+    { kind: "cols" as const, body: "" },
+    ...(side === "left" ? moving : [blankLine()]),
+    { kind: "split" as const, body: "" },
+    ...(side === "right" ? moving : [blankLine()]),
+    { kind: "endcols" as const, body: "" },
+    ...lines.slice(run.high + 1),
+  ];
+  const focus = side === "left" ? run.low + 1 + moving.length + 1 : run.low + 1;
+  return { next, focus };
+}
+
 function columnSide(lines: readonly NoteLine[], index: number): number[] | null {
   let start = -1;
   for (let i = index; i >= 0; i -= 1) {
@@ -315,7 +713,14 @@ function columnSide(lines: readonly NoteLine[], index: number): number[] | null 
 
 type NoteSegment =
   | { type: "line"; index: number }
-  | { type: "columns"; at: number; left: number[]; right: number[] };
+  | { type: "columns"; at: number; left: number[]; right: number[]; split: number; end: number };
+
+function columnRatio(body: string | undefined): number {
+  if (!body) return 50;
+  const value = Number(body);
+  if (!Number.isInteger(value)) return 50;
+  return Math.min(80, Math.max(20, value));
+}
 
 function noteSegments(lines: readonly NoteLine[]): NoteSegment[] {
   const out: NoteSegment[] = [];
@@ -325,15 +730,19 @@ function noteSegments(lines: readonly NoteLine[]): NoteSegment[] {
       const left: number[] = [];
       const right: number[] = [];
       let side = left;
+      let split = -1;
       const at = i;
       i += 1;
       while (i < lines.length && lines[i]?.kind !== "endcols") {
-        if (lines[i]?.kind === "split") side = right;
-        else if (isContent(lines[i])) side.push(i);
+        if (lines[i]?.kind === "split") {
+          side = right;
+          split = i;
+        } else if (isContent(lines[i])) side.push(i);
         i += 1;
       }
+      const end = i;
       if (lines[i]?.kind === "endcols") i += 1;
-      out.push({ type: "columns", at, left, right });
+      out.push({ type: "columns", at, left, right, split: split < 0 ? end : split, end });
     } else if (lines[i]?.kind === "split" || lines[i]?.kind === "endcols") {
       i += 1;
     } else {
@@ -358,9 +767,20 @@ export function joinNote(lines: readonly NoteLine[]): string {
   return lines
     .map((line) => {
       if (line.kind !== "number") count = 0;
-      if (line.kind === "file") return `!file:${line.body}`;
+      if (line.kind === "file") {
+        const parts: string[] = [];
+        if (line.name) parts.push(encodeURIComponent(line.name));
+        if (line.embed === false) parts.push("=name");
+        if (line.width !== undefined) parts.push(`=w${pictureWidth(line.width)}`);
+        return parts.length > 0 ? `!file:${line.body} ${parts.join(" ")}` : `!file:${line.body}`;
+      }
       if (line.kind === "link") return `!link:${line.body}`;
-      if (line.kind === "heading") return `# ${line.body}`;
+      if (line.kind === "heading") {
+        const level = line.level === 1 || line.level === 3 ? line.level : 2;
+        if (level === 1) return `#1 ${line.body}`;
+        if (level === 3) return `#3 ${line.body}`;
+        return `# ${line.body}`;
+      }
       if (line.kind === "list") return line.done ? `- [x] ${line.body}` : `- [ ] ${line.body}`;
       if (line.kind === "bullet") return line.body ? `* ${line.body}` : "*";
       if (line.kind === "quote") return line.body ? `> ${line.body}` : ">";
@@ -369,7 +789,7 @@ export function joinNote(lines: readonly NoteLine[]): string {
         return line.body ? `${count}. ${line.body}` : `${count}.`;
       }
       if (line.kind === "rule") return "!hr";
-      if (line.kind === "cols") return "!cols";
+      if (line.kind === "cols") return line.body ? `!cols ${line.body}` : "!cols";
       if (line.kind === "split") return "!|";
       if (line.kind === "endcols") return "!/";
       return line.body;
@@ -421,32 +841,543 @@ function nearestWriting(lines: readonly NoteLine[], index: number, step: -1 | 1)
   return null;
 }
 
+function lineIndex(node: Element | null): number | null {
+  const row = node?.closest("[data-note-line]");
+  if (!row) return null;
+  const index = Number(row.getAttribute("data-note-line"));
+  return Number.isInteger(index) && index >= 0 ? index : null;
+}
+
+function rangeOf(span: { anchor: number; focus: number }): { low: number; high: number } {
+  return { low: Math.min(span.anchor, span.focus), high: Math.max(span.anchor, span.focus) };
+}
+
+function coversBlock(node: HTMLElement): boolean {
+  const text = node instanceof HTMLTextAreaElement ? node.value : (node.textContent ?? "");
+  if (text.length === 0) return true;
+  if (node instanceof HTMLTextAreaElement) return node.selectionStart === 0 && node.selectionEnd === text.length;
+  const range = readRange(node);
+  return range !== null && range.start === 0 && range.end === text.length;
+}
+
+function selectAllKey(event: { metaKey: boolean; ctrlKey: boolean; altKey: boolean; key: string; code: string }): boolean {
+  return (event.metaKey || event.ctrlKey) && !event.altKey && (event.code === "KeyA" || event.key.toLowerCase() === "a");
+}
+
+const COLOR_TEXT: Record<NoteColor, string> = {
+  gray: "text-neutral-600",
+  brown: "text-amber-950",
+  orange: "text-orange-800",
+  yellow: "text-yellow-800",
+  green: "text-green-800",
+  blue: "text-primary",
+  purple: "text-purple-800",
+  pink: "text-pink-800",
+  red: "text-red-700",
+};
+
+const COLOR_BG: Record<NoteColor, string> = {
+  gray: "bg-neutral-200",
+  brown: "bg-amber-100",
+  orange: "bg-orange-100",
+  yellow: "bg-yellow-100",
+  green: "bg-green-100",
+  blue: "bg-primary/15",
+  purple: "bg-purple-100",
+  pink: "bg-pink-100",
+  red: "bg-red-100",
+};
+
+const TEXT_HEX: Record<NoteColor, string> = {
+  gray: "#525252",
+  brown: "#78350f",
+  orange: "#ea580c",
+  yellow: "#ca8a04",
+  green: "#15803d",
+  blue: "#1E56E0",
+  purple: "#7e22ce",
+  pink: "#be185d",
+  red: "#b91c1c",
+};
+
+const WASH_HEX: Record<NoteColor, string> = {
+  gray: "#e5e5e5",
+  brown: "#f5e6d3",
+  orange: "#ffedd5",
+  yellow: "#fef9c3",
+  green: "#dcfce7",
+  blue: "#dbe6fb",
+  purple: "#f3e8ff",
+  pink: "#fce7f3",
+  red: "#fee2e2",
+};
+
+function swatchFill(value: ToneColor | null, kind: "color" | "highlight"): string {
+  if (!value) return kind === "color" ? "#000000" : "#ffffff";
+  if (!namedColor(value)) return value;
+  return kind === "color" ? TEXT_HEX[value] : WASH_HEX[value];
+}
+
+const MENU_GAP = 4;
+const MENU_MARGIN = 8;
+
+export function placeOnScreen(
+  anchor: { top: number; left: number; right: number; bottom: number; width: number; height: number },
+  menu: { width: number; height: number },
+  viewport: { width: number; height: number },
+  side: "below" | "above" | "right" | "start" | "end"
+): { top: number; left: number; maxHeight: number } {
+  const spaceBelow = viewport.height - anchor.bottom - MENU_GAP - MENU_MARGIN;
+  const spaceAbove = anchor.top - MENU_GAP - MENU_MARGIN;
+  const spaceRight = viewport.width - anchor.right - MENU_GAP - MENU_MARGIN;
+  const spaceLeft = anchor.left - MENU_GAP - MENU_MARGIN;
+  let top = anchor.bottom + MENU_GAP;
+  let left = anchor.left;
+  let maxHeight = Math.max(96, viewport.height - MENU_MARGIN * 2);
+  if (side === "right") {
+    const openLeft = spaceRight < menu.width && spaceLeft > spaceRight;
+    left = openLeft ? anchor.left - MENU_GAP - menu.width : anchor.right + MENU_GAP;
+    top = anchor.top;
+    if (top + menu.height > viewport.height - MENU_MARGIN) {
+      top = Math.max(MENU_MARGIN, viewport.height - MENU_MARGIN - Math.min(menu.height, viewport.height - MENU_MARGIN * 2));
+    }
+    if (top < MENU_MARGIN) top = MENU_MARGIN;
+    maxHeight = Math.max(96, viewport.height - MENU_MARGIN - top);
+  } else if (side === "start") {
+    top = anchor.top;
+    left = anchor.left + anchor.width / 2 - menu.width / 2;
+    if (top + menu.height > viewport.height - MENU_MARGIN) {
+      top = Math.max(MENU_MARGIN, viewport.height - MENU_MARGIN - Math.min(menu.height, viewport.height - MENU_MARGIN * 2));
+    }
+    if (top < MENU_MARGIN) top = MENU_MARGIN;
+    maxHeight = Math.max(96, viewport.height - MENU_MARGIN - top);
+  } else {
+    const fitsBelow = spaceBelow >= menu.height;
+    const fitsAbove = spaceAbove >= menu.height;
+    let openUp = side === "above";
+    if (openUp && !fitsAbove && (fitsBelow || spaceBelow > spaceAbove)) openUp = false;
+    if (!openUp && !fitsBelow && (fitsAbove || spaceAbove > spaceBelow)) openUp = true;
+    maxHeight = Math.max(96, openUp ? spaceAbove : spaceBelow);
+    const used = Math.min(menu.height, maxHeight);
+    top = openUp ? Math.max(MENU_MARGIN, anchor.top - MENU_GAP - used) : anchor.bottom + MENU_GAP;
+    if (side === "end") left = anchor.right - menu.width;
+  }
+  if (left + menu.width > viewport.width - MENU_MARGIN) left = Math.max(MENU_MARGIN, viewport.width - menu.width - MENU_MARGIN);
+  if (left < MENU_MARGIN) left = MENU_MARGIN;
+  if (top < MENU_MARGIN) top = MENU_MARGIN;
+  return { top, left, maxHeight };
+}
+
+function ScreenMenu({
+  anchor,
+  label,
+  role,
+  side = "below",
+  className,
+  holdFocus = false,
+  shield = true,
+  slash = false,
+  children,
+}: {
+  anchor: HTMLElement | null;
+  label?: string;
+  role?: "menu" | "toolbar";
+  side?: "below" | "above" | "right" | "start" | "end";
+  className: string;
+  holdFocus?: boolean;
+  shield?: boolean;
+  slash?: boolean;
+  children: React.ReactNode;
+}): JSX.Element | null {
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [place, setPlace] = useState<{ top: number; left: number; maxHeight: number } | null>(null);
+  useLayoutEffect(() => {
+    const menu = menuRef.current;
+    if (!anchor || !menu) return;
+    function placeMenu(): void {
+      if (!anchor || !menu) return;
+      const box = anchor.getBoundingClientRect();
+      const next = placeOnScreen(
+        { top: box.top, left: box.left, right: box.right, bottom: box.bottom, width: box.width, height: box.height },
+        { width: menu.offsetWidth, height: menu.scrollHeight },
+        { width: window.innerWidth, height: window.innerHeight },
+        side
+      );
+      setPlace((current) =>
+        current && current.top === next.top && current.left === next.left && current.maxHeight === next.maxHeight ? current : next
+      );
+    }
+    placeMenu();
+    window.addEventListener("resize", placeMenu);
+    window.addEventListener("scroll", placeMenu, true);
+    return () => {
+      window.removeEventListener("resize", placeMenu);
+      window.removeEventListener("scroll", placeMenu, true);
+    };
+  }, [anchor, side]);
+  if (typeof document === "undefined") return null;
+  return createPortal(
+    <div
+      ref={menuRef}
+      role={role}
+      aria-label={label}
+      data-turn-menu={shield ? "" : undefined}
+      data-slash-menu={slash ? "" : undefined}
+      onMouseDown={holdFocus ? (event) => event.preventDefault() : undefined}
+      style={{ top: place?.top ?? 0, left: place?.left ?? 0, maxHeight: place?.maxHeight, visibility: place ? "visible" : "hidden" }}
+      className={`fixed z-[80] overflow-y-auto ${className}`}
+    >
+      {children}
+    </div>,
+    document.body
+  );
+}
+
+function TonePanel({
+  kind,
+  value,
+  onPick,
+}: {
+  kind: "color" | "highlight";
+  value: ToneColor | null;
+  onPick: (value: ToneColor | null) => void;
+}): JSX.Element {
+  const noun = kind === "color" ? "text" : "highlight";
+  const picker = value ? swatchFill(value, "color") : "#111111";
+  return (
+    <div>
+      <div className="flex flex-wrap gap-1">
+        <button
+          type="button"
+          role="menuitem"
+          aria-label={`Default ${noun}`}
+          aria-current={value === null ? "true" : undefined}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => onPick(null)}
+          className={`inline-flex h-7 w-7 items-center justify-center rounded ${value === null ? "bg-muted ring-1 ring-foreground" : "hover:bg-muted"}`}
+        >
+          <span className="h-4 w-4 rounded-full border border-border" style={{ backgroundColor: swatchFill(null, kind) }} />
+        </button>
+        {NOTE_COLORS.map((item) => (
+          <button
+            key={item.id}
+            type="button"
+            role="menuitem"
+            aria-label={`${item.label} ${noun}`}
+            aria-current={value === item.id ? "true" : undefined}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => onPick(item.id)}
+            className={`inline-flex h-7 w-7 items-center justify-center rounded ${value === item.id ? "bg-muted ring-1 ring-foreground" : "hover:bg-muted"}`}
+          >
+            <span className="h-4 w-4 rounded-full" style={{ backgroundColor: swatchFill(item.id, kind) }} />
+          </button>
+        ))}
+      </div>
+      <div className="mt-2 flex items-center justify-between gap-2 border-t border-border pt-2">
+        <span className="text-sm text-foreground">Any color</span>
+        <input
+          type="color"
+          aria-label={`Any ${noun} color`}
+          value={picker}
+          onChange={(event) => {
+            const next = toneValue(event.target.value);
+            if (next) onPick(next);
+          }}
+          className="h-7 w-8 cursor-pointer rounded border border-border bg-transparent p-0"
+        />
+      </div>
+    </div>
+  );
+}
+
+function ToneRow({
+  label,
+  menuLabel,
+  swatch,
+  open,
+  onOpen,
+  children,
+}: {
+  label: string;
+  menuLabel: string;
+  swatch: string;
+  open: boolean;
+  onOpen: () => void;
+  children: JSX.Element;
+}): JSX.Element {
+  const anchor = useRef<HTMLButtonElement>(null);
+  return (
+    <>
+      <button
+        ref={anchor}
+        type="button"
+        role="menuitem"
+        aria-label={label}
+        aria-expanded={open}
+        onMouseDown={(event) => event.preventDefault()}
+        onClick={onOpen}
+        className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-foreground hover:bg-muted"
+      >
+        <span className="h-3.5 w-3.5 rounded-full border border-border" style={{ backgroundColor: swatch }} />
+        {label}
+        <ChevronRight className="ml-auto h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
+      </button>
+      {open ? (
+        <ScreenMenu anchor={anchor.current} label={menuLabel} role="menu" side="right" className="w-44 rounded-lg border border-border bg-card p-2 shadow-lg">
+          {children}
+        </ScreenMenu>
+      ) : null}
+    </>
+  );
+}
+
+function paintInserted(
+  stored: string,
+  before: string,
+  typed: string,
+  tone: { color?: ToneColor | null; highlight?: ToneColor | null } | null
+): string {
+  if (!tone) return stored;
+  const change = plainChange(before, typed);
+  if (change.removed !== 0 || change.inserted.length === 0) return stored;
+  const end = change.from + change.inserted.length;
+  let body = stored;
+  if (tone.color !== undefined) body = paintColor(body, change.from, end, "color", tone.color);
+  if (tone.highlight !== undefined) body = paintColor(body, change.from, end, "highlight", tone.highlight);
+  return body;
+}
+
+function escapeHtml(value: string): string {
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function markClass(style: MarkStyle): string {
+  return [
+    style.bold ? "font-semibold" : "",
+    style.italic ? "italic" : "",
+    style.underline ? "underline" : "",
+    style.strike ? "line-through" : "",
+    style.color && namedColor(style.color) ? COLOR_TEXT[style.color] : "",
+    style.highlight ? "rounded-sm" : "",
+    style.highlight && namedColor(style.highlight) ? COLOR_BG[style.highlight] : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
+function markCss(style: MarkStyle): string {
+  const bits: string[] = [];
+  if (style.color && !namedColor(style.color)) bits.push(`color:${style.color}`);
+  if (style.highlight && !namedColor(style.highlight)) bits.push(`background-color:${style.highlight}`);
+  return bits.join(";");
+}
+
+function lineHtml(stored: string, linksClickable: boolean): string {
+  const plain = plainText(stored);
+  if (!plain) return "";
+  const styles: MarkStyle[] = [];
+  for (const run of readRuns(stored)) {
+    for (let i = 0; i < run.text.length; i += 1) styles.push(run.style);
+  }
+  let html = "";
+  for (const span of linkSpans(plain)) {
+    let inner = "";
+    let cursor = span.from;
+    while (cursor < span.to) {
+      const style = styles[cursor] ?? {};
+      const token = styleToken(span.url ? { ...style, color: undefined } : style);
+      let end = cursor + 1;
+      while (end < span.to && styleToken(styles[end] ?? {}) === styleToken(style)) end += 1;
+      const text = escapeHtml(plain.slice(cursor, end));
+      const shownStyle = span.url ? { ...style, color: undefined } : style;
+      const look = markClass(shownStyle);
+      const css = markCss(shownStyle);
+      if (token || look || css) inner += `<span data-mark="${token}" class="${look}"${css ? ` style="${css}"` : ""}>${text}</span>`;
+      else inner += text;
+      cursor = end;
+    }
+    if (span.url && linksClickable) {
+      html += `<button type="button" data-note-link="" data-from="${span.from}" data-to="${span.to}" class="pointer-events-auto inline cursor-pointer border-0 bg-transparent p-0 font-[inherit] text-primary hover:underline">${inner}</button>`;
+    } else if (span.url) html += `<span class="text-primary">${inner}</span>`;
+    else html += inner;
+  }
+  return html;
+}
+
+function LineEditor({
+  html,
+  label,
+  placeholder,
+  className,
+  onPlain,
+  onKeyDown,
+  onFocus,
+  onBlur,
+  onSelect,
+  onLink,
+  inputRef,
+  style,
+}: {
+  html: string;
+  label?: string;
+  placeholder: string;
+  className: string;
+  onPlain: (value: string) => void;
+  onKeyDown: (event: ReactKeyboardEvent<HTMLDivElement>) => void;
+  onFocus: () => void;
+  onBlur: () => void;
+  onSelect: (node: HTMLDivElement) => void;
+  onLink: (event: React.MouseEvent<HTMLDivElement>, from: number, to: number, url: string) => void;
+  inputRef: (node: HTMLDivElement | null) => void;
+  style?: CSSProperties;
+}): JSX.Element {
+  const nodeRef = useRef<HTMLDivElement>(null);
+  const composing = useRef(false);
+  const pendingCaret = useRef<number | null>(null);
+  useLayoutEffect(() => {
+    const node = nodeRef.current;
+    if (!node || composing.current) return;
+    if (node.dataset.drawn === html) return;
+    const active = document.activeElement === node;
+    const range = active ? readRange(node) : null;
+    node.innerHTML = html;
+    node.dataset.drawn = html;
+    const caret = pendingCaret.current;
+    pendingCaret.current = null;
+    if (caret !== null) writeRange(node, caret, caret);
+    else if (range) writeRange(node, range.start, range.end);
+  }, [html]);
+  return (
+    <div
+      ref={(node) => {
+        nodeRef.current = node;
+        inputRef(node);
+      }}
+      role="textbox"
+      aria-multiline="true"
+      aria-label={label}
+      contentEditable
+      suppressContentEditableWarning
+      spellCheck
+      tabIndex={0}
+      data-placeholder={placeholder || undefined}
+      onInput={() => {
+        if (composing.current) return;
+        const node = nodeRef.current;
+        if (!node) return;
+        onPlain((node.textContent ?? "").replace(/\r/g, "").replace(/\u00a0/g, " "));
+      }}
+      onPaste={(event) => {
+        event.preventDefault();
+        const node = nodeRef.current;
+        if (!node) return;
+        const clip = event.clipboardData.getData("text/plain").replace(/\r/g, "");
+        const current = (node.textContent ?? "").replace(/\u00a0/g, " ");
+        const range = readRange(node) ?? { start: current.length, end: current.length };
+        pendingCaret.current = range.start + clip.length;
+        onPlain(`${current.slice(0, range.start)}${clip}${current.slice(range.end)}`);
+      }}
+      onCompositionStart={() => {
+        composing.current = true;
+      }}
+      onCompositionEnd={() => {
+        composing.current = false;
+        const node = nodeRef.current;
+        if (!node) return;
+        onPlain((node.textContent ?? "").replace(/\r/g, "").replace(/\u00a0/g, " "));
+      }}
+      onFocus={() => {
+        const node = nodeRef.current;
+        if (node && node.textContent === "" && node.querySelector("br")) {
+          node.innerHTML = "";
+          node.dataset.drawn = "";
+        }
+        onFocus();
+      }}
+      onBlur={onBlur}
+      onKeyDown={onKeyDown}
+      onMouseUp={() => {
+        const node = nodeRef.current;
+        if (node) onSelect(node);
+      }}
+      onKeyUp={() => {
+        const node = nodeRef.current;
+        if (node) onSelect(node);
+      }}
+      onMouseDown={(event) => {
+        const target = event.target;
+        if (target instanceof Element && target.closest("[data-note-link]")) event.preventDefault();
+      }}
+      onClick={(event) => {
+        const target = event.target;
+        if (!(target instanceof Element)) return;
+        const link = target.closest("[data-note-link]");
+        if (!(link instanceof HTMLElement)) return;
+        onLink(event, Number(link.dataset.from), Number(link.dataset.to), link.textContent ?? "");
+      }}
+      className={`w-full max-w-full min-w-0 whitespace-pre-wrap break-words bg-transparent outline-none empty:before:text-muted-foreground/50 empty:before:content-[attr(data-placeholder)] ${className}`}
+      style={style}
+    />
+  );
+}
+
 export function IdeaNote({
   value,
   onChange,
   onPhoto,
-  onLink,
   onLine,
   onDropResource,
-  onPasteLink,
   onDropFiles,
   files = [],
   links = [],
+  focusRequest = 0,
 }: {
   value: string;
   onChange: (value: string) => void;
   onPhoto: (line: number) => void;
-  onLink: () => void;
   onLine?: (line: number) => void;
   onDropResource?: (kind: "file" | "link", id: string, line: number) => void;
-  onPasteLink?: (url: string, line: number) => void;
   onDropFiles?: (files: File[], line: number) => void;
   files?: readonly ShelfFile[];
   links?: readonly ResourceLink[];
+  focusRequest?: number;
 }): JSX.Element {
   const lines = splitNote(value);
-  const inputs = useRef<Array<HTMLTextAreaElement | null>>([]);
+  const inputs = useRef<Array<HTMLElement | null>>([]);
+  const ink = useRef<{ index: number; at: number; style: MarkStyle } | null>(null);
+  const blockTone = useRef<{ index: number; color?: ToneColor | null; highlight?: ToneColor | null } | null>(null);
+  const root = useRef<HTMLDivElement>(null);
+  const lineAnchors = useRef<Array<HTMLElement | null>>([]);
+  const turnAnchors = useRef<Array<HTMLElement | null>>([]);
+  const textAnchors = useRef<Array<HTMLElement | null>>([]);
+  const dragEnd = useRef<(() => void) | null>(null);
+  const pickedActions = useRef({
+    selectAll: () => undefined as void,
+    dropSpan: (_text: string | null) => undefined as void,
+    copySpan: () => undefined as void,
+    focusAt: (_index: number) => undefined as void,
+  });
+  const turnOpen = useRef(false);
+  const linkOpen = useRef(false);
+  const [span, setSpan] = useState<{ anchor: number; focus: number } | null>(null);
+  const [columnDrag, setColumnDrag] = useState<{ at: number; ratio: number } | null>(null);
+  const [turnAt, setTurnAt] = useState<number | null>(null);
+  const [tonePanel, setTonePanel] = useState<"color" | "highlight" | null>(null);
+  const [focusAt, setFocusAt] = useState<number | null>(null);
+  const [formatAt, setFormatAt] = useState<{ index: number; start: number; end: number } | null>(null);
+  const [, setInkRev] = useState(0);
+  const [openLink, setOpenLink] = useState<{
+    line: number;
+    url: string;
+    from: number;
+    to: number;
+    top: number;
+    left: number;
+  } | null>(null);
+  const [copiedLink, setCopiedLink] = useState(false);
   const [menuAt, setMenuAt] = useState<number | null>(null);
+  turnOpen.current = turnAt !== null;
+  linkOpen.current = openLink !== null;
   const [slashQuery, setSlashQuery] = useState("");
   const [active, setActive] = useState(0);
   const [overLine, setOverLine] = useState<number | null>(null);
@@ -459,7 +1390,7 @@ export function IdeaNote({
 
   useLayoutEffect(() => {
     for (const node of inputs.current) {
-      if (!node) continue;
+      if (!(node instanceof HTMLTextAreaElement)) continue;
       node.style.height = "0px";
       node.style.height = `${node.scrollHeight}px`;
     }
@@ -481,20 +1412,320 @@ export function IdeaNote({
       if (!node) return;
       node.focus();
       if (caret === undefined) return;
-      const at = Math.min(Math.max(caret, 0), node.value.length);
-      node.setSelectionRange(at, at);
+      const length = node instanceof HTMLTextAreaElement ? node.value.length : (node.textContent ?? "").length;
+      const at = Math.min(Math.max(caret, 0), length);
+      if (node instanceof HTMLTextAreaElement) node.setSelectionRange(at, at);
+      else writeRange(node, at, at);
     }, 0);
   }
+
+  const linesRef = useRef(lines);
+  linesRef.current = lines;
+  useEffect(() => {
+    if (!focusRequest) return;
+    const current = linesRef.current;
+    const index = current.findIndex((line) => WRITING.has(line.kind));
+    const at = index < 0 ? 0 : index;
+    focusLine(at, plainText(current[at]?.body ?? "").length);
+  }, [focusRequest]);
 
   function closeMenu(): void {
     setMenuAt(null);
     setSlashQuery("");
   }
 
+  function blurNote(): void {
+    const active = document.activeElement;
+    if (active instanceof HTMLElement && root.current?.contains(active)) active.blur();
+    window.getSelection()?.removeAllRanges();
+  }
+
+  function selectAll(): void {
+    closeMenu();
+    if (lines.length === 0) return;
+    setSpan({ anchor: 0, focus: lines.length - 1 });
+    blurNote();
+  }
+
+  function dropSpan(text: string | null): void {
+    if (!span) return;
+    const { low, high } = rangeOf(span);
+    const next = lines.slice();
+    next.splice(low, high - low + 1, ...(text === null ? [] : [{ kind: "text" as const, body: text }]));
+    const kept = next.some(isContent) ? next : [{ kind: "text" as const, body: "" }];
+    setSpan(null);
+    write(kept);
+    focusLine(Math.min(low, kept.length - 1), text?.length ?? 0);
+  }
+
+  function copySpan(): void {
+    if (!span || !navigator.clipboard?.writeText) return;
+    const { low, high } = rangeOf(span);
+    const text = lines
+      .slice(low, high + 1)
+      .filter((line) => line && WRITING.has(line.kind))
+      .map((line) => plainText(line.body))
+      .join("\n");
+    void navigator.clipboard.writeText(text).catch(() => undefined);
+  }
+
+  function lineFromPointer(event: PointerEvent): number | null {
+    const rows = root.current?.querySelectorAll("[data-note-line]");
+    if (!rows || rows.length === 0) return null;
+    const hits: Element[] = [];
+    let laidOut = false;
+    let first: Element | null = null;
+    let last: Element | null = null;
+    for (const row of rows) {
+      const rect = row.getBoundingClientRect();
+      if (rect.height === 0 && rect.width === 0) continue;
+      laidOut = true;
+      if (!first || rect.top < first.getBoundingClientRect().top) first = row;
+      if (!last || rect.bottom > last.getBoundingClientRect().bottom) last = row;
+      if (event.clientY >= rect.top && event.clientY <= rect.bottom) hits.push(row);
+    }
+    if (!laidOut) return event.target instanceof Element ? lineIndex(event.target) : null;
+    if (hits.length === 1) return lineIndex(hits[0]);
+    if (hits.length > 1) {
+      const across = hits.find((row) => {
+        const rect = row.getBoundingClientRect();
+        return event.clientX >= rect.left && event.clientX <= rect.right;
+      });
+      return lineIndex(across ?? hits[0]);
+    }
+    if (first && event.clientY < first.getBoundingClientRect().top) return lineIndex(first);
+    if (last && event.clientY > last.getBoundingClientRect().bottom) return lineIndex(last);
+    return null;
+  }
+
+  function pressLine(index: number, event: PressEvent<HTMLDivElement>): void {
+    if (event.button !== 0 || event.pointerType === "touch") return;
+    const target = event.target;
+    if (!(target instanceof Element) || target.closest("button, a, input, video, [data-line-grip], [data-turn-menu]")) return;
+    setTurnAt(null);
+    const extend = event.shiftKey && span !== null;
+    const origin = extend && span ? span.anchor : index;
+    const chooseBlock = lines[index]?.kind === "rule";
+    if (extend) {
+      event.preventDefault();
+      setSpan({ anchor: origin, focus: index });
+    } else if (chooseBlock) {
+      event.preventDefault();
+      setSpan({ anchor: index, focus: index });
+    } else {
+      setSpan(null);
+    }
+    const startX = event.clientX;
+    const startY = event.clientY;
+    let block = extend;
+    let previousSelect = "";
+    let locked = false;
+    function lock(): void {
+      if (locked) return;
+      locked = true;
+      previousSelect = document.body.style.userSelect;
+      document.body.style.userSelect = "none";
+    }
+    function unlock(): void {
+      if (!locked) return;
+      document.body.style.userSelect = previousSelect;
+      locked = false;
+    }
+    function onMove(ev: PointerEvent): void {
+      if (ev.buttons !== 1) return;
+      const dx = ev.clientX - startX;
+      const dy = ev.clientY - startY;
+      if (!block && dx * dx + dy * dy < 16) return;
+      const under = lineFromPointer(ev);
+      if (under === null) return;
+      if (!block && under === index) return;
+      if (!block) {
+        block = true;
+        lock();
+        blurNote();
+        const cap = root.current;
+        if (cap) {
+          try {
+            cap.setPointerCapture(ev.pointerId);
+          } catch {
+            /* the pointer can already be gone */
+          }
+        }
+      }
+      setSpan({ anchor: origin, focus: under });
+    }
+    function end(): void {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", end);
+      unlock();
+      if (dragEnd.current === end) dragEnd.current = null;
+    }
+    dragEnd.current?.();
+    dragEnd.current = end;
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", end);
+  }
+
+  pickedActions.current = {
+    selectAll,
+    dropSpan,
+    copySpan,
+    focusAt: (index) => focusLine(index, plainText(lines[index]?.body ?? "").length),
+  };
+
+  useEffect(() => {
+    if (!span) return;
+    function onKey(event: KeyboardEvent): void {
+      const target = event.target;
+      if (
+        target instanceof HTMLElement &&
+        (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT") &&
+        !root.current?.contains(target)
+      ) {
+        setSpan(null);
+        return;
+      }
+      if (selectAllKey(event)) {
+        event.preventDefault();
+        event.stopPropagation();
+        pickedActions.current.selectAll();
+        return;
+      }
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "c") {
+        event.preventDefault();
+        pickedActions.current.copySpan();
+        return;
+      }
+      if (event.key === "Escape") {
+        if (turnOpen.current || linkOpen.current) return;
+        event.preventDefault();
+        event.stopPropagation();
+        const focus = span.focus;
+        setSpan(null);
+        pickedActions.current.focusAt(focus);
+        return;
+      }
+      if (event.key === "Backspace" || event.key === "Delete") {
+        event.preventDefault();
+        event.stopPropagation();
+        pickedActions.current.dropSpan(null);
+        return;
+      }
+      if (event.key.length === 1 && !event.metaKey && !event.ctrlKey && !event.altKey) {
+        event.preventDefault();
+        event.stopPropagation();
+        pickedActions.current.dropSpan(event.key);
+      }
+    }
+    function onDown(event: PointerEvent): void {
+      const target = event.target;
+      if (target instanceof Node && root.current?.contains(target)) return;
+      setSpan(null);
+    }
+    window.addEventListener("keydown", onKey, true);
+    window.addEventListener("pointerdown", onDown);
+    return () => {
+      window.removeEventListener("keydown", onKey, true);
+      window.removeEventListener("pointerdown", onDown);
+    };
+  }, [span]);
+
+  useEffect(() => () => dragEnd.current?.(), []);
+
+  useEffect(() => {
+    if (turnAt === null) return;
+    function onKey(event: KeyboardEvent): void {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      setTurnAt(null);
+    }
+    function onDown(event: MouseEvent): void {
+      const target = event.target;
+      if (target instanceof Element && target.closest("[data-turn-menu]")) return;
+      setTurnAt(null);
+    }
+    window.addEventListener("keydown", onKey, true);
+    window.addEventListener("mousedown", onDown, true);
+    return () => {
+      window.removeEventListener("keydown", onKey, true);
+      window.removeEventListener("mousedown", onDown, true);
+    };
+  }, [turnAt]);
+
+  useEffect(() => {
+    if (menuAt === null) return;
+    function onDown(event: MouseEvent): void {
+      const target = event.target;
+      if (target instanceof Element && target.closest("[data-slash-menu]")) return;
+      setMenuAt(null);
+      setSlashQuery("");
+      if (!(target instanceof Element) || !target.closest("[data-turn-menu]")) setFormatAt(null);
+    }
+    window.addEventListener("mousedown", onDown, true);
+    return () => window.removeEventListener("mousedown", onDown, true);
+  }, [menuAt]);
+
+  useEffect(() => {
+    if (!copiedLink) return;
+    const timer = window.setTimeout(() => setCopiedLink(false), 1200);
+    return () => window.clearTimeout(timer);
+  }, [copiedLink]);
+
+  useEffect(() => {
+    if (!openLink) return;
+    function onKey(event: KeyboardEvent): void {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      setOpenLink(null);
+    }
+    function onDown(event: MouseEvent): void {
+      const target = event.target;
+      if (target instanceof Element && target.closest("[data-link-menu], [data-note-link]")) return;
+      setOpenLink(null);
+    }
+    window.addEventListener("keydown", onKey, true);
+    window.addEventListener("mousedown", onDown, true);
+    return () => {
+      window.removeEventListener("keydown", onKey, true);
+      window.removeEventListener("mousedown", onDown, true);
+    };
+  }, [openLink]);
+
+  function mergeColumns(at: number, skip?: number): void {
+    setTurnAt(null);
+    const block = columnBlock(lines, at);
+    if (!block) return;
+    const next = unstackColumns(lines, block.at, block.end, skip);
+    write(next);
+    const first = Math.min(block.at, next.length - 1);
+    const landing = WRITING.has(next[first]?.kind ?? "text") ? first : (nearestWriting(next, first, 1) ?? nearestWriting(next, first, -1) ?? first);
+    focusLine(landing, 0);
+  }
+
+  function deleteColumns(at: number): void {
+    setTurnAt(null);
+    const block = columnBlock(lines, at);
+    if (!block) return;
+    const next = [...lines.slice(0, block.at), ...lines.slice(Math.min(block.end + 1, lines.length))];
+    const kept = next.some(isContent) ? next : [{ kind: "text" as const, body: "" }];
+    write(kept);
+    const previous = nearestWriting(kept, Math.min(block.at, kept.length - 1) + 1, -1);
+    focusLine(previous ?? 0, previous !== null ? plainText(kept[previous]?.body ?? "").length : 0);
+  }
+
   function removeLine(index: number): void {
     const side = columnSide(lines, index);
     const onlyInSide = Boolean(side && side.length <= 1);
     const onlyInNote = lines.filter(isContent).length <= 1;
+    if (onlyInSide && lines[index]?.kind === "text" && lines[index]?.body === "") {
+      const block = columnBlock(lines, index);
+      if (block) {
+        mergeColumns(block.at, index);
+        return;
+      }
+    }
     if (onlyInSide || onlyInNote) {
       if (lines[index]?.kind === "text" && lines[index]?.body === "") return;
       const next = lines.slice();
@@ -507,7 +1738,17 @@ export function IdeaNote({
     next.splice(index, 1);
     write(next.length > 0 ? next : [{ kind: "text", body: "" }]);
     const previous = nearestWriting(lines, index, -1);
-    if (previous !== null) focusLine(previous, lines[previous]?.body.length ?? 0);
+    if (previous !== null) focusLine(previous, plainText(lines[previous]?.body ?? "").length);
+  }
+
+  function resizeColumns(at: number, ratio: number): void {
+    const next = lines.slice();
+    const line = next[at];
+    if (!line || line.kind !== "cols") return;
+    const clamped = columnRatio(String(ratio));
+    if ((line.body || "50") === String(clamped) && line.body !== "") return;
+    next[at] = { ...line, body: String(clamped) };
+    write(next);
   }
 
   function moveLine(from: number, to: number): void {
@@ -520,14 +1761,81 @@ export function IdeaNote({
     write(next);
   }
 
+  /** Inserts a block just before a column marker. Removing first, then using the old marker index, lands one line too far. */
+  function moveBefore(from: number, marker: number): void {
+    if (!Number.isInteger(from) || from < 0 || from >= lines.length || from === marker || from + 1 === marker) return;
+    const moving = lines[from];
+    if (!isContent(moving)) return;
+    const next = lines.slice();
+    const [item] = next.splice(from, 1);
+    const at = from < marker ? marker - 1 : marker;
+    next.splice(at, 0, item);
+    write(next);
+  }
+
+  function settleMoved(next: NoteLine[], landing: number, count: number): void {
+    setTurnAt(null);
+    write(next);
+    const line = next[landing];
+    if (count === 1 && line && WRITING.has(line.kind)) {
+      setSpan(null);
+      focusLine(landing, plainText(line.body).length);
+      return;
+    }
+    setSpan({ anchor: landing, focus: landing + count - 1 });
+  }
+
+  function placeInColumn(index: number, side: "left" | "right"): void {
+    const run = selectionRun(lines, index, span);
+    if (!run) return;
+    const count = run.high - run.low + 1;
+    if (columnBlock(lines, run.low)) {
+      const shifted = shiftedColumns(lines, run, side);
+      if (shifted) settleMoved(shifted.next, shifted.landing, count);
+      return;
+    }
+    const near = adjacentPair(lines, run);
+    if (near && splitOf(lines, near) >= 0) {
+      const joined = joinedColumns(lines, run, near, side);
+      if (joined) settleMoved(joined.next, joined.landing, count);
+      return;
+    }
+    const made = createdColumns(lines, run, side);
+    setTurnAt(null);
+    write(made.next);
+    setSpan(null);
+    focusLine(made.focus, 0);
+  }
+
+  function moveOutOfColumns(index: number): void {
+    const run = selectionRun(lines, index, span);
+    if (!run) return;
+    const lifted = liftedOut(lines, run);
+    if (lifted) settleMoved(lifted.next, lifted.landing, run.high - run.low + 1);
+  }
+
+  function swapSides(at: number): void {
+    setTurnAt(null);
+    const block = columnBlock(lines, at);
+    if (!block) return;
+    const split = splitOf(lines, block);
+    if (split < 0) return;
+    const next = [
+      ...lines.slice(0, block.at),
+      lines[block.at],
+      ...lines.slice(split + 1, block.end),
+      lines[split],
+      ...lines.slice(block.at + 1, split),
+      ...(lines[block.end]?.kind === "endcols" ? [lines[block.end]] : []),
+      ...lines.slice(block.end + 1),
+    ];
+    write(next);
+  }
+
   function pick(id: (typeof MENU)[number]["id"], index: number): void {
     closeMenu();
     if (id === "file") {
       onPhoto(index);
-      return;
-    }
-    if (id === "link") {
-      onLink();
       return;
     }
     if (id === "columns") {
@@ -548,24 +1856,275 @@ export function IdeaNote({
       focusLine(index + 1);
       return;
     }
+    const level = headingChoice(id);
     const kind: LineKind =
-      id === "heading" || id === "bullet" || id === "number" || id === "quote" || id === "list" ? id : "text";
+      level ? "heading" : id === "bullet" || id === "number" || id === "quote" || id === "list" ? id : "text";
     const next = lines.slice();
-    next[index] = { kind, body: "", done: false };
+    next[index] = level ? { kind: "heading", level, body: "" } : { kind, body: "", done: false };
     write(next);
     focusLine(index);
+  }
+
+  function turnInto(id: (typeof TURN)[number]["id"], index: number): void {
+    const level = headingChoice(id);
+    const kind: LineKind = level
+      ? "heading"
+      : id === "text" || id === "bullet" || id === "number" || id === "quote" || id === "list"
+        ? id
+        : "text";
+    const covered = span !== null && index >= rangeOf(span).low && index <= rangeOf(span).high;
+    const low = covered && span ? rangeOf(span).low : index;
+    const high = covered && span ? rangeOf(span).high : index;
+    const next = lines.map((line, at) => {
+      if (at < low || at > high || (!WRITING.has(line.kind) && line.kind !== "rule")) return line;
+      return {
+        kind,
+        ...(level ? { level } : {}),
+        body: line.kind === "rule" ? "" : line.body,
+        done: kind === "list" ? Boolean(line.done) : false,
+      };
+    });
+    setTurnAt(null);
+    write(next);
+    focusLine(index, plainText(next[index]?.body ?? "").length);
+  }
+
+  function setFileView(index: number, embed: boolean): void {
+    setTurnAt(null);
+    const line = lines[index];
+    if (!line || line.kind !== "file") return;
+    const next = lines.slice();
+    next[index] = { ...line, embed: embed ? undefined : false };
+    write(next);
+  }
+
+  function setFileWidth(index: number, width: number): void {
+    const line = lines[index];
+    if (!line || line.kind !== "file") return;
+    const clamped = pictureWidth(width);
+    if (line.width === clamped) return;
+    const next = lines.slice();
+    next[index] = { ...line, width: clamped };
+    write(next);
+  }
+
+  function deleteTurn(index: number): void {
+    setTurnAt(null);
+    const covered = span !== null && index >= rangeOf(span).low && index <= rangeOf(span).high;
+    if (covered) {
+      dropSpan(null);
+      return;
+    }
+    removeLine(index);
+  }
+
+  function showLink(
+    event: { preventDefault: () => void; stopPropagation: () => void; currentTarget: HTMLElement },
+    index: number,
+    url: string,
+    from: number,
+    to: number
+  ): void {
+    event.preventDefault();
+    event.stopPropagation();
+    const rect = event.currentTarget.getBoundingClientRect();
+    const placed = placeOnScreen(
+      { top: rect.top, left: rect.left, right: rect.right, bottom: rect.bottom, width: rect.width, height: rect.height },
+      { width: 240, height: 180 },
+      { width: window.innerWidth, height: window.innerHeight },
+      "below"
+    );
+    setCopiedLink(false);
+    setOpenLink((current) =>
+      current && current.line === index && current.from === from && current.to === to
+        ? null
+        : { line: index, url, from, to, top: placed.top, left: placed.left }
+    );
+  }
+
+  function editOpenLink(): void {
+    if (!openLink) return;
+    const { line: index, url, from, to } = openLink;
+    setOpenLink(null);
+    if (from < 0) {
+      const next = lines.slice();
+      next[index] = { kind: "text", body: url };
+      write(next);
+    }
+    window.setTimeout(() => {
+      const node = inputs.current[index];
+      if (!node) return;
+      node.focus();
+      const length = node instanceof HTMLTextAreaElement ? node.value.length : (node.textContent ?? "").length;
+      const start = from < 0 ? 0 : from;
+      const end = from < 0 ? url.length : to;
+      if (node instanceof HTMLTextAreaElement) node.setSelectionRange(start, Math.min(end, length));
+      else writeRange(node, start, Math.min(end, length));
+    }, 0);
+  }
+
+  function removeOpenLink(): void {
+    if (!openLink) return;
+    const { line: index, from, to } = openLink;
+    setOpenLink(null);
+    if (from < 0) {
+      removeLine(index);
+      return;
+    }
+    const line = lines[index];
+    if (!line || !WRITING.has(line.kind)) return;
+    const plain = plainText(line.body);
+    const body = editPlain(line.body, `${plain.slice(0, from)}${plain.slice(to)}`.replace(/[^\S\n]{2,}/g, " ").trim());
+    const next = lines.slice();
+    next[index] = { ...line, body };
+    write(next);
+  }
+
+  async function copyOpenLink(): Promise<void> {
+    if (!openLink) return;
+    try {
+      await navigator.clipboard.writeText(openLink.url);
+      setCopiedLink(true);
+    } catch {
+      setCopiedLink(false);
+    }
+  }
+
+  function launchOpenLink(): void {
+    if (!openLink) return;
+    window.open(openLink.url, "_blank", "noopener,noreferrer");
+    setOpenLink(null);
+  }
+
+  function insertUrl(index: number, url: string): void {
+    const current = lines[index];
+    const next = lines.slice();
+    if (current && WRITING.has(current.kind)) {
+      const plain = plainText(current.body);
+      const gap = plain.length > 0 && !/\s$/.test(plain) ? " " : "";
+      next[index] = { ...current, body: editPlain(current.body, `${plain}${gap}${url}`) };
+    } else {
+      next.splice(Math.min(index + 1, next.length), 0, { kind: "text", body: url });
+    }
+    write(next);
+  }
+
+  function continueNote(event: { button: number; preventDefault: () => void }): void {
+    if (event.button > 0) return;
+    event.preventDefault();
+    setSpan(null);
+    setTurnAt(null);
+    const last = lines[lines.length - 1];
+    if (last?.kind === "text" && last.body === "") {
+      focusLine(lines.length - 1, 0);
+      return;
+    }
+    write([...lines, { kind: "text", body: "" }]);
+    focusLine(lines.length, 0);
+  }
+
+  function continueSide(side: readonly number[], before: number): void {
+    closeMenu();
+    setTurnAt(null);
+    const last = side[side.length - 1];
+    if (last !== undefined && lines[last]?.kind === "text" && lines[last]?.body === "") {
+      focusLine(last, 0);
+      return;
+    }
+    const next = lines.slice();
+    next.splice(before, 0, { kind: "text", body: "" });
+    write(next);
+    focusLine(before, 0);
+  }
+
+  function putInk(next: { index: number; at: number; style: MarkStyle } | null): void {
+    ink.current = next;
+    setInkRev((n) => n + 1);
+  }
+
+  function applyFlag(index: number, flag: StyleFlag): void {
+    const line = lines[index];
+    if (!line || !WRITING.has(line.kind)) return;
+    const node = inputs.current[index];
+    const live = node && !(node instanceof HTMLTextAreaElement) ? readRange(node) : null;
+    const range = live && live.end > live.start ? live : formatAt?.index === index ? formatAt : live;
+    if (!range) return;
+    if (range.start === range.end) {
+      const base = styleBefore(line.body, range.start);
+      const style: MarkStyle = { ...base };
+      if (style[flag]) delete style[flag];
+      else style[flag] = true;
+      putInk({ index, at: range.start, style });
+      return;
+    }
+    ink.current = null;
+    const next = lines.slice();
+    next[index] = { ...line, body: toggleStyle(line.body, range.start, range.end, flag) };
+    write(next);
+    setFormatAt({ index, start: range.start, end: range.end });
+  }
+
+  function applyBlockTone(index: number, kind: "color" | "highlight", color: ToneColor | null): void {
+    const line = lines[index];
+    if (!line || !WRITING.has(line.kind)) return;
+    const prev = blockTone.current?.index === index ? blockTone.current : {};
+    blockTone.current = { ...prev, index, [kind]: color };
+    const plain = plainText(line.body);
+    setTurnAt(null);
+    if (plain.length === 0) return;
+    const next = lines.slice();
+    next[index] = { ...line, body: paintColor(line.body, 0, plain.length, kind, color) };
+    write(next);
   }
 
   function renderLine(index: number): JSX.Element {
     const line = lines[index];
     const writing = Boolean(line && WRITING.has(line.kind));
-    const bare = lines.length === 1 && lines[0]?.kind === "text" && lines[0].body === "";
     const filtering = menuAt === index;
+    const picked = span !== null && index >= rangeOf(span).low && index <= rangeOf(span).high;
+    const shownFile = line?.kind === "file" ? noteFile(files.find((file) => file.id === line.body), line) : null;
+    const canSwitchView = Boolean(shownFile && hasPicture(shownFile) && !shownFile.pending);
+    const viewing = Boolean(shownFile && canSwitchView && shownFile.embed !== false);
+    const canTurn = Boolean(line && (writing || line.kind === "rule" || line.kind === "file"));
+    const moves = columnMoves(lines, index, span);
+    const moveChoices = [
+      moves.left ? { label: "Move to left column", go: () => placeInColumn(index, "left") } : null,
+      moves.right ? { label: "Move to right column", go: () => placeInColumn(index, "right") } : null,
+      moves.out ? { label: "Move out of columns", go: () => moveOutOfColumns(index) } : null,
+    ].flatMap((item) => (item ? [item] : []));
+    const TurnIcon =
+      line?.kind === "rule"
+        ? Minus
+        : line?.kind === "file"
+          ? viewing
+            ? shownFile?.video
+              ? Film
+              : ImageIcon
+            : Paperclip
+          : line?.kind === "heading"
+            ? HEADING_ICON[lineHeading(line)]
+            : (TURN.find((item) => item.id === line?.kind)?.icon ?? Type);
+    const shown = filtering ? `/${slashQuery}` : plainText(line?.body ?? "");
+    const html = filtering || !line ? escapeHtml(shown) : lineHtml(line.body, focusAt !== index);
+    const held = formatAt?.index === index ? formatAt : null;
+    const format = held && held.end > held.start && line && !filtering ? selectionStyle(line.body, held.start, held.end) : null;
+    const plainBody = line && writing ? plainText(line.body) : "";
+    const armedTone = blockTone.current?.index === index ? blockTone.current : null;
+    const storedTone = plainBody.length > 0 && line ? selectionStyle(line.body, 0, plainBody.length) : null;
+    const lineColor = armedTone && armedTone.color !== undefined ? armedTone.color : (storedTone?.color ?? null);
+    const lineHighlight = armedTone && armedTone.highlight !== undefined ? armedTone.highlight : (storedTone?.highlight ?? null);
     return (
       <div
         key={index}
+        ref={(node) => {
+          lineAnchors.current[index] = node;
+        }}
         data-note-line={index}
-        className={`group relative flex min-w-0 items-start gap-1.5 rounded-md ${overLine === index ? "bg-primary/10" : ""}`}
+        data-picked={picked ? "true" : undefined}
+        onPointerDown={(event) => pressLine(index, event)}
+        className={`group relative flex min-w-0 items-start gap-1.5 rounded-md pr-11 ${
+          picked ? "bg-primary/30" : overLine === index ? "bg-primary/10" : ""
+        }`}
         onDragOver={(event) => {
           if (!hasLineDrag(event)) return;
           event.preventDefault();
@@ -584,12 +2143,13 @@ export function IdeaNote({
       >
         <span
           draggable
+          data-line-grip=""
           aria-label="Move line"
           onDragStart={(event) => {
             event.stopPropagation();
             event.dataTransfer.setData(LINE_DRAG, String(index));
             if (line && line.body.trim() && WRITING.has(line.kind)) {
-              event.dataTransfer.setData(LIFT_DRAG, line.body.trim());
+              event.dataTransfer.setData(LIFT_DRAG, plainText(line.body).trim());
             }
             event.dataTransfer.effectAllowed = "copyMove";
           }}
@@ -597,6 +2157,142 @@ export function IdeaNote({
         >
           <GripVertical className="h-3.5 w-3.5" aria-hidden="true" />
         </span>
+        {canTurn && line ? (
+          <div className="relative" data-turn-menu="">
+              <button
+              ref={(node) => {
+                turnAnchors.current[index] = node;
+              }}
+              type="button"
+              aria-label={line.kind === "file" ? "File options" : "Turn into"}
+              aria-expanded={turnAt === index}
+              data-turn={line.kind}
+              title={line.kind === "file" ? "File options" : "Turn into"}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => {
+                closeMenu();
+                setTonePanel(null);
+                setTurnAt((current) => (current === index ? null : index));
+              }}
+              className={`mt-1 inline-flex h-4 w-4 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground ${
+                turnAt === index
+                  ? "opacity-100"
+                  : "opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100"
+              }`}
+            >
+              <TurnIcon className="h-3.5 w-3.5" aria-hidden="true" />
+            </button>
+            {turnAt === index ? (
+              <ScreenMenu
+                anchor={turnAnchors.current[index] ?? null}
+                label={line.kind === "file" ? "File options" : "Turn into"}
+                role="menu"
+                className="w-52 rounded-lg border border-border bg-card py-1 shadow-lg"
+              >
+                {line.kind === "file"
+                  ? canSwitchView
+                    ? [
+                        { embed: true, label: shownFile?.video ? "Show the video" : "Show the picture", icon: shownFile?.video ? Film : ImageIcon },
+                        { embed: false, label: "Show the file name", icon: Paperclip },
+                      ].map((item) => {
+                        const Icon = item.icon;
+                        const current = item.embed === viewing;
+                        return (
+                          <button
+                            key={item.label}
+                            type="button"
+                            role="menuitem"
+                            aria-current={current ? "true" : undefined}
+                            onMouseDown={(event) => event.preventDefault()}
+                            onClick={() => setFileView(index, item.embed)}
+                            className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-foreground hover:bg-muted ${
+                              current ? "bg-muted" : ""
+                            }`}
+                          >
+                            <Icon className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
+                            {item.label}
+                          </button>
+                        );
+                      })
+                    : null
+                  : TURN.map((item) => {
+                      const Icon = item.icon;
+                      const level = headingChoice(item.id);
+                      const current = level ? line.kind === "heading" && lineHeading(line) === level : line.kind === item.id;
+                      return (
+                        <button
+                          key={item.id}
+                          type="button"
+                          role="menuitem"
+                          aria-current={current ? "true" : undefined}
+                          onMouseDown={(event) => event.preventDefault()}
+                          onClick={() => turnInto(item.id, index)}
+                          className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-foreground hover:bg-muted ${
+                            current ? "bg-muted" : ""
+                          }`}
+                        >
+                          <Icon className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
+                          {item.label}
+                        </button>
+                      );
+                    })}
+                {writing ? (
+                  <>
+                    <div className="my-1 border-t border-border" />
+                    <ToneRow
+                      label="Color"
+                      menuLabel="Text color"
+                      swatch={swatchFill(lineColor, "color")}
+                      open={tonePanel === "color"}
+                      onOpen={() => setTonePanel((current) => (current === "color" ? null : "color"))}
+                    >
+                      <TonePanel kind="color" value={lineColor} onPick={(value) => applyBlockTone(index, "color", value)} />
+                    </ToneRow>
+                    <ToneRow
+                      label="Highlight"
+                      menuLabel="Highlight"
+                      swatch={swatchFill(lineHighlight, "highlight")}
+                      open={tonePanel === "highlight"}
+                      onOpen={() => setTonePanel((current) => (current === "highlight" ? null : "highlight"))}
+                    >
+                      <TonePanel kind="highlight" value={lineHighlight} onPick={(value) => applyBlockTone(index, "highlight", value)} />
+                    </ToneRow>
+                  </>
+                ) : null}
+                {moveChoices.length > 0 ? (
+                  <>
+                    {line.kind !== "file" || canSwitchView ? <div className="my-1 border-t border-border" /> : null}
+                    {moveChoices.map((item) => (
+                      <button
+                        key={item.label}
+                        type="button"
+                        role="menuitem"
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={item.go}
+                        className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-foreground hover:bg-muted"
+                      >
+                        <Columns2 className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
+                        {item.label}
+                      </button>
+                    ))}
+                  </>
+                ) : null}
+                {line.kind !== "file" || canSwitchView || moveChoices.length > 0 ? (
+                  <div className="my-1 border-t border-border" />
+                ) : null}
+                <button
+                  type="button"
+                  role="menuitem"
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => deleteTurn(index)}
+                  className="flex w-full items-center px-3 py-1.5 text-left text-sm text-destructive hover:bg-muted"
+                >
+                  Delete
+                </button>
+              </ScreenMenu>
+            ) : null}
+          </div>
+        ) : null}
         {line?.kind === "list" ? (
           <button
             type="button"
@@ -620,15 +2316,19 @@ export function IdeaNote({
             {noteNumber(lines, index)}.
           </span>
         ) : null}
-        {line?.kind === "file" ? (
-          <ShelfTile
-            item={files.find((file) => file.id === line.body) ?? { id: line.body, preview: null }}
-            onRemove={() => removeLine(index)}
-            removeLabel="Remove from the note"
-          />
+        {line?.kind === "file" && shownFile ? (
+          <NoteFile item={shownFile} onRemove={() => removeLine(index)} onResize={(width) => setFileWidth(index, width)} />
         ) : null}
         {line?.kind === "link" ? (
-          <NoteLink url={links.find((item) => item.id === line.body)?.url ?? line.body} onRemove={() => removeLine(index)} />
+          <button
+            type="button"
+            data-note-link=""
+            className="min-w-0 flex-1 break-all bg-transparent p-0 text-left text-sm text-primary hover:underline"
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={(event) => showLink(event, index, links.find((item) => item.id === line.body)?.url ?? line.body, -1, -1)}
+          >
+            {links.find((item) => item.id === line.body)?.url ?? line.body}
+          </button>
         ) : null}
         {line?.kind === "rule" ? (
           <div
@@ -639,27 +2339,71 @@ export function IdeaNote({
               event.preventDefault();
               removeLine(index);
             }}
-            className="my-2 w-full border-t border-border outline-none"
-          />
+            className="flex h-6 min-w-0 flex-1 cursor-pointer items-center outline-none"
+          >
+            <span className="w-full border-t border-border" />
+          </div>
         ) : null}
         {writing && line ? (
-          <textarea
+          <div
             ref={(node) => {
+              textAnchors.current[index] = node;
+            }}
+            className={`relative min-w-0 flex-1 rounded-md ${line.kind === "quote" ? "border-l-2 border-border" : ""} ${lineHighlight && namedColor(lineHighlight) ? COLOR_BG[lineHighlight] : ""}`}
+            style={lineHighlight && !namedColor(lineHighlight) ? { backgroundColor: lineHighlight } : undefined}
+          >
+          {format ? (
+            <ScreenMenu
+              anchor={textAnchors.current[index] ?? null}
+              label="Format"
+              role="toolbar"
+              side="above"
+              holdFocus
+              className="w-max rounded-lg border border-border bg-card p-1 shadow-lg"
+            >
+              <div className="flex items-center gap-0.5">
+                {(
+                  [
+                    { flag: "bold" as const, label: "Bold", icon: Bold, pressed: format.bold },
+                    { flag: "italic" as const, label: "Italic", icon: Italic, pressed: format.italic },
+                    { flag: "underline" as const, label: "Underline", icon: Underline, pressed: format.underline },
+                    { flag: "strike" as const, label: "Strikethrough", icon: Strikethrough, pressed: format.strike },
+                  ] as const
+                ).map((item) => {
+                  const Icon = item.icon;
+                  return (
+                    <button
+                      key={item.flag}
+                      type="button"
+                      aria-label={item.label}
+                      aria-pressed={item.pressed}
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => applyFlag(index, item.flag)}
+                      className={`inline-flex h-7 w-7 items-center justify-center rounded text-foreground hover:bg-muted ${item.pressed ? "bg-muted" : ""}`}
+                    >
+                      <Icon className="h-3.5 w-3.5" aria-hidden="true" />
+                    </button>
+                  );
+                })}
+              </div>
+            </ScreenMenu>
+          ) : null}
+          <LineEditor
+            html={html}
+            label={index === 0 ? "Note" : undefined}
+            placeholder={!filtering && shown === "" ? "Type / for headings, lists, etc." : ""}
+            className={`${line.kind === "heading" ? HEADING_LOOK[lineHeading(line)] : "min-h-6 text-sm leading-6"} ${line.kind === "quote" ? "pl-2" : ""} ${
+              line.kind === "list" && line.done
+                ? "text-muted-foreground line-through"
+                : lineColor && namedColor(lineColor)
+                  ? COLOR_TEXT[lineColor]
+                  : "text-foreground"
+            }`}
+            style={lineColor && !namedColor(lineColor) ? { color: lineColor } : undefined}
+            inputRef={(node) => {
               inputs.current[index] = node;
             }}
-            rows={1}
-            aria-label={index === 0 ? "Note" : undefined}
-            value={filtering ? `/${slashQuery}` : line.body}
-            placeholder={bare && index === 0 && !filtering ? "Type / for headings, lists, files, and links." : ""}
-            onPaste={(event) => {
-              if (!onPasteLink || line.kind !== "text" || line.body !== "" || filtering) return;
-              const url = normalizeLink(event.clipboardData.getData("text"));
-              if (!url) return;
-              event.preventDefault();
-              onPasteLink(url, index);
-            }}
-            onChange={(event) => {
-              const typed = event.target.value.replace(/\r/g, "");
+            onPlain={(typed) => {
               if (filtering) {
                 if (!typed.startsWith("/")) {
                   closeMenu();
@@ -668,35 +2412,109 @@ export function IdeaNote({
                   write(next);
                   return;
                 }
-                setSlashQuery(typed.slice(1));
+                const query = typed.slice(1);
+                const nextNeedle = query.trim().toLowerCase();
+                const matched =
+                  nextNeedle.length === 0 ||
+                  MENU.some((item) => {
+                    if (item.id === "columns" && insideColumns(lines, index)) return false;
+                    return item.label.toLowerCase().includes(nextNeedle);
+                  });
+                if (!matched) {
+                  closeMenu();
+                  const next = lines.slice();
+                  next[index] = { ...line, body: typed };
+                  write(next);
+                  return;
+                }
+                setSlashQuery(query);
                 setActive(0);
                 return;
               }
-              if (line.body === "" && typed === "/") {
+              if (plainText(line.body) === "" && typed === "/") {
+                setTurnAt(null);
                 setMenuAt(index);
                 setSlashQuery("");
                 setActive(0);
+                setFormatAt(null);
                 return;
               }
+              const pending = ink.current?.index === index ? ink.current : null;
+              const before = plainText(line.body);
+              const tone = blockTone.current?.index === index ? blockTone.current : null;
               if (!typed.includes("\n")) {
                 const next = lines.slice();
-                next[index] = { ...line, body: typed };
+                let body = paintInserted(editPlain(line.body, typed, pending), before, typed, tone);
+                if (plainText(body) === "" && before.length > 0 && !tone) {
+                  const look = selectionStyle(line.body, 0, before.length);
+                  if (look.color || look.highlight) blockTone.current = { index, color: look.color, highlight: look.highlight };
+                }
+                next[index] = { ...line, body };
+                const change = plainChange(before, typed);
+                if (pending && change.removed === 0 && change.from === pending.at && change.inserted.length > 0) {
+                  const at = pending.at + change.inserted.length;
+                  ink.current = { index, at, style: pending.style };
+                  setFormatAt({ index, start: at, end: at });
+                } else ink.current = null;
                 write(next);
                 return;
               }
+              ink.current = null;
               const parts = typed.split("\n");
+              let rest = editPlain(line.body, parts.join(""), pending);
+              const bodies = parts.map((part) => {
+                const cut = splitPlain(rest, part.length);
+                rest = cut.right;
+                return cut.left;
+              });
               const next = lines.slice();
-              next[index] = { ...line, body: parts[0] };
+              next[index] = { ...line, body: bodies[0] ?? "" };
               const carried: LineKind =
                 line.kind === "list" || line.kind === "bullet" || line.kind === "number" || line.kind === "quote"
                   ? line.kind
                   : "text";
-              const extra: NoteLine[] = parts.slice(1).map((body) => ({ kind: carried, body, done: false }));
+              const extra: NoteLine[] = bodies.slice(1).map((body) => ({ kind: carried, body, done: false }));
               next.splice(index + 1, 0, ...extra);
               write(next);
             }}
-            onFocus={() => onLine?.(index)}
+            onFocus={() => {
+              setFocusAt(index);
+              onLine?.(index);
+              if (blockTone.current && blockTone.current.index !== index) blockTone.current = null;
+            }}
+            onBlur={() => {
+              setFocusAt((current) => (current === index ? null : current));
+              setFormatAt((current) => (current?.index === index ? null : current));
+              if (ink.current?.index === index) putInk(null);
+            }}
+            onSelect={(node) => {
+              if (filtering) return;
+              const range = readRange(node);
+              if (!range || range.start === range.end) {
+                if (ink.current?.index === index && range && range.start !== ink.current.at) putInk(null);
+                setFormatAt((current) => (current?.index === index ? null : current));
+                return;
+              }
+              if (ink.current?.index === index) putInk(null);
+              setFormatAt({ index, start: range.start, end: range.end });
+            }}
+            onLink={(event, from, to, url) => showLink(event, index, url, from, to)}
             onKeyDown={(event) => {
+              if (selectAllKey(event) && coversBlock(event.currentTarget)) {
+                event.preventDefault();
+                selectAll();
+                return;
+              }
+              if (!filtering && (event.metaKey || event.ctrlKey) && !event.altKey) {
+                const key = event.key.toLowerCase();
+                const flag: StyleFlag | null =
+                  key === "b" ? "bold" : key === "i" ? "italic" : key === "u" ? "underline" : event.shiftKey && (key === "s" || key === "x") ? "strike" : null;
+                if (flag) {
+                  event.preventDefault();
+                  applyFlag(index, flag);
+                  return;
+                }
+              }
               if (filtering) {
                 if ((event.key === "ArrowDown" || event.key === "ArrowUp") && choices.length > 0) {
                   event.preventDefault();
@@ -725,22 +2543,18 @@ export function IdeaNote({
                   return;
                 }
               }
-              const cursor = event.currentTarget.selectionStart ?? 0;
-              const cursorEnd = event.currentTarget.selectionEnd ?? cursor;
+              const range = readRange(event.currentTarget) ?? { start: 0, end: 0 };
+              const cursor = range.start;
+              const cursorEnd = range.end;
               const collapsed = cursor === cursorEnd;
               if (event.key === "ArrowUp" && !event.shiftKey && collapsed && cursor === 0) {
                 const previous = nearestWriting(lines, index, -1);
                 if (previous === null) return;
                 event.preventDefault();
-                focusLine(previous, lines[previous]?.body.length ?? 0);
+                focusLine(previous, plainText(lines[previous]?.body ?? "").length);
                 return;
               }
-              if (
-                event.key === "ArrowDown" &&
-                !event.shiftKey &&
-                collapsed &&
-                cursor === (filtering ? `/${slashQuery}` : line.body).length
-              ) {
+              if (event.key === "ArrowDown" && !event.shiftKey && collapsed && cursor === shown.length) {
                 const following = nearestWriting(lines, index, 1);
                 if (following === null) return;
                 event.preventDefault();
@@ -751,25 +2565,24 @@ export function IdeaNote({
                 event.preventDefault();
                 const block =
                   line.kind === "list" || line.kind === "bullet" || line.kind === "number" || line.kind === "quote";
-                if (block && line.body === "") {
+                if (block && plainText(line.body) === "") {
                   const next = lines.slice();
                   next[index] = { kind: "text", body: "" };
                   write(next);
                   return;
                 }
-                const left = line.body.slice(0, cursor);
-                const right = line.body.slice(cursorEnd);
+                const cut = splitPlain(filtering ? shown : line.body, cursor, cursorEnd);
                 const next = lines.slice();
-                next[index] = { ...line, body: left };
+                next[index] = { ...line, body: cut.left };
                 const kind: LineKind = block ? line.kind : "text";
-                next.splice(index + 1, 0, { kind, body: right, done: false });
+                next.splice(index + 1, 0, { kind, body: cut.right, done: false });
                 write(next);
                 focusLine(index + 1, 0);
                 return;
               }
               if (event.key === "Backspace" && collapsed && cursor === 0) {
                 event.preventDefault();
-                if (line.body === "") {
+                if (plainText(line.body) === "") {
                   if (line.kind !== "text") {
                     const next = lines.slice();
                     next[index] = { kind: "text", body: "" };
@@ -791,25 +2604,17 @@ export function IdeaNote({
                 const prior = lines[previous];
                 if (!prior || !WRITING.has(prior.kind)) return;
                 const next = lines.slice();
-                next[previous] = { ...prior, body: prior.body + line.body };
+                next[previous] = { ...prior, body: joinPlain(prior.body, line.body) };
                 next.splice(index, 1);
                 write(next);
-                focusLine(previous, prior.body.length);
+                focusLine(previous, plainText(prior.body).length);
               }
             }}
-            className={`max-w-full min-w-0 flex-1 resize-none overflow-hidden whitespace-pre-wrap break-words bg-transparent outline-none placeholder:text-muted-foreground/50 ${
-              line.kind === "heading" ? "min-h-7 text-lg font-medium leading-7" : "min-h-6 text-sm leading-6"
-            } ${line.kind === "quote" ? "border-l-2 border-border pl-2" : ""} ${
-              line.kind === "list" && line.done ? "text-muted-foreground line-through" : "text-foreground"
-            }`}
           />
+          </div>
         ) : null}
-        {menuAt === index ? (
-          <div
-            role="menu"
-            aria-label="Note options"
-            className="absolute left-6 top-full z-20 mt-1 w-48 rounded-lg border border-border bg-card py-1 shadow-lg"
-          >
+        {menuAt === index && choices.length > 0 ? (
+          <ScreenMenu anchor={lineAnchors.current[index] ?? null} label="Note options" role="menu" slash shield={false} className="w-48 rounded-lg border border-border bg-card py-1 shadow-lg">
             {choices.map((item, itemIndex) => {
               const Icon = item.icon;
               return (
@@ -828,7 +2633,7 @@ export function IdeaNote({
                 </button>
               );
             })}
-          </div>
+          </ScreenMenu>
         ) : null}
       </div>
     );
@@ -836,7 +2641,10 @@ export function IdeaNote({
 
   return (
     <div
-      className="relative mt-3 flex min-h-0 w-full min-w-0 flex-1 flex-col gap-1 overflow-x-hidden overflow-y-auto"
+      ref={root}
+      className={`relative mt-8 flex min-h-0 w-full min-w-0 flex-1 flex-col gap-1 overflow-x-hidden overflow-y-auto ${
+        span ? "select-none" : ""
+      }`}
       onDragOver={(event) => {
         if (onDropFiles && hasFileDrag(event)) {
           event.preventDefault();
@@ -845,7 +2653,7 @@ export function IdeaNote({
           setOverLine(lineUnder(event, lines.length));
           return;
         }
-        if (!onDropResource || !hasResourceDrag(event)) return;
+        if (!hasResourceDrag(event)) return;
         event.preventDefault();
         event.dataTransfer.dropEffect = "copy";
         setOverLine(lineUnder(event, lines.length));
@@ -864,27 +2672,61 @@ export function IdeaNote({
           onDropFiles(Array.from(event.dataTransfer.files ?? []), at);
           return;
         }
-        if (!onDropResource || !hasResourceDrag(event)) return;
+        if (!hasResourceDrag(event)) return;
         event.preventDefault();
         event.stopPropagation();
         const resource = readResourceDrag(event);
         const at = lineUnder(event, lines.length);
         setOverLine(null);
-        if (resource) onDropResource(resource.kind, resource.id, at);
+        if (resource?.kind === "link") {
+          const url = links.find((item) => item.id === resource.id)?.url;
+          if (url) insertUrl(at, url);
+          return;
+        }
+        if (resource && onDropResource) onDropResource(resource.kind, resource.id, at);
       }}
     >
       {noteSegments(lines).map((segment) =>
         segment.type === "line" ? (
           renderLine(segment.index)
         ) : (
-          <div key={`cols-${segment.at}`} className="grid min-w-0 grid-cols-2 gap-3">
-            <div className="flex min-w-0 flex-col gap-1 border-r border-border pr-3">
-              {segment.left.map((index) => renderLine(index))}
-            </div>
-            <div className="flex min-w-0 flex-col gap-1">{segment.right.map((index) => renderLine(index))}</div>
-          </div>
+          <ColumnPair
+            key={`cols-${segment.at}`}
+            ratio={columnDrag?.at === segment.at ? columnDrag.ratio : columnRatio(lines[segment.at]?.body)}
+            onDrag={(ratio) => setColumnDrag({ at: segment.at, ratio })}
+            onResize={(ratio) => {
+              setColumnDrag(null);
+              resizeColumns(segment.at, ratio);
+            }}
+            left={segment.left.map((index) => renderLine(index))}
+            right={segment.right.map((index) => renderLine(index))}
+            onAddLeft={() => continueSide(segment.left, segment.split)}
+            onAddRight={() => continueSide(segment.right, segment.end)}
+            menuOpen={turnAt === segment.at}
+            onMenu={(open) => {
+              closeMenu();
+              setTurnAt(open ? segment.at : null);
+            }}
+            onMerge={() => mergeColumns(segment.at)}
+            onDelete={() => deleteColumns(segment.at)}
+            onSwap={() => swapSides(segment.at)}
+            onDropLeft={(from) => {
+              setOverLine(null);
+              moveBefore(from, segment.split);
+            }}
+            onDropRight={(from) => {
+              setOverLine(null);
+              moveBefore(from, segment.end);
+            }}
+          />
         )
       )}
+      <button
+        type="button"
+        aria-label="Add a line"
+        onClick={continueNote}
+        className="min-h-24 w-full flex-1 cursor-text border-0 bg-transparent p-0"
+      />
       {full ? (
         <p className="text-sm text-destructive" role="status">
           The note is full
@@ -893,6 +2735,26 @@ export function IdeaNote({
       {!full && value.length >= NOTE_MAX - 800 ? (
         <p className="text-xs text-muted-foreground">{NOTE_MAX - value.length} left</p>
       ) : null}
+      {openLink
+        ? createPortal(
+            <div
+              data-link-menu=""
+              role="menu"
+              aria-label="Link"
+              style={{ top: openLink.top, left: openLink.left }}
+              className="fixed z-[70] w-60 rounded-xl border border-border bg-card p-3 shadow-xl"
+            >
+              <p className="break-all text-xs leading-5 text-foreground">{openLink.url}</p>
+              <div className="mt-2 border-t border-border pt-1">
+                <LinkMenuButton label="Open" icon={ExternalLink} onClick={launchOpenLink} />
+                <LinkMenuButton label={copiedLink ? "Copied" : "Copy"} icon={copiedLink ? Check : Copy} onClick={() => void copyOpenLink()} />
+                <LinkMenuButton label="Edit" icon={Type} onClick={editOpenLink} />
+                <LinkMenuButton label="Remove" icon={X} onClick={removeOpenLink} />
+              </div>
+            </div>,
+            document.body
+          )
+        : null}
     </div>
   );
 }
@@ -921,9 +2783,11 @@ export function TagPicker({
     setOpen(false);
   }
 
+  const anchor = useRef<HTMLButtonElement>(null);
   return (
     <div className="relative">
       <button
+        ref={anchor}
         type="button"
         aria-expanded={open}
         onClick={() => setOpen((current) => !current)}
@@ -933,7 +2797,7 @@ export function TagPicker({
         Tags
       </button>
       {open ? (
-        <div className="absolute right-0 z-20 mt-1 w-64 rounded-lg border border-border bg-card p-2 shadow-lg">
+        <ScreenMenu anchor={anchor.current} side="end" shield={false} className="w-64 rounded-lg border border-border bg-card p-2 shadow-lg">
           <input
             aria-label={searchLabel}
             value={query}
@@ -982,8 +2846,404 @@ export function TagPicker({
               Create {query.trim()}
             </button>
           ) : null}
+        </ScreenMenu>
+      ) : null}
+    </div>
+  );
+}
+
+function noteFile(found: ShelfFile | undefined, line: NoteLine): ShelfFile {
+  const name = found?.name || line.name;
+  if (!found) return { id: line.body, preview: null, name, embed: line.embed, width: line.width };
+  return { ...found, name, embed: line.embed, width: line.width };
+}
+
+function ColumnPair({
+  ratio,
+  onDrag,
+  onResize,
+  left,
+  right,
+  onAddLeft,
+  onAddRight,
+  menuOpen,
+  onMenu,
+  onMerge,
+  onDelete,
+  onSwap,
+  onDropLeft,
+  onDropRight,
+}: {
+  ratio: number;
+  onDrag: (ratio: number) => void;
+  onResize: (ratio: number) => void;
+  left: JSX.Element[];
+  right: JSX.Element[];
+  onAddLeft: () => void;
+  onAddRight: () => void;
+  menuOpen: boolean;
+  onMenu: (open: boolean) => void;
+  onMerge: () => void;
+  onDelete: () => void;
+  onSwap: () => void;
+  onDropLeft: (from: number) => void;
+  onDropRight: (from: number) => void;
+}): JSX.Element {
+  const frame = useRef<HTMLDivElement>(null);
+  const menuAnchor = useRef<HTMLDivElement>(null);
+  function press(event: PressEvent<HTMLDivElement>): void {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    const bounds = frame.current?.getBoundingClientRect();
+    if (!bounds || bounds.width <= 0) {
+      onMenu(!menuOpen);
+      return;
+    }
+    const width = bounds.width;
+    const edge = bounds.left;
+    const startX = event.clientX;
+    let moved = false;
+    const share = (clientX: number) => columnRatio(String(Math.round(((clientX - edge) / width) * 100)));
+    const move = (ev: PointerEvent) => {
+      if (!moved && Math.abs(ev.clientX - startX) < 4) return;
+      moved = true;
+      onDrag(share(ev.clientX));
+    };
+    const stop = (ev: PointerEvent) => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", stop);
+      if (moved) onResize(share(ev.clientX));
+      else onMenu(!menuOpen);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", stop);
+  }
+  function nudge(event: ReactKeyboardEvent<HTMLDivElement>): void {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      onMenu(!menuOpen);
+      return;
+    }
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    event.preventDefault();
+    onResize(ratio + (event.key === "ArrowRight" ? 5 : -5));
+  }
+  function takeLine(event: DragEvent<HTMLButtonElement>, drop: (from: number) => void, landing: boolean): void {
+    if (!hasLineDrag(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (landing) drop(Number(event.dataTransfer.getData(LINE_DRAG)));
+  }
+  return (
+    <div ref={frame} className="flex min-w-0 items-stretch">
+      <div style={{ flex: `${ratio} 1 0%` }} className="flex min-w-0 flex-col gap-1">
+        {left}
+        <button
+          type="button"
+          aria-label="Add a line to the left column"
+          onClick={onAddLeft}
+          onDragOver={(event) => takeLine(event, onDropLeft, false)}
+          onDrop={(event) => takeLine(event, onDropLeft, true)}
+          className="min-h-6 w-full flex-1 cursor-text border-0 bg-transparent p-0"
+        />
+      </div>
+      <div ref={menuAnchor} className="relative shrink-0" data-turn-menu="">
+        <div
+          role="separator"
+          tabIndex={0}
+          aria-orientation="vertical"
+          aria-valuemin={20}
+          aria-valuemax={80}
+          aria-valuenow={ratio}
+          aria-label="Columns"
+          title="Drag to resize. Click for options."
+          onPointerDown={press}
+          onKeyDown={nudge}
+          className="group/col relative mx-1 h-full w-3 cursor-col-resize touch-none outline-none focus-visible:ring-2 focus-visible:ring-primary"
+        >
+          <span
+            className={`absolute inset-y-0 left-1/2 -translate-x-1/2 ${
+              menuOpen ? "w-0.5 bg-primary" : "w-px bg-border group-hover/col:w-0.5 group-hover/col:bg-foreground"
+            }`}
+          />
+        </div>
+        {menuOpen ? (
+          <ScreenMenu anchor={menuAnchor.current} label="Columns" role="menu" side="start" className="w-44 rounded-lg border border-border bg-card py-1 shadow-lg">
+            <button
+              type="button"
+              role="menuitem"
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={onSwap}
+              className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-foreground hover:bg-muted"
+            >
+              <Columns2 className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
+              Swap sides
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={onMerge}
+              className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-foreground hover:bg-muted"
+            >
+              <Rows2 className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
+              Merge into one
+            </button>
+            <div className="my-1 border-t border-border" />
+            <button
+              type="button"
+              role="menuitem"
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={onDelete}
+              className="flex w-full items-center px-3 py-1.5 text-left text-sm text-destructive hover:bg-muted"
+            >
+              Delete columns
+            </button>
+          </ScreenMenu>
+        ) : null}
+      </div>
+      <div style={{ flex: `${100 - ratio} 1 0%` }} className="flex min-w-0 flex-col gap-1">
+        {right}
+        <button
+          type="button"
+          aria-label="Add a line to the right column"
+          onClick={onAddRight}
+          onDragOver={(event) => takeLine(event, onDropRight, false)}
+          onDrop={(event) => takeLine(event, onDropRight, true)}
+          className="min-h-6 w-full flex-1 cursor-text border-0 bg-transparent p-0"
+        />
+      </div>
+    </div>
+  );
+}
+
+function fileLabel(item: ShelfFile): string {
+  return item.name?.trim() || "File";
+}
+
+function UploadRing({
+  progress = 0,
+  labelled = true,
+  large = false,
+}: {
+  progress?: number;
+  labelled?: boolean;
+  large?: boolean;
+}): JSX.Element {
+  const amount = Math.max(0, Math.min(100, Math.round(progress)));
+  const size = large ? 36 : 16;
+  const stroke = large ? 3 : 2;
+  const radius = large ? 14 : 6;
+  const length = 2 * Math.PI * radius;
+  const box = large ? "h-10 w-10" : "h-4 w-4 shrink-0";
+  return (
+    <span
+      role={labelled ? "progressbar" : undefined}
+      aria-valuemin={labelled ? 0 : undefined}
+      aria-valuemax={labelled ? 100 : undefined}
+      aria-valuenow={labelled ? amount : undefined}
+      aria-label={labelled ? `Uploading ${amount} percent` : undefined}
+      aria-hidden={labelled ? undefined : true}
+      className={
+        large
+          ? "relative inline-flex h-10 w-10 items-center justify-center"
+          : "inline-flex shrink-0 items-center gap-1"
+      }
+    >
+      <svg viewBox={`0 0 ${size} ${size}`} className={`${box} -rotate-90 text-primary`} aria-hidden="true">
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          fill="none"
+          stroke="currentColor"
+          strokeOpacity="0.25"
+          strokeWidth={stroke}
+        />
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={stroke}
+          strokeDasharray={length}
+          strokeDashoffset={length * (1 - amount / 100)}
+          strokeLinecap={amount > 0 ? "round" : "butt"}
+        />
+      </svg>
+      {large ? (
+        <span aria-hidden="true" className="absolute text-[11px] font-medium tabular-nums text-foreground">
+          {amount}%
+        </span>
+      ) : labelled ? (
+        <span aria-hidden="true" className="text-xs tabular-nums text-muted-foreground">
+          {amount}%
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
+function hasPicture(item: ShelfFile): boolean {
+  return Boolean(item.preview) && !item.audio && !item.page && !item.face && !item.failed;
+}
+
+function NoteFile({
+  item,
+  onRemove,
+  onResize,
+}: {
+  item: ShelfFile;
+  onRemove: () => void;
+  onResize: (width: number) => void;
+}): JSX.Element {
+  const [viewing, setViewing] = useState(false);
+  const [sizing, setSizing] = useState<number | null>(null);
+  const block = useRef<HTMLDivElement>(null);
+  const frame = useRef<HTMLDivElement>(null);
+  const label = fileLabel(item);
+  const picture = hasPicture(item);
+  const embedded = picture && !item.pending && item.embed !== false;
+  const width = sizing ?? item.width ?? null;
+  const Icon = item.face === "sheet" ? Table2 : item.face === "slides" ? Presentation : item.audio ? AudioLines : item.video ? Film : item.page ? FileText : ImageIcon;
+  function open(): void {
+    if (item.pending || item.failed || !item.preview) return;
+    setViewing(true);
+  }
+  function startResize(event: PressEvent<HTMLElement>, side: -1 | 1): void {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const whole = block.current?.getBoundingClientRect();
+    const shown = frame.current?.getBoundingClientRect();
+    if (!whole || whole.width <= 0 || !shown) return;
+    const startX = event.clientX;
+    const startWidth = (shown.width / whole.width) * 100;
+    const at = (clientX: number) => pictureWidth(startWidth + (((clientX - startX) * side * 2) / whole.width) * 100);
+    const move = (ev: PointerEvent) => setSizing(at(ev.clientX));
+    const stop = (ev: PointerEvent) => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", stop);
+      window.removeEventListener("pointercancel", stop);
+      setSizing(null);
+      onResize(at(ev.clientX));
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", stop);
+    window.addEventListener("pointercancel", stop);
+  }
+  function nudge(event: ReactKeyboardEvent<HTMLElement>): void {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    event.preventDefault();
+    event.stopPropagation();
+    onResize((item.width ?? 100) + (event.key === "ArrowRight" ? 5 : -5));
+  }
+  const handle =
+    "absolute top-1/2 h-10 w-1.5 -translate-y-1/2 cursor-ew-resize touch-none rounded-full bg-background/90 shadow-sm ring-1 ring-border opacity-0 transition-opacity focus-visible:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100";
+  return (
+    <div className="min-w-0 flex-1">
+      {embedded ? null : (
+        <div className="flex min-w-0 items-center gap-1">
+          <button
+            type="button"
+            onClick={open}
+            title={label}
+            className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-1 py-1 text-left hover:bg-muted"
+          >
+            {item.pending ? (
+              <UploadRing labelled={!picture} progress={item.progress ?? 0} />
+            ) : (
+              <Icon className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+            )}
+            <span className="truncate text-sm text-foreground">{label}</span>
+            {item.failed ? <span className="shrink-0 text-xs text-destructive">Could not add</span> : null}
+          </button>
+          <button type="button" aria-label="Remove from the note" onClick={onRemove} className="text-muted-foreground hover:text-foreground">
+            <X className="h-3.5 w-3.5" aria-hidden="true" />
+          </button>
+        </div>
+      )}
+      {picture && (embedded || item.pending) ? (
+        <div ref={block} className={`relative ${embedded ? "" : "mt-1"}`}>
+          <div
+            ref={frame}
+            data-picture-frame=""
+            style={width !== null ? { width: `${width}%` } : undefined}
+            className={`relative mx-auto ${width !== null ? "" : "w-fit max-w-full"}`}
+          >
+            {item.video && embedded ? (
+              <div className="relative block w-full overflow-hidden rounded-md bg-muted">
+                {/* eslint-disable-next-line jsx-a11y/media-has-caption -- the clinician's own clip, no caption track exists */}
+                <video
+                  src={item.preview ?? undefined}
+                  controls
+                  playsInline
+                  preload="metadata"
+                  aria-label={label}
+                  className={width !== null ? "h-auto w-full object-contain" : "h-auto max-h-80 w-auto max-w-full object-contain"}
+                />
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={open}
+                aria-label={embedded ? label : undefined}
+                aria-hidden={embedded ? undefined : true}
+                className="relative block w-full overflow-hidden rounded-md bg-muted"
+              >
+                {item.video ? (
+                  <video
+                    src={item.preview ?? undefined}
+                    muted
+                    playsInline
+                    preload="metadata"
+                    className={width !== null ? "h-auto w-full object-contain" : "h-auto max-h-80 w-auto max-w-full object-contain"}
+                  />
+                ) : (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={item.preview ?? undefined}
+                    alt=""
+                    className={width !== null ? "h-auto w-full object-contain" : "h-auto max-h-80 w-auto max-w-full object-contain"}
+                  />
+                )}
+              </button>
+            )}
+            {item.pending ? (
+              <span className="absolute inset-0 flex items-center justify-center rounded-md bg-background/40">
+                <UploadRing large progress={item.progress ?? 0} />
+              </span>
+            ) : null}
+            {embedded ? (
+              <>
+                <span aria-hidden="true" onPointerDown={(event) => startResize(event, -1)} className={`${handle} left-1`} />
+                <span
+                  role="slider"
+                  tabIndex={0}
+                  aria-label={item.video ? "Resize video" : "Resize picture"}
+                  aria-valuemin={20}
+                  aria-valuemax={100}
+                  aria-valuenow={item.width ?? 100}
+                  aria-valuetext={item.width !== undefined ? `${item.width} percent` : "Natural size"}
+                  onPointerDown={(event) => startResize(event, 1)}
+                  onKeyDown={nudge}
+                  className={`${handle} right-1 outline-none focus-visible:ring-2 focus-visible:ring-primary`}
+                />
+                <button
+                  type="button"
+                  aria-label="Remove from the note"
+                  onClick={onRemove}
+                  className="absolute right-1.5 top-1.5 inline-flex h-6 w-6 items-center justify-center rounded-full bg-background/90 text-muted-foreground opacity-0 shadow-sm transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100"
+                >
+                  <X className="h-3.5 w-3.5" aria-hidden="true" />
+                </button>
+              </>
+            ) : null}
+          </div>
         </div>
       ) : null}
+      {viewing && item.preview ? <FileView item={item} onClose={() => setViewing(false)} /> : null}
     </div>
   );
 }
@@ -1019,7 +3279,8 @@ function ShelfTile({
             ? "View document"
             : "View photo";
   function show(): void {
-    if (item.preview) setViewing(true);
+    if (item.pending || item.failed || !item.preview) return;
+    setViewing(true);
   }
   function startDrag(event: DragEvent<HTMLElement>): void {
     if (!onPlace) return;
@@ -1080,6 +3341,11 @@ function ShelfTile({
       ) : null}
       {!item.preview && !face && !item.audio ? (
         <span className={`block rounded-md bg-muted ${box}`} />
+      ) : null}
+      {item.pending ? (
+        <span className="absolute inset-0 z-10 flex items-center justify-center rounded-md bg-background/45">
+          <UploadRing large progress={item.progress ?? 0} />
+        </span>
       ) : null}
       {onPlace ? (
         <button
@@ -1353,21 +3619,6 @@ function resourceGroup(item: ShelfFile): Exclude<ResourceGroup, "link"> {
   return "photo";
 }
 
-function NoteLink({ url, onRemove }: { url: string; onRemove: () => void }): JSX.Element {
-  const mark = linkMark(url);
-  const label = mark.detail ? `${mark.host}${mark.detail}` : mark.host;
-  return (
-    <span className="inline-flex items-center gap-1 rounded-md bg-muted px-2 py-1 text-sm text-foreground">
-      <a href={url} target="_blank" rel="noreferrer" title={url} className="max-w-[16rem] truncate hover:underline">
-        {label}
-      </a>
-      <button type="button" aria-label="Remove from the note" onClick={onRemove} className="text-muted-foreground">
-        <X className="h-3 w-3" aria-hidden="true" />
-      </button>
-    </span>
-  );
-}
-
 function emptyCopy(group: ResourceGroup): string {
   if (group === "photo") return "No photos yet.";
   if (group === "video") return "No videos yet.";
@@ -1396,6 +3647,7 @@ function LinkMenuButton({
   return (
     <button
       type="button"
+      role="menuitem"
       onClick={onClick}
       className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-foreground hover:bg-muted"
     >
@@ -1407,11 +3659,9 @@ function LinkMenuButton({
 
 function LinkRow({
   item,
-  onPlace,
   onRemove,
 }: {
   item: ResourceLink;
-  onPlace: () => void;
   onRemove: () => void;
 }): JSX.Element {
   const [copied, setCopied] = useState(false);
@@ -1488,14 +3738,6 @@ function LinkRow({
               <LinkMenuButton label="Open" icon={ExternalLink} onClick={openLink} />
               <LinkMenuButton label={copied ? "Copied" : "Copy"} icon={copied ? Check : Copy} onClick={() => void copy()} />
               <LinkMenuButton
-                label="Place in the note"
-                icon={ArrowRight}
-                onClick={() => {
-                  onPlace();
-                  setOpen(false);
-                }}
-              />
-              <LinkMenuButton
                 label="Remove"
                 icon={X}
                 onClick={() => {
@@ -1509,16 +3751,7 @@ function LinkRow({
         )
       : null;
   return (
-    <div
-      className={`flex cursor-grab items-center gap-0.5 rounded-md px-1 py-1 active:cursor-grabbing hover:bg-muted/60 ${
-        open ? "bg-muted/60" : ""
-      }`}
-      draggable
-      onDragStart={(event) => {
-        event.dataTransfer.setData(RESOURCE_DRAG, JSON.stringify({ kind: "link", id: item.id }));
-        event.dataTransfer.effectAllowed = "copy";
-      }}
-    >
+    <div className={`flex items-center gap-0.5 rounded-md px-1 py-1 hover:bg-muted/60 ${open ? "bg-muted/60" : ""}`}>
       <button
         ref={nameRef}
         type="button"
@@ -1527,18 +3760,15 @@ function LinkRow({
         onClick={() => setOpen((current) => !current)}
         className="min-w-0 flex-1 rounded text-left"
       >
-        <span className="block truncate text-xs text-foreground">{mark.host}</span>
+        <span className="block truncate text-xs text-primary">{mark.host}</span>
         {mark.detail ? <span className="block truncate text-[10px] leading-4 text-muted-foreground">{mark.detail}</span> : null}
       </button>
       <button type="button" aria-label={copied ? "Copied" : "Copy link"} onClick={() => void copy()} className={action}>
         {copied ? <Check className="h-3.5 w-3.5" aria-hidden="true" /> : <Copy className="h-3.5 w-3.5" aria-hidden="true" />}
       </button>
-      <a href={item.url} target="_blank" rel="noreferrer" aria-label="Open link" draggable={false} className={action}>
+      <a href={item.url} target="_blank" rel="noreferrer" aria-label="Open link" className={action}>
         <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
       </a>
-      <button type="button" aria-label="Place" onClick={onPlace} className={action}>
-        <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
-      </button>
       <button type="button" aria-label="Remove link" onClick={onRemove} className={action}>
         <X className="h-3.5 w-3.5" aria-hidden="true" />
       </button>
@@ -1550,19 +3780,16 @@ function LinkRow({
 export function ScrapShelf({
   items,
   links = [],
-  asking = false,
   dropping = false,
   dropProps,
   onAdd,
   onRemove,
   onPut,
-  onAddLink,
   onRemoveLink,
-  onPutLink,
+  folded = false,
 }: {
   items: readonly ShelfFile[];
   links?: readonly ResourceLink[];
-  asking?: boolean;
   dropping?: boolean;
   dropProps?: {
     onDragEnter: (event: DragEvent<HTMLElement>) => void;
@@ -1573,17 +3800,13 @@ export function ScrapShelf({
   onAdd: () => void;
   onRemove: (id: string) => void;
   onPut: (id: string) => void;
-  onAddLink?: (url: string) => void;
   onRemoveLink?: (id: string) => void;
-  onPutLink?: (id: string) => void;
+  folded?: boolean;
 }): JSX.Element {
   const [group, setGroup] = useState<ResourceGroup>("all");
-  const [draft, setDraft] = useState("");
-  const [linkError, setLinkError] = useState<string | null>(null);
   const [open, setOpen] = useState(() => items.length > 0 || links.length > 0);
   const known = useRef<Set<string> | null>(null);
-  const linkRef = useRef<HTMLInputElement>(null);
-  const expanded = open;
+  const expanded = open && !folded;
   useEffect(() => {
     const next = new Set(items.map((item) => item.id));
     if (known.current) {
@@ -1595,33 +3818,15 @@ export function ScrapShelf({
     }
     known.current = next;
   }, [items]);
-  useEffect(() => {
-    if (!asking) return;
-    setGroup("link");
-    setOpen(true);
-    linkRef.current?.focus();
-  }, [asking]);
   const shown = group === "all" ? items : items.filter((item) => resourceGroup(item) === group);
   const pileEmpty = group === "all" ? items.length === 0 && links.length === 0 : group === "link" ? links.length === 0 : shown.length === 0;
-  function addDraft(): void {
-    const next = draft.trim();
-    if (!next || !onAddLink) return;
-    const urls = normalizeLinks(next);
-    if (urls.length === 0) {
-      setLinkError("Use a link");
-      return;
-    }
-    for (const url of urls) onAddLink(url);
-    setDraft("");
-    setLinkError(null);
-  }
   return (
     <aside
       aria-label="Resources"
       {...dropProps}
-      className={`flex h-full shrink-0 flex-col overflow-hidden border-r transition-[width,background-color,box-shadow] duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] ${
-        dropping ? "bg-primary/10 ring-2 ring-inset ring-primary" : "border-border bg-muted/30"
-      } ${expanded ? "w-64" : "w-16"}`}
+      className={`flex h-full shrink-0 flex-col overflow-hidden border-r transition-[width,background-color,box-shadow] ease-[cubic-bezier(0.22,1,0.36,1)] ${
+        dropping ? "bg-card ring-2 ring-inset ring-primary" : "border-border bg-card"
+      } ${expanded ? "w-64 duration-500" : folded ? "w-16 duration-200" : "w-16 duration-500"}`}
     >
       {expanded ? (
         <div className="border-b border-border px-3 pb-3 pt-3">
@@ -1648,14 +3853,21 @@ export function ScrapShelf({
           >
             <Paperclip className="h-3.5 w-3.5" aria-hidden="true" />
           </button>
+          <p className="mt-2 px-1 text-center text-[10px] leading-3 text-muted-foreground">
+            Add a file,
+            <br />
+            or drag
+            <br />
+            & drop
+          </p>
           {items.length + links.length === 0 ? null : (
             <p className="mt-2 px-1 text-center text-[10px] leading-3 text-muted-foreground">{closedCount(items.length, links.length)}</p>
           )}
         </>
       )}
       <div
-        className={`flex min-h-0 flex-1 flex-col transition-opacity duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] ${
-          expanded ? "opacity-100" : "pointer-events-none opacity-0"
+        className={`flex min-h-0 flex-1 flex-col transition-opacity ease-[cubic-bezier(0.22,1,0.36,1)] ${
+          expanded ? "opacity-100 duration-500" : "pointer-events-none opacity-0 duration-200"
         }`}
       >
         <div className="mt-3 flex justify-between px-2">
@@ -1685,45 +3897,10 @@ export function ScrapShelf({
           })}
         </div>
         <div className="mt-2 flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto overscroll-contain px-3 pb-4">
-          {group === "link" ? (
-            <div>
-              <div className="flex h-8 items-center rounded-md border border-border bg-card pr-1">
-                <input
-                  ref={linkRef}
-                  aria-label="Paste link"
-                  value={draft}
-                  onChange={(event) => {
-                    setDraft(event.target.value);
-                    setLinkError(null);
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key !== "Enter") return;
-                    event.preventDefault();
-                    addDraft();
-                  }}
-                  placeholder="Paste link"
-                  className="h-full min-w-0 flex-1 bg-transparent px-2 text-xs text-foreground outline-none placeholder:text-muted-foreground"
-                />
-                <button
-                  type="button"
-                  onClick={addDraft}
-                  className="h-6 shrink-0 rounded px-2 text-[11px] font-medium text-primary hover:bg-primary/10"
-                >
-                  Add
-                </button>
-              </div>
-              {linkError ? <p className="mt-1 px-1 text-[11px] text-destructive">{linkError}</p> : null}
-            </div>
-          ) : null}
           {(group === "link" || group === "all") && links.length > 0 ? (
             <div className="flex flex-col gap-0.5">
               {links.map((item) => (
-                <LinkRow
-                  key={item.id}
-                  item={item}
-                  onPlace={() => onPutLink?.(item.id)}
-                  onRemove={() => onRemoveLink?.(item.id)}
-                />
+                <LinkRow key={item.id} item={item} onRemove={() => onRemoveLink?.(item.id)} />
               ))}
             </div>
           ) : null}

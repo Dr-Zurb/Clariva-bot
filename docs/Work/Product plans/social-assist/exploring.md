@@ -7,7 +7,7 @@
 
 This is the ideation doc. It keeps the doctor’s problem, the founder’s own thinking, suggestions from the working session, and what existing social tools already do.
 
-The live product today is the one fixed Instagram reply and the doctor’s page. Meta is reviewing `instagram_business_basic` and `instagram_business_manage_messages` (submitted 8 Oct 2026). This exploration does not change that file.
+The live product today is the doctor’s page and the social board. Meta approved `instagram_business_basic` and refused `instagram_business_manage_messages` on 22 Oct 2026. Acquisition and what to build next: [`SOCIAL_AFTER_REVIEW.md`](../../../Reference/business/SOCIAL_AFTER_REVIEW.md). This exploration does not reopen that file.
 
 ---
 

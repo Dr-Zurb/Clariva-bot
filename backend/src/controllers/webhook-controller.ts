@@ -138,6 +138,22 @@ export const verifyInstagramWebhook = asyncHandler(
 );
 
 /**
+ * True when this webhook is a DM or comment and inbound replies are switched off.
+ * Read receipts and payment webhooks are not parked here.
+ */
+function inboundRepliesParked(payloadType: string, body: unknown): boolean {
+  if (env.META_INBOUND_ENABLED) return false;
+  if (
+    payloadType === 'message' ||
+    payloadType === 'message_edit' ||
+    payloadType.startsWith('comment:')
+  ) {
+    return true;
+  }
+  return isInstagramCommentPayload(body) || isFacebookPageCommentPayload(body);
+}
+
+/**
  * Handle Instagram webhook events
  * POST /webhooks/instagram
  *
@@ -148,6 +164,8 @@ export const verifyInstagramWebhook = asyncHandler(
  * 4. Mark as processing (prevent race conditions)
  * 5. Queue for async processing (don't block)
  * 6. Return 200 OK immediately (< 20 seconds)
+ *
+ * When META_INBOUND_ENABLED is off, DM and comment payloads return 200 here and are not queued.
  *
  * IMPORTANT:
  * - NEVER log req.body (contains PII/PHI)
@@ -339,6 +357,17 @@ export const handleInstagramWebhook = asyncHandler(
         );
         throw new UnauthorizedError('Invalid webhook signature');
       }
+    }
+
+    // DMs and comments are acknowledged and dropped unless inbound replies are on.
+    // Runs after signature checks, including the Instagram bypasses that fall through.
+    if (inboundRepliesParked(payloadType, req.body)) {
+      logger.info(
+        { correlationId, provider: webhookProvider, payloadType },
+        'Meta inbound replies are off; webhook acknowledged'
+      );
+      res.status(200).json(successResponse({ message: 'OK' }, req));
+      return;
     }
 
     // Early branch: Facebook Page feed comments (object=page, field=feed, item=comment).
@@ -559,7 +588,7 @@ export const handleInstagramWebhook = asyncHandler(
     }
 
     // Step 2: Extract event ID (platform-specific or fallback hash) — needed before dedup for short flow words
-    let eventId = isFacebookPage
+    const eventId = isFacebookPage
       ? (extractFacebookEventId(req.body) ?? generateFallbackEventId(req.body))
       : (extractInstagramEventId(req.body) ?? generateFallbackEventId(req.body));
 

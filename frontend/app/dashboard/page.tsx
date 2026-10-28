@@ -11,7 +11,6 @@ import { CockpitKpiStripSection } from "@/components/dashboard/cockpit/streaming
 import { CockpitNowNextSection } from "@/components/dashboard/cockpit/streaming/CockpitNowNextSection";
 import { CockpitOpdQueueSection } from "@/components/dashboard/cockpit/streaming/CockpitOpdQueueSection";
 import { CockpitTodaysScheduleSection } from "@/components/dashboard/cockpit/streaming/CockpitTodaysScheduleSection";
-import { SchedulingPausedBanner } from "@/components/dashboard/cockpit/SchedulingPausedBanner";
 import { OnboardingChecklistCard } from "@/components/dashboard/onboarding/OnboardingChecklistCard";
 import {
   CockpitNowNextSkeleton,
@@ -30,15 +29,13 @@ export const metadata = { title: "Today" };
  * sections while route-level loading.tsx (np-07) paints the outer shell.
  *
  * doctor-onboarding-v1 · onb-03: Finish-setup card above KPIs; auto-hides
- * when the go-live set is complete. A pause reminder sits above that when
- * automated Instagram scheduling is off.
+ * when the go-live set is complete.
  */
 export default async function DashboardPage() {
   const { token } = await requireDashboardAuth();
 
   return (
     <div className="space-y-6">
-      <SchedulingPausedBanner token={token} />
       <OnboardingChecklistCard token={token} />
 
       <Suspense fallback={<KpiCardsSkeleton count={2} className="sm:grid-cols-2" />}>

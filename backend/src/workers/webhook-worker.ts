@@ -185,6 +185,15 @@ export async function processWebhookJob(job: Job<WebhookJobData>): Promise<void>
     return;
   }
 
+  if (!env.META_INBOUND_ENABLED && (provider === 'instagram' || provider === 'facebook')) {
+    logger.info(
+      { eventId, provider, correlationId },
+      'Meta inbound replies are off; webhook marked processed'
+    );
+    await markWebhookProcessed(eventId, provider);
+    return;
+  }
+
   if (channelAdapter.surfaceOf(payload) === 'comment') {
     if (channelAdapter.channel === 'facebook') {
       await processFacebookCommentWebhook({ eventId, correlationId, provider, payload });

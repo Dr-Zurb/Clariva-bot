@@ -88,9 +88,19 @@ logger.info('Webhook received', {
 
 ---
 
+## Inbound DMs and comments are parked
+
+Unless `META_INBOUND_ENABLED` is true, Halo Aid answers Instagram and Facebook message and comment webhooks with 200 and does not store, queue, classify, or reply. Jobs already on the queue are marked processed and are not passed to the DM or comment handlers. Those handler files stay in the repo.
+
+Publishing, the first comment, comments off, and insights do not use this switch.
+
+To turn replies back on: set `META_INBOUND_ENABLED=true`, show the Integrations pause panel and the Today pause banner again, and have the doctor reconnect so Meta grants `instagram_business_manage_messages` and the `messages` webhook subscription.
+
+---
+
 ## RBH-11: Instagram message_edit and sender fallbacks
 
-**Purpose:** Explain why `message_edit` is treated specially at the HTTP layer, why the worker still has `tryResolveSenderFromMessageEdit` + **`decodeMidExperimental`**, and when **not** to delete that code. Detailed incident notes: [Instagram DM reply troubleshooting](../Work/Daily-plans/February%202026/Week%203/instagram-dm-reply-troubleshooting.md).
+**Purpose:** Explain why `message_edit` is treated specially at the HTTP layer, why the worker still has `tryResolveSenderFromMessageEdit` + **`decodeMidExperimental`**, and when **not** to delete that code. This path runs only when `META_INBOUND_ENABLED` is on. While it is off, message and comment webhooks are acknowledged and dropped, as described above. Detailed incident notes: [Instagram DM reply troubleshooting](../Work/Daily-plans/February%202026/Week%203/instagram-dm-reply-troubleshooting.md).
 
 ### Controller (ingest): queue only what we can process once
 

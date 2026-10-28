@@ -20,7 +20,7 @@ export type SocialScrap = {
   face?: SocialFileFace | null;
 };
 
-export type SocialCardCrop = "original" | "square" | "portrait";
+export type SocialCardCrop = "original" | "square" | "portrait" | "landscape";
 
 export type SocialCardWords = {
   note?: string;
@@ -35,12 +35,28 @@ export type SocialCardWords = {
   location?: string;
   collaborator?: string;
   crop?: SocialCardCrop;
+  /** How a story or reel photo sits in the 9:16 frame. Fill is the default. */
+  storyPlace?: "fill" | "fit";
   aiGenerated?: boolean;
   shareToFeed?: boolean;
+  /** Also send this post or reel as a story. */
+  shareToStory?: boolean;
+  /** Comments stay closed. Set after the photo is up. */
+  commentsOff?: boolean;
   music?: string;
   stickers?: string;
   productTag?: string;
+  /** The doctor posts this from the phone. The worker must not send it. */
+  byHand?: boolean;
+  /** A reminder for posting from the phone. It is not sent. */
+  handNote?: string;
 };
+
+export function postsByHand(words: SocialCardWords | null | undefined): boolean {
+  if (!words) return false;
+  if (words.byHand) return true;
+  return Boolean(words.music?.trim() || words.productTag?.trim());
+}
 
 export type SocialFrame = {
   id: string;
@@ -55,6 +71,7 @@ export type SocialCard = {
   topic: string | null;
   words: SocialCardWords;
   hasFile: boolean;
+  fileId?: string | null;
   fileKind: SocialFileKind | null;
   postable?: boolean;
   scraps?: SocialScrap[];
@@ -81,7 +98,9 @@ export type SocialCardPatch = {
   sourceUrl?: string | null;
   links?: { id: string; url: string }[];
   scheduledAt?: string | null;
+  postNow?: true;
   instagramUrl?: string;
+  manualPosted?: true;
   columnId?: string;
 };
 
@@ -225,15 +244,111 @@ export function socialFileIssue(file: File, postable = false): string | null {
   return null;
 }
 
+/** The file that goes on a post, reel, or story. A photo on a reel is held as a short video when it is sent. */
+export const CARD_FILE_ACCEPT = "image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp,video/mp4,video/quicktime,.mp4,.mov";
+/** References on a post, reel, or story. Documents stay off these cards. */
+export const MEDIA_FILE_ACCEPT = "image/*,video/*";
+
+export function cardFileAccept(_format: SocialCardFormat | ""): string {
+  return CARD_FILE_ACCEPT;
+}
+
+export function cardFileIssue(file: File, _format: SocialCardFormat | ""): string | null {
+  const kind = socialFileKind(file);
+  if (kind !== "photo" && kind !== "video") return "Use a photo or a video";
+  if (!canPost(file)) return "Use a JPEG, PNG, WebP, MP4, or MOV";
+  if (kind === "photo" && file.size > PHOTO_BYTES) return "Photo is over 8 MB";
+  if (kind === "video" && file.size > VIDEO_BYTES) return "Video is over 100 MB";
+  return null;
+}
+
+export function referenceFileIssue(file: File, format: SocialCardFormat | ""): string | null {
+  if (format !== "post" && format !== "reel" && format !== "story") return socialFileIssue(file);
+  const kind = socialFileKind(file);
+  if (kind !== "photo" && kind !== "video") return "Use a photo or a video";
+  return socialFileIssue(file);
+}
+
 function assertFile(file: File): void {
   const issue = socialFileIssue(file);
   if (issue) throw new Error(issue);
 }
 
+type StorageHandle = {
+  url: string;
+  headers: Record<string, string>;
+};
+
+function cleanStoragePath(path: string): string {
+  return path.replace(/^\/|\/$/g, "").replace(/\/+/g, "/");
+}
+
+async function uploadBytes(
+  path: string,
+  token: string,
+  file: File,
+  onProgress: (ratio: number) => void
+): Promise<void> {
+  const client = createClient();
+  const bucket = client.storage.from(BUCKET) as unknown as StorageHandle;
+  const key = (client as unknown as { supabaseKey?: string }).supabaseKey;
+  if (!bucket.url || !key) {
+    const { error } = await client.storage.from(BUCKET).uploadToSignedUrl(path, token, file);
+    if (error) throw new Error("Could not upload the file");
+    onProgress(1);
+    return;
+  }
+  const { data } = await client.auth.getSession();
+  const access = data.session?.access_token ?? key;
+  const target = new URL(
+    `${bucket.url.replace(/\/$/, "")}/object/upload/sign/${BUCKET}/${cleanStoragePath(path)}`
+  );
+  target.searchParams.set("token", token);
+  const body = new FormData();
+  body.append("cacheControl", "3600");
+  body.append("", file);
+  await new Promise<void>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    let settled = false;
+    function fail(): void {
+      if (settled) return;
+      settled = true;
+      reject(new Error("Could not upload the file"));
+    }
+    xhr.open("PUT", target.toString());
+    for (const [name, value] of Object.entries(bucket.headers ?? {})) {
+      if (typeof value === "string" && name.toLowerCase() !== "content-type") {
+        xhr.setRequestHeader(name, value);
+      }
+    }
+    xhr.setRequestHeader("apikey", key);
+    xhr.setRequestHeader("Authorization", `Bearer ${access}`);
+    xhr.setRequestHeader("x-upsert", "false");
+    xhr.upload.onprogress = (event) => {
+      if (!event.lengthComputable || event.total <= 0) return;
+      onProgress(Math.min(1, event.loaded / event.total));
+    };
+    xhr.onload = () => {
+      if (settled) return;
+      if (xhr.status >= 200 && xhr.status < 300) {
+        settled = true;
+        onProgress(1);
+        resolve();
+        return;
+      }
+      fail();
+    };
+    xhr.onerror = fail;
+    xhr.onabort = fail;
+    xhr.send(body);
+  });
+}
+
 async function uploadFile(
   token: string,
   file: File,
-  cardId?: string
+  cardId?: string,
+  onProgress?: (ratio: number) => void
 ): Promise<string> {
   assertFile(file);
   const minted = await socialRequest<UploadEnvelope>(
@@ -243,6 +358,10 @@ async function uploadFile(
       : "/api/v1/social/cards/uploads",
     { method: "POST", body: { contentType: contentTypeFor(file) } }
   );
+  if (onProgress) {
+    await uploadBytes(minted.path, minted.token, file, onProgress);
+    return minted.path;
+  }
   const { error } = await createClient()
     .storage.from(BUCKET)
     .uploadToSignedUrl(minted.path, minted.token, file);
@@ -474,9 +593,10 @@ export function binDaysLeft(deletedAt: string, now = Date.now()): number {
 export async function addSocialCardScrap(
   token: string,
   id: string,
-  file: File
+  file: File,
+  onProgress?: (ratio: number) => void
 ): Promise<SocialScrap> {
-  const path = await uploadFile(token, file, id);
+  const path = await uploadFile(token, file, id, onProgress);
   const data = await socialRequest<{ scrap: SocialScrap }>(token, `/api/v1/social/cards/${id}/scraps`, {
     method: "POST",
     body: { path },

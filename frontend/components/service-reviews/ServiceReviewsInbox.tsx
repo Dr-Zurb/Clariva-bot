@@ -83,10 +83,10 @@ import { cn } from "@/lib/utils";
 const UNDO_MS = 5000;
 
 const CONFIRM_OK_MESSAGE =
-  "Saved. We messaged the patient on Instagram with a link to pick a time and finish booking (opens your booking page).";
+  "Saved. The patient can pick a time on your booking page.";
 
 const OK_REASSIGN_MESSAGE =
-  "Saved. We messaged the patient on Instagram with a link to pick a time and finish booking.";
+  "Saved. The patient can pick a time on your booking page.";
 
 const TEXTAREA_CLASS =
   "flex min-h-[60px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50";
@@ -803,8 +803,7 @@ export function ServiceReviewsInbox({
                   Service match reviews
                 </h1>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  Confirm AI-suggested visit types from Instagram bookings; once
-                  confirmed, patients get a booking link in the same chat.
+                  Confirm visit types that need a check. Once confirmed, patients get a link to your booking page.
                 </p>
               </div>
               <dl className="flex flex-wrap gap-x-6 gap-y-1 text-sm">
@@ -928,7 +927,7 @@ export function ServiceReviewsInbox({
           </p>
           <p className="mt-1.5 max-w-md text-sm text-muted-foreground">
             {activeTab === "pending"
-              ? "When the bot is unsure about a visit type, requests appear here. Tune matcher hints in your catalog to reduce low-confidence matches."
+              ? "When a visit type needs a check, requests appear here. Tune matcher hints in your catalog to reduce low-confidence matches."
               : "Resolved requests stay here for your records. Switch tabs to see other outcomes."}
           </p>
           {activeTab === "pending" && (
@@ -1293,7 +1292,7 @@ export function ServiceReviewsInbox({
               dialog.review,
               "cancel",
               { note },
-              "Saved. No booking link was sent. The patient can keep chatting in Instagram if they need help."
+              "Saved. No booking link was sent."
             );
             setDialog(null);
           }}
@@ -1591,8 +1590,7 @@ function CancelDialog({
         <DialogHeader>
           <DialogTitle>Cancel review</DialogTitle>
           <DialogDescription>
-            The patient will not get a finalized visit type from this proposal. They can continue the
-            conversation in Instagram.
+            The patient will not get a finalized visit type from this proposal.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-2">

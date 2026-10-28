@@ -9,6 +9,7 @@ import {
   Stethoscope,
   Users,
   Video,
+  Wallet,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -70,19 +71,29 @@ const STEPS = [
 
 const FEATURES = [
   {
+    icon: Users,
+    title: "Front desk",
+    body: "Staff logins, walk-ins, check-in, and collecting the fee at the desk.",
+  },
+  {
     icon: CalendarDays,
     title: "Appointments & OPD",
     body: "Booked slots and walk-ins on one patient list.",
   },
   {
-    icon: Users,
-    title: "Patient records",
-    body: "A clean history for every patient, ready before they sit down.",
+    icon: Stethoscope,
+    title: "Patient chart",
+    body: "History, allergies, and vitals, ready before they sit down.",
   },
   {
     icon: ClipboardList,
-    title: "Notes & prescriptions",
-    body: "Chart the visit and write a prescription in the same flow.",
+    title: "Prescriptions",
+    body: "Templates, your letterhead, and the PDF emailed to the patient.",
+  },
+  {
+    icon: Wallet,
+    title: "Payments",
+    body: "Patients pay into your own account. Halo Aid never takes a cut.",
   },
   {
     icon: Video,
@@ -187,8 +198,7 @@ export default function ClinicsPage() {
                 One record for the practice.
               </h2>
               <p className="mt-4 text-lg text-[hsl(var(--halo-ink))]/70">
-                Instagram is there if patients message you. It is not
-                required.
+                The visit record stands on its own. Instagram is not required.
               </p>
             </div>
             <div className="mt-14 grid gap-4 sm:grid-cols-2">

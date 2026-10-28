@@ -202,6 +202,15 @@ const envSchema = z.object({
     .string()
     .optional()
     .transform((v) => v !== 'false' && v !== '0'),
+  /**
+   * Instagram and Facebook DM and comment replies. Default off: those webhooks
+   * are acknowledged and dropped. The handler code stays in the repo.
+   * Publishing, the first comment, comments off, and insights do not use this.
+   */
+  META_INBOUND_ENABLED: z
+    .string()
+    .optional()
+    .transform((v) => v === 'true' || v === '1'),
   // Facebook Page / Messenger connect (fbm-01 / fbm-03) — Halo Aid FB app, NOT Halo Aid-IG
   FACEBOOK_APP_ID: z.string().optional(),
   FACEBOOK_APP_SECRET: z.string().optional(),

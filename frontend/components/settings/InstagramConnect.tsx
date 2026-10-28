@@ -80,7 +80,7 @@ export default function InstagramConnect({ token }: InstagramConnectProps) {
             :         errParam === "doctor_not_verified"
               ? "Verify your medical registration before connecting Instagram."
               : errParam === "webhook_subscribe_failed"
-                ? "Instagram is linked, but incoming messages could not be turned on. Disconnect and connect again."
+                ? "Instagram is linked, but posting could not be turned on. Disconnect and connect again."
                 : "Connection was not completed.";
       setMessage({ type: "error", text: errMsg });
       window.history.replaceState({}, "", window.location.pathname);
@@ -124,7 +124,7 @@ export default function InstagramConnect({ token }: InstagramConnectProps) {
 
   const handleDisconnect = async () => {
     const confirmed = window.confirm(
-      "Are you sure? Incoming DMs will no longer be handled."
+      "Disconnect Instagram? Posting from Halo Aid will stop until you connect again."
     );
     if (!confirmed) return;
     if (!token) {
@@ -175,7 +175,7 @@ export default function InstagramConnect({ token }: InstagramConnectProps) {
           <InstagramIcon />
         </div>
         <h2 className="font-semibold text-gray-900">Instagram</h2>
-        <p className="mt-1 text-sm text-gray-600">Connect Instagram to receive patient messages.</p>
+        <p className="mt-1 text-sm text-gray-600">Connect Instagram to post your cards.</p>
         <div className="mt-3 rounded-md border border-red-200 bg-red-50 p-3 text-red-800">
           <p className="font-medium">Error</p>
           <p className="mt-1 text-sm">{error}</p>
@@ -192,7 +192,7 @@ export default function InstagramConnect({ token }: InstagramConnectProps) {
       <h2 className="font-semibold text-gray-900">Instagram</h2>
       <p className="mt-1 text-sm text-gray-600">
         Connect your Instagram professional account (Business or Creator) to
-        receive messages and send automated replies.
+        post your cards and see how they did.
       </p>
       {message && (
         <div
@@ -231,11 +231,6 @@ export default function InstagramConnect({ token }: InstagramConnectProps) {
           {status.health.tokenExpiresAt && (
             <p className="mt-1 text-xs opacity-90">
               Token expiry (UTC): {formatDateTime(status.health.tokenExpiresAt)}
-            </p>
-          )}
-          {status.health.lastDmSuccessAt && (
-            <p className="mt-1 text-xs opacity-90">
-              Last bot DM sent: {formatDateTime(status.health.lastDmSuccessAt)}
             </p>
           )}
           {status.health.checkedAt && (

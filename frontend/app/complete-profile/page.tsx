@@ -186,7 +186,7 @@ export default function CompleteProfilePage() {
           </div>
           <fieldset className="space-y-2">
             <legend className="text-sm font-medium leading-none">
-              Do patients message you on Instagram or Facebook?
+              Do you post on Instagram?
             </legend>
             <RadioGroup
               value={socialEnquiries}

@@ -1,14 +1,13 @@
 "use client";
 
 import InstagramConnect from "@/components/settings/InstagramConnect";
-import { InstagramPausePanel } from "@/components/settings/InstagramPausePanel";
 import { VerificationBanner } from "@/components/dashboard/verification/VerificationBanner";
 import { SettingsPageShell } from "@/components/settings/SettingsPageShell";
 import { useSessionAccessToken } from "@/hooks/useSessionAccessToken";
 
 /**
- * Integrations — Instagram connect + pause automated replies.
- * Facebook Messenger stays in-repo; omitted from this page for the messages-first App Review file.
+ * Integrations — Instagram connect for posting cards.
+ * Facebook Messenger stays in-repo; omitted from this page.
  */
 export default function IntegrationsPage() {
   const { token, isLoading } = useSessionAccessToken();
@@ -17,7 +16,7 @@ export default function IntegrationsPage() {
     return (
       <SettingsPageShell
         title="Integrations"
-        description="Connect Instagram and control automated replies."
+        description="Connect Instagram to post your cards."
         isLoading
       />
     );
@@ -28,7 +27,7 @@ export default function IntegrationsPage() {
       <div>
         <h1 className="text-2xl font-semibold text-foreground">Integrations</h1>
         <p className="mt-1 text-muted-foreground">
-          Connect Instagram and control automated replies.
+          Connect Instagram to post your cards.
         </p>
       </div>
       <VerificationBanner token={token} />
@@ -37,7 +36,6 @@ export default function IntegrationsPage() {
           Channel connections
         </h2>
         <InstagramConnect token={token} />
-        <InstagramPausePanel token={token} />
       </section>
     </div>
   );

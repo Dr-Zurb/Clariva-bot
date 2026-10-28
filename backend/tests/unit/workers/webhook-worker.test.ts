@@ -27,6 +27,7 @@ import * as patientIdentityService from '../../../src/services/patient-identity-
 import * as conversationService from '../../../src/services/conversation-service';
 import * as messageService from '../../../src/services/message-service';
 import * as aiService from '../../../src/services/ai-service';
+import { env } from '../../../src/config/env';
 
 jest.mock('../../../src/config/env', () => ({
   env: {
@@ -35,6 +36,7 @@ jest.mock('../../../src/config/env', () => ({
     SUPABASE_URL: 'https://test.supabase.co',
     SUPABASE_ANON_KEY: 'test-anon-key',
     SUPABASE_SERVICE_ROLE_KEY: 'test-service-role-key',
+    META_INBOUND_ENABLED: true,
   },
 }));
 jest.mock('../../../src/config/queue', () => ({
@@ -189,6 +191,7 @@ describe('Webhook Worker', () => {
     jest.mocked(messageService.createMessage).mockResolvedValue(undefined as never);
     jest.mocked(aiService.classifyIntent).mockResolvedValue({ intent: 'other' } as never);
     jest.mocked(aiService.generateResponse).mockResolvedValue('Reply text' as never);
+    (env as { META_INBOUND_ENABLED: boolean }).META_INBOUND_ENABLED = true;
   });
 
   describe('5.1.3 Worker lifecycle when REDIS_URL unset', () => {
@@ -533,6 +536,100 @@ describe('Webhook Worker', () => {
         .filter(Boolean);
       expect(eventIds).toContain('evt_race_a');
       expect(eventIds).toContain('evt_race_b');
+    });
+  });
+
+  describe('inbound replies parked', () => {
+    beforeEach(() => {
+      (env as { META_INBOUND_ENABLED: boolean }).META_INBOUND_ENABLED = false;
+      mockMarkProcessed.mockResolvedValue(undefined as never);
+    });
+
+    it('marks an Instagram DM processed and does not send', async () => {
+      const job = fakeJob({
+        eventId: 'evt_park_dm',
+        provider: 'instagram',
+        payload: {
+          object: 'instagram',
+          entry: [
+            {
+              id: 'evt_park_dm',
+              time: 1,
+              messaging: [
+                {
+                  sender: { id: '987654321' },
+                  recipient: { id: '123456789' },
+                  timestamp: 1,
+                  message: { mid: 'mid.park', text: 'PATIENT_TEST' },
+                },
+              ],
+            },
+          ],
+        },
+        correlationId: 'corr-park-dm',
+      });
+
+      await processWebhookJob(job);
+
+      expect(mockMarkProcessed).toHaveBeenCalledWith('evt_park_dm', 'instagram');
+      expect(mockSendMessage).not.toHaveBeenCalled();
+      expect(conversationService.createConversation).not.toHaveBeenCalled();
+      expect(mockLogAudit).not.toHaveBeenCalled();
+    });
+
+    it('marks an Instagram comment processed and does not send', async () => {
+      const job = fakeJob({
+        eventId: 'evt_park_comment',
+        provider: 'instagram',
+        payload: {
+          object: 'instagram',
+          entry: [
+            {
+              id: 'page-entry-comment',
+              time: 1,
+              changes: [
+                {
+                  field: 'comments',
+                  value: {
+                    id: 'comment-id-99',
+                    text: 'hello',
+                    from: { id: '777' },
+                    media: { id: 'media-m1' },
+                  },
+                },
+              ],
+            },
+          ],
+        } as WebhookJobData['payload'],
+        correlationId: 'corr-park-comment',
+      });
+
+      await processWebhookJob(job);
+
+      expect(mockMarkProcessed).toHaveBeenCalledWith('evt_park_comment', 'instagram');
+      expect(mockSendMessage).not.toHaveBeenCalled();
+      expect(mockLogAudit).not.toHaveBeenCalled();
+    });
+
+    it('marks a Facebook comment processed and does not send', async () => {
+      const job = fakeJob({
+        eventId: 'evt_park_fb',
+        provider: 'facebook',
+        payload: {
+          object: 'page',
+          entry: [
+            {
+              changes: [{ field: 'feed', value: { item: 'comment', comment_id: 'c9' } }],
+            },
+          ],
+        } as WebhookJobData['payload'],
+        correlationId: 'corr-park-fb',
+      });
+
+      await processWebhookJob(job);
+
+      expect(mockMarkProcessed).toHaveBeenCalledWith('evt_park_fb', 'facebook');
+      expect(mockSendMessage).not.toHaveBeenCalled();
     });
   });
 });

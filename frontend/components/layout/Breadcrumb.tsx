@@ -12,7 +12,7 @@ const SEGMENTS: Record<string, string> = {
   branding: "Letterhead & branding",
   "services-catalog": "Pricing",
   "booking-rules": "Booking rules",
-  "bot-messages": "Messaging",
+  "bot-messages": "Appointment notes",
   availability: "Availability",
   "opd-mode": "OPD mode",
   "patient-flow": "Patient flow",

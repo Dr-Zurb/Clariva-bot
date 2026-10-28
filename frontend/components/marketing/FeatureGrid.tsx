@@ -1,69 +1,103 @@
 import {
+  BarChart3,
   Bell,
   CalendarDays,
-  ClipboardList,
-  Inbox,
-  MessageSquare,
+  Columns3,
+  FileText,
+  Link2,
+  RefreshCw,
+  Stethoscope,
   Users,
   Video,
+  Wallet,
 } from "lucide-react";
 
 import { Card } from "@/components/ui/card";
 
 const FEATURE_GROUPS = [
   {
-    label: "They arrive",
+    label: "Get patients",
     features: [
       {
-        icon: MessageSquare,
-        title: "One page link",
-        body: "Every Instagram DM gets one link to your page.",
-      },
-      {
-        icon: Inbox,
-        title: "Booking review queue",
-        body: "Every request lands in one place for a quick confirm or reschedule.",
-      },
-    ],
-  },
-  {
-    label: "You see them",
-    features: [
-      {
-        icon: Video,
-        title: "Teleconsult",
-        body: "See patients over video, voice, or text — built in, no extra tools.",
+        icon: Columns3,
+        title: "Board",
+        body: "Ideas, Chosen, Making, and Ready. One board, instead of notes everywhere.",
       },
       {
         icon: CalendarDays,
-        title: "Appointments & OPD",
-        body: "Run the day, the queue, and walk-ins in-clinic.",
+        title: "Schedule",
+        body: "See what goes out, and when. You put each post on it.",
       },
       {
-        icon: ClipboardList,
-        title: "Clinical cockpit & Rx",
-        body: "Chart the visit and send a prescription in the same flow.",
+        icon: BarChart3,
+        title: "Analytics",
+        body: "Which posts led to a booking, and how many people opened your page.",
+      },
+      {
+        icon: Link2,
+        title: "Booking page",
+        body: "A page behind every post, so a visit can be booked from it.",
       },
     ],
   },
   {
-    label: "They come back",
+    label: "See patients",
     features: [
       {
         icon: Users,
-        title: "Patient records",
-        body: "A clean history for every patient, ready before they arrive.",
+        title: "Front desk",
+        body: "Staff logins, walk-ins, and check-in — vitals, history, labs, and papers.",
+      },
+      {
+        icon: CalendarDays,
+        title: "OPD queue",
+        body: "Booked slots and walk-ins on one list for the day.",
+      },
+      {
+        icon: Stethoscope,
+        title: "Patient chart",
+        body: "History, allergies, and vitals, ready before they sit down.",
+      },
+      {
+        icon: FileText,
+        title: "Prescriptions",
+        body: "Templates, your letterhead, and the PDF emailed to the patient.",
+      },
+      {
+        icon: Video,
+        title: "Teleconsult",
+        body: "Video, voice, or text, with the chart in the same visit.",
+      },
+    ],
+  },
+  {
+    label: "Keep patients",
+    features: [
+      {
+        icon: FileText,
+        title: "Visit history",
+        body: "The last visit is waiting when they come back.",
+      },
+      {
+        icon: RefreshCw,
+        title: "Follow-ups",
+        body: "A follow-up date on the prescription, so the next visit is already named.",
+      },
+      {
+        icon: BarChart3,
+        title: "Insights",
+        body: "Practice health for the period you pick.",
       },
       {
         icon: Bell,
         title: "Alerts",
-        body: "Get nudged about no-shows and requests before they slip.",
+        body: "A nudge when a no-show or a request needs you.",
       },
     ],
   },
 ] as const;
 
-/** Feature grid — capabilities grouped as arrive → see → return. */
+/** Social, the visit, and the record — grouped as get, see, keep. */
 export function FeatureGrid() {
   return (
     <section
@@ -73,11 +107,10 @@ export function FeatureGrid() {
       <div className="mx-auto max-w-6xl px-4 sm:px-6">
         <div className="mx-auto max-w-2xl text-center">
           <h2 className="text-3xl font-bold tracking-tight text-[hsl(var(--halo-navy))] sm:text-4xl">
-            Everything you need to run your practice
+            The post, the visit, and the record
           </h2>
           <p className="mt-4 text-lg text-[hsl(var(--halo-ink))]/70">
-            From the first DM to the follow-up visit — one product, nothing
-            stitched together.
+            One product. Nothing stitched together from five apps.
           </p>
         </div>
         <div className="mt-14 grid gap-8 lg:grid-cols-3">
@@ -113,6 +146,10 @@ export function FeatureGrid() {
             </div>
           ))}
         </div>
+        <p className="mx-auto mt-10 flex max-w-xl items-center justify-center gap-2 text-center text-sm text-[hsl(var(--halo-ink))]/70">
+          <Wallet className="h-4 w-4 shrink-0 text-[hsl(var(--halo-blue))]" aria-hidden />
+          Patients pay into your own account. Halo Aid never takes a cut.
+        </p>
       </div>
     </section>
   );

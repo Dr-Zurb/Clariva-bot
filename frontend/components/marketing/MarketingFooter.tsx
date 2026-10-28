@@ -23,7 +23,7 @@ export function MarketingFooter() {
             className="h-7 w-7"
           />
           <p className="text-sm text-[hsl(var(--halo-ink))]/60">
-            Social media assistance for doctors.
+            Social media assistance for doctors — and the practice behind it.
           </p>
         </div>
         <nav

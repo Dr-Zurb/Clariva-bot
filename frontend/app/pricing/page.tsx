@@ -38,7 +38,6 @@ export const metadata: Metadata = {
 const NEVER_BILLED = [
   "In-clinic visits — every one, unlimited",
   "No-shows and cancellations — a teleconsult bills only when it happened",
-  "Everything Halo Aid handles alone — timings, fees, directions, booking links",
   "Documentation — prescriptions, notes, records",
   "Reconnects — one teleconsult, not two",
   "A message back to a patient you already saw",
@@ -68,17 +67,13 @@ export default function PricingPage() {
               One plan. Clinic included.
             </p>
             <h1 className="mt-3 max-w-3xl text-4xl font-bold leading-[1.1] tracking-tight text-[hsl(var(--halo-navy))] sm:text-5xl">
-              They&apos;re already in your inbox.
+              One place for the posts and the practice.
             </h1>
             <p className="mt-5 max-w-2xl text-lg text-[hsl(var(--halo-ink))]/70">
               ₹999 a month covers your clinic — every in-clinic visit,
               unlimited — plus your first 20 teleconsults. ₹49 per teleconsult
               after that. Patient doesn&apos;t show — you pay nothing. Your
               bill can never cross ₹12,499.
-            </p>
-            <p className="mt-3 max-w-2xl text-sm text-[hsl(var(--halo-ink))]/60">
-              A receptionist costs ₹15,000 a month and sleeps at night. This
-              doesn&apos;t.
             </p>
             <p className="mt-3 max-w-2xl text-sm text-[hsl(var(--halo-ink))]/55">
               Medical services are GST-exempt, so you cannot claim input credit.

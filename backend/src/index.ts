@@ -3,6 +3,10 @@
 import dotenv from 'dotenv';
 dotenv.config();
 
+// Before any client opens a socket. See system-lookup.ts.
+import { installLookupFallback } from './config/system-lookup';
+installLookupFallback();
+
 // Import type setup FIRST to ensure Express type extensions are loaded
 // This ensures correlationId and startTime are available on Request
 // This is required for ts-node to recognize the type extensions

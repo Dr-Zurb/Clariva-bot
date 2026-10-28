@@ -3,7 +3,9 @@
  */
 
 import { Request, Response } from 'express';
+import { sendSocialCardNow } from '../services/social-card-publish-service';
 import { z } from 'zod';
+import { logger } from '../config/logger';
 import { asyncHandler } from '../utils/async-handler';
 import { successResponse } from '../utils/response';
 import { UnauthorizedError } from '../utils/errors';
@@ -56,12 +58,17 @@ const wordsSchema = z
     line: z.string().trim().min(1).max(500).optional(),
     location: z.string().trim().min(1).max(200).optional(),
     collaborator: z.string().trim().min(1).max(80).optional(),
-    crop: z.enum(['original', 'square', 'portrait']).optional(),
+    crop: z.enum(['original', 'square', 'portrait', 'landscape']).optional(),
+    storyPlace: z.enum(['fill', 'fit']).optional(),
     aiGenerated: z.boolean().optional(),
     shareToFeed: z.boolean().optional(),
+    shareToStory: z.boolean().optional(),
+    commentsOff: z.boolean().optional(),
     music: z.string().trim().min(1).max(200).optional(),
     stickers: z.string().trim().min(1).max(200).optional(),
     productTag: z.string().trim().min(1).max(200).optional(),
+    byHand: z.boolean().optional(),
+    handNote: z.string().trim().min(1).max(500).optional(),
   })
   .strict();
 
@@ -96,12 +103,14 @@ export const updateSocialCardSchema = z
       .array(z.object({ id: z.string().trim().min(1).max(500), url: z.string().trim().max(500) }))
       .optional(),
     scheduledAt: z.string().datetime({ offset: true }).nullable().optional(),
+    postNow: z.literal(true).optional(),
     instagramUrl: z
       .string()
       .trim()
       .max(500)
       .refine(isInstagramPostUrl, { message: 'Paste an Instagram post link' })
       .optional(),
+    manualPosted: z.literal(true).optional(),
     columnId: z.string().uuid().optional(),
   })
   .strict()
@@ -110,6 +119,9 @@ export const updateSocialCardSchema = z
   })
   .refine((body) => body.instagramUrl === undefined || Object.keys(body).length === 1, {
     message: 'Paste the link on its own',
+  })
+  .refine((body) => body.manualPosted === undefined || Object.keys(body).length === 1, {
+    message: 'Mark it posted on its own',
   });
 
 export const socialCardUploadSchema = z
@@ -187,11 +199,16 @@ export const updateSocialCardHandler = asyncHandler(async (req: Request, res: Re
   const correlationId = req.correlationId || 'unknown';
   const { id } = idSchema.parse(req.params);
   const body = updateSocialCardSchema.parse(req.body);
-  const card = await withPagePath(
-    await updateSocialCard(id, body, correlationId, doctorId),
-    doctorId,
-    correlationId
-  );
+  const saved = await updateSocialCard(id, body, correlationId, doctorId);
+  if (body.postNow) {
+    void sendSocialCardNow(id, correlationId).catch((err: unknown) => {
+      logger.error(
+        { correlationId, err: err instanceof Error ? err.message : String(err) },
+        'social card publish: post now failed'
+      );
+    });
+  }
+  const card = await withPagePath(saved, doctorId, correlationId);
   res.status(200).json(successResponse({ card }, req));
 });
 

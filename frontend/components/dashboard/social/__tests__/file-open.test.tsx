@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import * as XLSX from "xlsx";
 import { ScrapShelf, fileFace, fileOpen, fileOpenFromUrl, type ShelfFile } from "../idea-composer";
-import { socialFileIssue, socialFileKind } from "../social-cards";
+import { cardFileAccept, cardFileIssue, referenceFileIssue, socialFileIssue, socialFileKind } from "../social-cards";
 
 const files = new Map<string, { bytes: Uint8Array; text: string }>();
 
@@ -122,6 +122,26 @@ describe("allowed files open", () => {
     expect(socialFileIssue(new File(["x"], "note.exe", { type: "application/octet-stream" }))).toBe(
       "Use a photo, a video, audio, or a document"
     );
+  });
+
+  it("keeps a document off a post, a reel, and a story", () => {
+    const pdf = new File(["%PDF"], "note.pdf", { type: "application/pdf" });
+    const photo = new File(["jpg"], "shot.jpg", { type: "image/jpeg" });
+    const clip = new File(["mp4"], "clip.mp4", { type: "video/mp4" });
+    expect(cardFileIssue(pdf, "post")).toBe("Use a photo or a video");
+    expect(cardFileIssue(pdf, "story")).toBe("Use a photo or a video");
+    expect(cardFileIssue(pdf, "reel")).toBe("Use a photo or a video");
+    expect(cardFileIssue(photo, "reel")).toBeNull();
+    expect(cardFileIssue(photo, "post")).toBeNull();
+    expect(cardFileIssue(clip, "reel")).toBeNull();
+    expect(cardFileIssue(clip, "story")).toBeNull();
+    expect(cardFileAccept("reel")).toMatch(/image\/jpeg/);
+    expect(cardFileAccept("reel")).toMatch(/mp4/);
+    expect(cardFileAccept("reel")).not.toMatch(/pdf/i);
+    expect(cardFileAccept("story")).toBe(cardFileAccept("post"));
+    expect(referenceFileIssue(pdf, "reel")).toBe("Use a photo or a video");
+    expect(referenceFileIssue(photo, "reel")).toBeNull();
+    expect(referenceFileIssue(pdf, "")).toBeNull();
   });
 
   it("sends each document extension to the viewer that can show it", () => {

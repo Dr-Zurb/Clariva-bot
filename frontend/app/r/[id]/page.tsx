@@ -240,8 +240,8 @@ export default function PatientRxSharePage() {
           <h1 className="text-lg font-semibold text-gray-900">Link expired</h1>
           <p className="mt-2 text-sm text-gray-600">
             This prescription link is no longer active. To request a fresh link,
-            reply to your email or Instagram DM thread with your doctor — they
-            can resend it from their dashboard in one tap.
+            reply to the email from your doctor — they can resend it from their
+            dashboard.
           </p>
         </div>
       </main>
@@ -255,8 +255,7 @@ export default function PatientRxSharePage() {
           <h1 className="text-lg font-semibold text-gray-900">Invalid link</h1>
           <p className="mt-2 text-sm text-gray-600">
             We couldn&apos;t open this prescription. The link may be mistyped or
-            no longer valid. Please check the link in your email or DM and try
-            again.
+            no longer valid. Please check the link in your email and try again.
           </p>
         </div>
       </main>

@@ -15,6 +15,7 @@ import {
   attachSocialCardFile,
   createReadySocialCard,
   createSocialCard,
+  prepareSocialCardFile,
   listSocialCards,
   getSocialAnalytics,
   getSocialCardScrapUrl,
@@ -52,12 +53,15 @@ vi.mock("next/link", () => ({
   ),
 }));
 
-vi.mock("../social-cards", () => ({
+vi.mock("../social-cards", async () => {
+  const actual = await vi.importActual<typeof import("../social-cards")>("../social-cards");
+  return {
   listSocialCards: vi.fn(),
   getSocialCardFileUrl: vi.fn(),
   getSocialCardScrapUrl: vi.fn(),
   createSocialCard: vi.fn(),
   createReadySocialCard: vi.fn(),
+  prepareSocialCardFile: vi.fn(),
   moveSocialCard: vi.fn(),
   moveSocialCardToColumn: vi.fn(),
   updateSocialCard: vi.fn(),
@@ -79,8 +83,15 @@ vi.mock("../social-cards", () => ({
   createSocialCardInColumn: vi.fn(),
   socialFileIssue: () => null,
   socialFileKind: () => null,
+  cardFileAccept: actual.cardFileAccept,
+  cardFileIssue: actual.cardFileIssue,
+  referenceFileIssue: actual.referenceFileIssue,
+  MEDIA_FILE_ACCEPT: actual.MEDIA_FILE_ACCEPT,
+  postsByHand: (words: { byHand?: boolean; music?: string; productTag?: string } | null | undefined) =>
+    Boolean(words?.byHand || words?.music?.trim() || words?.productTag?.trim()),
   getSocialAnalytics: vi.fn(),
-}));
+  };
+});
 
 vi.mock("recharts", () => ({
   ResponsiveContainer: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
@@ -97,6 +108,7 @@ const listMock = vi.mocked(listSocialCards);
 const analyticsMock = vi.mocked(getSocialAnalytics);
 const createMock = vi.mocked(createSocialCard);
 const createReadyMock = vi.mocked(createReadySocialCard);
+const prepareMock = vi.mocked(prepareSocialCardFile);
 const scrapMock = vi.mocked(addSocialCardScrap);
 const attachMock = vi.mocked(attachSocialCardFile);
 const scrapUrlMock = vi.mocked(getSocialCardScrapUrl);
@@ -204,6 +216,7 @@ describe("Social shell", () => {
     listMock.mockReset();
     createMock.mockReset();
     createReadyMock.mockReset();
+    prepareMock.mockReset();
     attachMock.mockReset();
     moveMock.mockReset();
     updateMock.mockReset();
@@ -221,7 +234,7 @@ describe("Social shell", () => {
     render(<SocialClient token="token" />);
 
     expect(screen.getByRole("heading", { name: "Social" })).toBeInTheDocument();
-    expect(await screen.findByRole("region", { name: "Thoughts and ideas" })).toBeInTheDocument();
+    expect(await screen.findByRole("region", { name: "Ideas" })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Chosen" })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Making" })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Ready" })).toBeInTheDocument();
@@ -244,7 +257,7 @@ describe("Social shell", () => {
 
     render(<SocialClient token="token" />);
 
-    const thoughts = await screen.findByRole("region", { name: "Thoughts and ideas" });
+    const thoughts = await screen.findByRole("region", { name: "Ideas" });
     const ready = screen.getByRole("region", { name: "Ready" });
     expect(thoughts).toHaveTextContent("Fees");
     expect(ready).toHaveTextContent("Cough");
@@ -259,22 +272,22 @@ describe("Social shell", () => {
 
     render(<SocialClient token="token" />);
     expect(screen.getByRole("button", { name: "Fees" })).toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "Thoughts and ideas" })).toHaveTextContent("Fees");
+    expect(screen.getByRole("region", { name: "Ideas" })).toHaveTextContent("Fees");
   });
 
-  it("adds a title into Thoughts and ideas and can move it", async () => {
+  it("adds a title into Ideas and can move it", async () => {
     createMock.mockResolvedValue(card({ id: "1", title: "Fees", stage: "thoughts" }));
     moveMock.mockResolvedValue(card({ id: "1", title: "Fees", stage: "chosen" }));
 
     render(<SocialClient token="token" />);
-    await screen.findByRole("region", { name: "Thoughts and ideas" });
+    await screen.findByRole("region", { name: "Ideas" });
 
     expect(screen.queryByLabelText("New idea")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("File already made")).not.toBeInTheDocument();
 
     listMock.mockResolvedValue([card({ id: "1", title: "Fees", stage: "thoughts" })]);
-    fireEvent.click(screen.getByRole("button", { name: "Add to Thoughts and ideas" }));
-    fireEvent.change(screen.getByLabelText("Title for Thoughts and ideas"), {
+    fireEvent.click(screen.getByRole("button", { name: "Add to Ideas" }));
+    fireEvent.change(screen.getByLabelText("Title for Ideas"), {
       target: { value: "Fees" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Add" }));
@@ -292,6 +305,21 @@ describe("Social shell", () => {
       expect(moveMock).toHaveBeenCalledWith("token", "1", "chosen");
     });
     expect(screen.getByRole("region", { name: "Chosen" })).toHaveTextContent("Fees");
+  });
+
+  it("moves from the new title into the note on Enter", async () => {
+    render(<SocialClient token="token" />);
+    await screen.findByRole("region", { name: "Ideas" });
+    fireEvent.click(screen.getByRole("button", { name: "Add to Ideas" }));
+    const title = screen.getByLabelText("Title for Ideas");
+    fireEvent.change(title, { target: { value: "Test idea" } });
+    fireEvent.keyDown(title, { key: "Enter" });
+
+    expect(createMock).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("Title for Ideas")).toHaveValue("Test idea");
+    await waitFor(() => {
+      expect(screen.getByLabelText("Note")).toHaveFocus();
+    });
   });
 
   it("keeps a reference when the card is chosen", async () => {
@@ -325,19 +353,18 @@ describe("Social shell", () => {
     listMock.mockResolvedValue([card({ id: "1", title: "Fees", stage: "thoughts" })]);
     render(<SocialClient token="token" />);
 
-    const thoughts = await screen.findByRole("region", { name: "Thoughts and ideas" });
+    const thoughts = await screen.findByRole("region", { name: "Ideas" });
     fireEvent.click(within(thoughts).getByRole("button", { name: "Fees" }));
 
     const editor = await screen.findByRole("form", { name: "Card Fees" });
     expect(within(editor).getByLabelText("Title")).toHaveValue("Fees");
     expect(within(editor).queryByRole("button", { name: "Save" })).not.toBeInTheDocument();
-    fireEvent.click(within(editor).getByRole("button", { name: "Card actions" }));
-    fireEvent.click(within(editor).getByRole("menuitem", { name: "Delete" }));
+    fireEvent.click(within(editor).getByRole("button", { name: "Delete" }));
 
     await waitFor(() => {
       expect(deleteCardMock).toHaveBeenCalledWith("token", "1");
     });
-    expect(screen.getByRole("region", { name: "Thoughts and ideas" })).not.toHaveTextContent("Fees");
+    expect(screen.getByRole("region", { name: "Ideas" })).not.toHaveTextContent("Fees");
   });
 
   it("selects several cards and deletes that selection once", async () => {
@@ -348,7 +375,7 @@ describe("Social shell", () => {
     ]);
     render(<SocialClient token="token" />);
 
-    const thoughts = await screen.findByRole("region", { name: "Thoughts and ideas" });
+    const thoughts = await screen.findByRole("region", { name: "Ideas" });
     fireEvent.click(within(thoughts).getByRole("button", { name: "Card menu for Fees" }));
     fireEvent.click(screen.getByRole("menuitem", { name: "Select" }));
 
@@ -356,7 +383,7 @@ describe("Social shell", () => {
     expect(bar).toHaveTextContent("1 selected");
     expect(bar).toHaveTextContent("Move to");
     expect(within(bar).getByRole("button", { name: "Select all" })).toBeInTheDocument();
-    expect(within(bar).queryByRole("button", { name: "Move selected to Thoughts and ideas" })).not.toBeInTheDocument();
+    expect(within(bar).queryByRole("button", { name: "Move selected to Ideas" })).not.toBeInTheDocument();
     expect(within(bar).getByRole("button", { name: "Move selected to Chosen" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Select Cough" }));
     expect(bar).toHaveTextContent("2 selected");
@@ -370,6 +397,30 @@ describe("Social shell", () => {
     expect(thoughts).not.toHaveTextContent("Cough");
   });
 
+  it("selects a card from its title or topic, not only the tick", async () => {
+    listMock.mockResolvedValue([
+      card({ id: "1", title: "Fees", stage: "thoughts" }),
+      card({ id: "2", title: "Cough", stage: "thoughts", topic: "Clinic" }),
+    ]);
+    render(<SocialClient token="token" />);
+
+    const thoughts = await screen.findByRole("region", { name: "Ideas" });
+    fireEvent.click(within(thoughts).getByRole("button", { name: "Card menu for Fees" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Select" }));
+
+    const bar = screen.getByRole("toolbar", { name: "Selected cards" });
+    expect(bar).toHaveTextContent("1 selected");
+
+    fireEvent.click(within(thoughts).getByRole("button", { name: "Cough" }));
+    expect(bar).toHaveTextContent("2 selected");
+
+    fireEvent.click(within(thoughts).getByText("Clinic"));
+    expect(bar).toHaveTextContent("1 selected");
+
+    fireEvent.click(within(thoughts).getByRole("button", { name: "Card menu for Fees" }));
+    expect(bar).toHaveTextContent("1 selected");
+  });
+
   it("leaves select mode as soon as the cards move", async () => {
     let finish: (value: SocialCard) => void = () => undefined;
     moveMock.mockReturnValue(
@@ -380,7 +431,7 @@ describe("Social shell", () => {
     listMock.mockResolvedValue([card({ id: "1", title: "Fees", stage: "thoughts" })]);
     render(<SocialClient token="token" />);
 
-    const thoughts = await screen.findByRole("region", { name: "Thoughts and ideas" });
+    const thoughts = await screen.findByRole("region", { name: "Ideas" });
     fireEvent.click(within(thoughts).getByRole("button", { name: "Card menu for Fees" }));
     fireEvent.click(screen.getByRole("menuitem", { name: "Select" }));
     fireEvent.click(screen.getByRole("button", { name: "Move selected to Chosen" }));
@@ -400,7 +451,7 @@ describe("Social shell", () => {
     listMock.mockResolvedValue([card({ id: "1", title: "Fees", stage: "thoughts" })]);
     render(<SocialClient token="token" />);
 
-    const thoughts = await screen.findByRole("region", { name: "Thoughts and ideas" });
+    const thoughts = await screen.findByRole("region", { name: "Ideas" });
     fireEvent.click(within(thoughts).getByRole("button", { name: "Card menu for Fees" }));
     fireEvent.click(screen.getByRole("menuitem", { name: "Select" }));
     fireEvent.click(screen.getByRole("button", { name: "Move selected to Chosen" }));
@@ -418,7 +469,7 @@ describe("Social shell", () => {
     ]);
     render(<SocialClient token="token" />);
 
-    const thoughts = await screen.findByRole("region", { name: "Thoughts and ideas" });
+    const thoughts = await screen.findByRole("region", { name: "Ideas" });
     expect(within(thoughts).getByRole("button", { name: "Move Fees to Chosen" })).toBeInTheDocument();
     expect(
       within(screen.getByRole("region", { name: "Ready" })).queryByRole("button", { name: /Move Cough/ })
@@ -445,32 +496,122 @@ describe("Social shell", () => {
     expect(making).toHaveTextContent("Fees");
   });
 
-  it("adds a title from Chosen and refuses a Ready card with no file", async () => {
-    createMock.mockResolvedValue(card({ id: "1", title: "Fees", stage: "chosen" }));
+  it("opens the card sheet from Chosen and Making", async () => {
+    createMock
+      .mockResolvedValueOnce(card({ id: "1", title: "untitled", stage: "chosen" }))
+      .mockResolvedValueOnce(card({ id: "2", title: "untitled", stage: "making" }));
 
     render(<SocialClient token="token" />);
     await screen.findByRole("region", { name: "Chosen" });
 
-    listMock.mockResolvedValue([card({ id: "1", title: "Fees", stage: "chosen" })]);
     fireEvent.click(screen.getByRole("button", { name: "Add to Chosen" }));
-    fireEvent.change(screen.getByLabelText("Title for Chosen"), {
-      target: { value: "Fees" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Add" }));
-
+    expect(await screen.findByRole("dialog", { name: "Card untitled" })).toBeInTheDocument();
+    expect(screen.getByRole("complementary", { name: "Resources" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("Title for Chosen")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Column for Chosen")).not.toBeInTheDocument();
     await waitFor(() => {
-      expect(createMock).toHaveBeenCalledWith("token", "Fees", "chosen");
+      expect(createMock).toHaveBeenCalledWith("token", "untitled", "chosen");
     });
-    expect(screen.getByRole("region", { name: "Chosen" })).toHaveTextContent("Fees");
-    expect(screen.getByRole("region", { name: "Thoughts and ideas" })).toHaveTextContent("Add new");
 
-    fireEvent.click(screen.getByRole("button", { name: "Add to Ready" }));
-    fireEvent.change(screen.getByLabelText("Title for Ready"), {
-      target: { value: "Photo" },
+    fireEvent.click(screen.getByRole("button", { name: "Add to Making" }));
+    expect(await screen.findByText("Add the file")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Title for Making")).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(createMock).toHaveBeenCalledWith("token", "untitled", "making");
     });
-    expect(screen.getByRole("button", { name: "Add" })).toBeDisabled();
+
+    const ready = screen.getByRole("region", { name: "Ready" });
+    expect(within(ready).queryByRole("button", { name: "Add to Ready" })).not.toBeInTheDocument();
+    expect(within(ready).getByRole("button", { name: "Add new" })).toBeInTheDocument();
     expect(createReadyMock).not.toHaveBeenCalled();
-    expect(screen.getByLabelText("File for Ready")).toBeInTheDocument();
+  });
+
+  it("opens the preview from a finished file and keeps the note out", async () => {
+    let releaseUpload: (value: string) => void = () => undefined;
+    let releaseCreate: (value: SocialCard) => void = () => undefined;
+    prepareMock.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          releaseUpload = resolve;
+        })
+    );
+    createMock.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          releaseCreate = resolve;
+        })
+    );
+    updateMock.mockResolvedValue(
+      card({
+        id: "9",
+        title: "untitled",
+        stage: "making",
+        format: "reel",
+        hasFile: true,
+        fileKind: "video",
+        postable: true,
+      })
+    );
+
+    render(<SocialClient token="token" />);
+    const ready = await screen.findByRole("region", { name: "Ready" });
+    fireEvent.click(within(ready).getByRole("button", { name: "Add new" }));
+    expect(createMock).not.toHaveBeenCalled();
+
+    const input = screen.getByLabelText("Finished file");
+    fireEvent.change(input, {
+      target: { files: [new File(["notes"], "notes.pdf", { type: "application/pdf" })] },
+    });
+    expect(await screen.findByRole("alert")).toHaveTextContent("Use a photo or a video");
+    expect(createMock).not.toHaveBeenCalled();
+
+    const video = new File(["video"], "tour.mp4", { type: "video/mp4" });
+    fireEvent.change(input, { target: { files: [video] } });
+    expect(await screen.findByRole("dialog", { name: "Card untitled" })).toBeInTheDocument();
+    expect(screen.getByRole("status", { name: "Uploading" })).toBeInTheDocument();
+    expect(prepareMock).toHaveBeenCalledWith("token", video);
+    expect(createMock).not.toHaveBeenCalled();
+    expect(attachMock).not.toHaveBeenCalled();
+    releaseUpload(`${"token"}/tour.mp4`);
+    await waitFor(() =>
+      expect(createMock).toHaveBeenCalledWith("token", "untitled", "making", { filePath: "token/tour.mp4" })
+    );
+    expect(screen.getByRole("status", { name: "Uploading" })).toBeInTheDocument();
+    releaseCreate(
+      card({
+        id: "9",
+        title: "untitled",
+        stage: "making",
+        hasFile: true,
+        fileKind: "video",
+        postable: true,
+      })
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole("status", { name: "Uploading" })).not.toBeInTheDocument()
+    );
+    expect(screen.queryByRole("complementary", { name: "Resources" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Note")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Title")).toHaveValue("untitled");
+    expect(screen.getByRole("button", { name: "Post" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Reel" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Story" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Choose a format" })).toBeDisabled();
+    expect(screen.queryByLabelText("Caption")).not.toBeInTheDocument();
+
+    listMock.mockResolvedValue([
+      card({
+        id: "9",
+        title: "untitled",
+        stage: "making",
+        hasFile: true,
+        fileKind: "video",
+        postable: true,
+      }),
+    ]);
+    fireEvent.click(screen.getByRole("button", { name: "Reel" }));
+    expect(await screen.findByLabelText("Caption")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Mark ready" })).toBeEnabled();
   });
 
   it("keeps a file on the column where the idea was added", async () => {
@@ -480,8 +621,8 @@ describe("Social shell", () => {
     listMock.mockResolvedValue([]);
 
     render(<SocialClient token="token" />);
-    fireEvent.click(await screen.findByRole("button", { name: "Add to Thoughts and ideas" }));
-    fireEvent.change(screen.getByLabelText("Title for Thoughts and ideas"), {
+    fireEvent.click(await screen.findByRole("button", { name: "Add to Ideas" }));
+    fireEvent.change(screen.getByLabelText("Title for Ideas"), {
       target: { value: "Fees" },
     });
     expect(screen.getByRole("button", { name: "Add" })).toBeEnabled();
@@ -511,7 +652,7 @@ describe("Social shell", () => {
     render(<SocialClient token="token" />);
     fireEvent.click(await screen.findByRole("button", { name: "Fees" }));
 
-    expect(screen.getByLabelText("Note")).toHaveValue("headache tips");
+    expect(screen.getByLabelText("Note").textContent).toBe("headache tips");
     expect(screen.getByRole("complementary", { name: "Preview" })).toBeInTheDocument();
     expect(screen.queryByLabelText("Caption")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Start making" })).not.toBeInTheDocument();
@@ -521,6 +662,7 @@ describe("Social shell", () => {
       expect(updateMock).toHaveBeenCalledWith("token", "1", { format: "post" });
     });
     expect(screen.getByLabelText("Caption")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Your story" })).toBeInTheDocument();
     expect(moveMock).not.toHaveBeenCalled();
   });
 
@@ -530,10 +672,7 @@ describe("Social shell", () => {
     ]);
     const empty = render(<SocialClient token="token" />);
     fireEvent.click(await screen.findByRole("button", { name: "Fees" }));
-    const emptyGaps = screen.getByRole("list", { name: "Still missing" });
-    expect(emptyGaps).toHaveTextContent("A format");
-    expect(emptyGaps).toHaveTextContent("A file");
-    expect(screen.getByRole("button", { name: "Mark ready" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Choose a format" })).toBeDisabled();
     empty.unmount();
 
     listMock.mockResolvedValue([
@@ -549,10 +688,7 @@ describe("Social shell", () => {
     ]);
     const blocked = render(<SocialClient token="token" />);
     fireEvent.click(await screen.findByRole("button", { name: "Fees" }));
-    expect(screen.getByRole("list", { name: "Still missing" })).toHaveTextContent(
-      "A file that cannot post"
-    );
-    expect(screen.getByRole("button", { name: "Mark ready" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Needs a photo or a video" })).toBeDisabled();
     blocked.unmount();
 
     moveMock.mockResolvedValue(
@@ -579,7 +715,6 @@ describe("Social shell", () => {
     ]);
     render(<SocialClient token="token" />);
     fireEvent.click(await screen.findByRole("button", { name: "Fees" }));
-    expect(screen.queryByRole("list", { name: "Still missing" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Mark ready" }));
     await waitFor(() => {
       expect(moveMock).toHaveBeenCalledWith("token", "1", "ready");
@@ -591,15 +726,98 @@ describe("Social shell", () => {
     );
     expect(updateMock.mock.calls[0]?.[2]).not.toHaveProperty("stage");
     expect(screen.getByRole("region", { name: "Ready" })).toHaveTextContent("Fees");
+    expect(screen.getByRole("dialog", { name: "Card Fees" })).toBeInTheDocument();
+    expect(await screen.findByLabelText("Hour")).toBeInTheDocument();
   });
 
-  it("sets a time from the composer and the week shows it", async () => {
+  it("lets a photo mark ready as a reel", async () => {
+    moveMock.mockResolvedValue(
+      card({
+        id: "1",
+        title: "Cough reel",
+        stage: "ready",
+        format: "reel",
+        hasFile: true,
+        fileKind: "photo",
+        postable: true,
+      })
+    );
+    listMock.mockResolvedValue([
+      card({
+        id: "1",
+        title: "Cough reel",
+        stage: "making",
+        format: "reel",
+        hasFile: true,
+        fileKind: "photo",
+        postable: true,
+      }),
+    ]);
+    render(<SocialClient token="token" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Cough reel" }));
+    expect(screen.queryByText("Needs a video")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Mark ready" }));
+    await waitFor(() => {
+      expect(moveMock).toHaveBeenCalledWith("token", "1", "ready");
+    });
+  });
+
+  it("refuses a PDF on a post, a reel, and a story", async () => {
+    listMock.mockResolvedValue([
+      card({ id: "post", title: "Fees post", stage: "making", format: "post" }),
+      card({ id: "reel", title: "Cough reel", stage: "making", format: "reel" }),
+      card({ id: "story", title: "Dengue story", stage: "making", format: "story" }),
+    ]);
+    render(<SocialClient token="token" />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Fees post" }));
+    const postFile = screen.getByLabelText("Attach the file for Fees post");
+    expect(postFile.getAttribute("accept")).toMatch(/image\/jpeg/);
+    expect(postFile.getAttribute("accept")).toMatch(/video\/mp4/);
+    expect(postFile.getAttribute("accept")).not.toMatch(/pdf|audio|doc/i);
+    fireEvent.change(postFile, {
+      target: { files: [new File(["%PDF"], "note.pdf", { type: "application/pdf" })] },
+    });
+    expect(await screen.findByRole("alert")).toHaveTextContent("Use a photo or a video");
+    expect(attachMock).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Cough reel" }));
+    const reelFile = screen.getByLabelText("Attach the file for Cough reel");
+    expect(reelFile.getAttribute("accept")).toMatch(/image\/jpeg/);
+    expect(reelFile.getAttribute("accept")).toMatch(/mp4/);
+    expect(reelFile.getAttribute("accept")).not.toMatch(/pdf/i);
+    fireEvent.change(reelFile, {
+      target: { files: [new File(["%PDF"], "note.pdf", { type: "application/pdf" })] },
+    });
+    expect(await screen.findByRole("alert")).toHaveTextContent("Use a photo or a video");
+    scrapMock.mockClear();
+    fireEvent.change(screen.getByLabelText("Add a reference"), {
+      target: { files: [new File(["%PDF"], "note.pdf", { type: "application/pdf" })] },
+    });
+    expect(screen.getByRole("alert")).toHaveTextContent("Use a photo or a video");
+    expect(screen.getByLabelText("Add a reference").getAttribute("accept")).toBe("image/*,video/*");
+    expect(attachMock).not.toHaveBeenCalled();
+    expect(scrapMock).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Dengue story" }));
+    const storyFile = screen.getByLabelText("Attach the file for Dengue story");
+    expect(storyFile.getAttribute("accept")).toMatch(/image\/jpeg/);
+    expect(storyFile.getAttribute("accept")).toMatch(/video\/mp4/);
+    expect(storyFile.getAttribute("accept")).not.toMatch(/pdf/i);
+    fireEvent.change(storyFile, {
+      target: { files: [new File(["wav"], "note.wav", { type: "audio/wav" })] },
+    });
+    expect(await screen.findByRole("alert")).toHaveTextContent("Use a photo or a video");
+    expect(attachMock).not.toHaveBeenCalled();
+  });
+
+  it("sets a time from the composer and the calendar keeps it", async () => {
     const when = new Date();
-    when.setDate(when.getDate() + 1);
     when.setHours(9, 0, 0, 0);
-    const pad = (value: number): string => String(value).padStart(2, "0");
-    const local = `${when.getFullYear()}-${pad(when.getMonth() + 1)}-${pad(when.getDate())}T09:00`;
-    const iso = new Date(local).toISOString();
+    const iso = new Date(when.getFullYear(), when.getMonth(), when.getDate(), 9, 0).toISOString();
+    const dayName = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][when.getDay()];
     const timed = card({
       id: "1",
       title: "Fees",
@@ -625,12 +843,22 @@ describe("Social shell", () => {
 
     render(<SocialClient token="token" />);
     fireEvent.click(await screen.findByRole("button", { name: "Fees" }));
-    fireEvent.change(screen.getByLabelText("Post at"), { target: { value: local } });
+    fireEvent.click(screen.getByRole("button", { name: `Choose ${dayName} ${when.getDate()}` }));
+    fireEvent.click(screen.getByLabelText("Hour"));
+    fireEvent.click(screen.getByRole("option", { name: "09" }));
+    fireEvent.click(screen.getByLabelText("Minute"));
+    fireEvent.click(screen.getByRole("option", { name: "00" }));
+    const clock = when.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+    expect(screen.getByText(new RegExp(`Halo Aid posts this on .+${clock.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`))).toBeInTheDocument();
     listMock.mockResolvedValue([timed]);
     fireEvent.click(screen.getByRole("button", { name: "Schedule" }));
     await waitFor(() => {
-      expect(updateMock).toHaveBeenCalledWith("token", "1", { scheduledAt: iso });
+      expect(updateMock).toHaveBeenCalledWith("token", "1", { scheduledAt: iso, words: {} });
     });
+    expect(await screen.findByRole("button", { name: "Scheduled" })).toBeDisabled();
+    fireEvent.click(screen.getByLabelText("Minute"));
+    fireEvent.click(screen.getByRole("option", { name: "05" }));
+    expect(screen.getByRole("button", { name: "Schedule" })).toBeEnabled();
     expect(moveMock).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole("tab", { name: "Schedule" }));
@@ -682,7 +910,7 @@ describe("Social shell", () => {
     render(<SocialClient token="token" />);
     fireEvent.click(await screen.findByRole("button", { name: "Fees" }));
     const note = screen.getByLabelText("Thought note");
-    const line = note.querySelector("textarea");
+    const line = note.querySelector("[role='textbox']");
     const selection = vi.spyOn(window, "getSelection").mockReturnValue({
       toString: () => "headache tips",
       rangeCount: 1,
@@ -706,7 +934,7 @@ describe("Social shell", () => {
     fireEvent.click(screen.getByRole("button", { name: "Caption" }));
 
     expect(screen.getByLabelText("Caption")).toHaveValue("headache tips");
-    expect(note.querySelector("textarea")).toHaveValue("headache tips");
+    expect(line?.textContent).toBe("headache tips");
     selection.mockRestore();
   });
 
@@ -728,7 +956,7 @@ describe("Social shell", () => {
       fireEvent.dragStart(screen.getByLabelText("Move line"), { dataTransfer: transfer });
       fireEvent.drop(screen.getByLabelText("Caption"), { dataTransfer: transfer });
       expect(screen.getByLabelText("Caption")).toHaveValue("headache tips");
-      expect(screen.getByLabelText("Note")).toHaveValue("headache tips");
+      expect(screen.getByLabelText("Note").textContent).toBe("headache tips");
     });
   });
 
@@ -803,16 +1031,76 @@ describe("Social shell", () => {
     render(<SocialClient token="token" />);
     fireEvent.click(await screen.findByRole("button", { name: "Fees" }));
 
+    expect(screen.getByRole("button", { name: "4:5" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "1:1" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Original" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "16:9" })).toHaveAttribute("aria-pressed", "false");
     expect(screen.getByLabelText("Caption")).toBeInTheDocument();
     expect(screen.getByText("2200")).toBeInTheDocument();
-    expect(screen.getByLabelText("First comment")).toBeInTheDocument();
-    expect(screen.getByText("Automatic")).toBeInTheDocument();
-    expect(screen.queryByLabelText("Alt text")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Shot 1")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "More" }));
     expect(screen.getByLabelText("Alt text")).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("Music"), { target: { value: "Soft" } });
-    expect(screen.getByText("Notify me")).toBeInTheDocument();
+    expect(screen.getByLabelText("Collaborators")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "AI-generated" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Turn off commenting" })).toBeInTheDocument();
+    expect(screen.getByLabelText("First comment")).toBeInTheDocument();
+    expect(screen.queryByText("AI info")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "AI-generated" }));
+    expect(screen.getByText("AI info")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Post for me" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "I'll post it" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "More" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Location")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Music")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Product")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Shot 1")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "About Alt text" }));
+    expect(screen.getByRole("note")).toHaveTextContent("read-aloud");
+  });
+
+  it("keeps a saved song on you and a saved place on the time screen", async () => {
+    listMock.mockResolvedValue([
+      card({
+        id: "song",
+        title: "Song",
+        stage: "ready",
+        format: "post",
+        hasFile: true,
+        words: { music: "Soft" },
+      }),
+      card({
+        id: "place",
+        title: "Place",
+        stage: "ready",
+        format: "post",
+        hasFile: true,
+        words: { location: "Clinic" },
+      }),
+    ]);
+
+    render(<SocialClient token="token" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Song" }));
+    expect(screen.getByRole("button", { name: "Post for me" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "I'll post it" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByLabelText("Music")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Reminder message")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Place" }));
+    const place = screen.getByRole("dialog", { name: "Card Place" });
+    expect(within(place).getByRole("button", { name: "Post for me" })).toHaveAttribute("aria-pressed", "true");
+    expect(within(place).getByRole("button", { name: "Post now" })).toBeInTheDocument();
+    expect(within(place).queryByLabelText("Reminder message")).not.toBeInTheDocument();
+    expect(within(place).getByText(/Skip the date and time above. This card goes out at this minute/)).toBeInTheDocument();
+    expect(within(place).getByText("Halo Aid posts this on your Instagram at the time you set.")).toBeInTheDocument();
+    const copyList = within(place).getByRole("region", { name: "Copy into Instagram" });
+    expect(copyList).toHaveTextContent("Clinic");
+    fireEvent.click(within(place).getByRole("button", { name: "I'll post it" }));
+    expect(within(place).getByRole("button", { name: "It's posted" })).toBeInTheDocument();
+    expect(within(place).queryByRole("button", { name: "Post now" })).not.toBeInTheDocument();
+    expect(within(place).getByText(/Mark it once it is on Instagram/)).toBeInTheDocument();
+    expect(within(place).getByText("You post this. The time is a reminder.")).toBeInTheDocument();
+    expect(within(place).getByLabelText("Reminder message")).toBeInTheDocument();
+    expect(within(place).queryByText("Halo Aid posts this on your Instagram at the time you set.")).not.toBeInTheDocument();
+    expect(within(place).getByRole("region", { name: "Copy into Instagram" })).toHaveTextContent("Clinic");
   });
 
   it("keeps a thought to a title", async () => {
@@ -821,17 +1109,30 @@ describe("Social shell", () => {
     render(<SocialClient token="token" />);
     fireEvent.click(await screen.findByRole("button", { name: "Fees" }));
 
-    expect(screen.getByRole("combobox", { name: "Column" })).toHaveValue("thoughts");
+    const track = screen.getByRole("navigation", { name: "Column" });
+    expect(within(track).getByRole("button", { name: "Ideas" })).toHaveAttribute("aria-current", "step");
+    expect(screen.queryByRole("button", { name: "Back to Chosen" })).not.toBeInTheDocument();
+    expect(track.querySelector(".bg-primary")).toBeTruthy();
+    expect(within(track).getByRole("button", { name: "Chosen" })).not.toHaveAttribute("aria-current");
+    fireEvent.click(within(track).getByRole("button", { name: "Ready" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("Ready needs a file");
+    expect(moveMock).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("Title")).toHaveClass("font-semibold");
     expect(screen.getByLabelText("Note")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Choose" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Publish" })).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Topic")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Tags" }));
     expect(screen.getByLabelText("Topic")).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("Note"), { target: { value: "/" } });
-    expect(screen.getByRole("menuitem", { name: "Heading" })).toBeInTheDocument();
+    const note = screen.getByLabelText("Note");
+    note.textContent = "/";
+    fireEvent.input(note);
+    expect(screen.getByRole("menuitem", { name: "Heading 1" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Heading 2" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Heading 3" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "File" })).toBeInTheDocument();
-    expect(screen.getByRole("menuitem", { name: "Link" })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Link" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Paste link")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Caption")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Format")).not.toBeInTheDocument();
     expect(screen.queryByRole("option", { name: "Post" })).not.toBeInTheDocument();
@@ -839,7 +1140,7 @@ describe("Social shell", () => {
     expect(screen.queryByRole("option", { name: "Story" })).not.toBeInTheDocument();
   });
 
-  it("saves a topic on a thought and leaves it in Thoughts and ideas", async () => {
+  it("saves a topic on a thought and leaves it in Ideas", async () => {
     listMock.mockResolvedValue([card({ id: "1", title: "Fees", stage: "thoughts" })]);
     updateMock.mockResolvedValue(
       card({ id: "1", title: "Fees", stage: "thoughts", topic: "Cough" })
@@ -860,37 +1161,29 @@ describe("Social shell", () => {
       });
     });
     expect(screen.queryByLabelText("Format")).not.toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "Thoughts and ideas" })).toHaveTextContent("Fees");
+    expect(screen.getByRole("region", { name: "Ideas" })).toHaveTextContent("Fees");
   });
 
-  it("starts making from Chosen and sends the stage on its own", async () => {
+  it("starts making from Chosen and keeps the making card open", async () => {
     listMock.mockResolvedValue([card({ id: "1", title: "Fees", stage: "chosen" })]);
-    updateMock.mockResolvedValue(card({ id: "1", title: "Fees", stage: "chosen", format: "post" }));
-    moveMock.mockResolvedValue(card({ id: "1", title: "Fees", stage: "making", format: "post" }));
+    moveMock.mockResolvedValue(card({ id: "1", title: "Fees", stage: "making" }));
 
     render(<SocialClient token="token" />);
     fireEvent.click(await screen.findByRole("button", { name: "Fees" }));
     expect(screen.getByLabelText("Note")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Start making" }));
-    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-    expect(updateMock).not.toHaveBeenCalled();
-    expect(moveMock).not.toHaveBeenCalled();
-    expect(screen.getByRole("button", { name: "Start making" })).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Start making" }));
-    fireEvent.click(screen.getByRole("button", { name: "Post" }));
-
-    await waitFor(() => {
-      expect(updateMock).toHaveBeenCalledWith("token", "1", {
-        title: "Fees",
-        format: "post",
-        topic: null,
-        sourceUrl: null,
-        words: {},
-      });
-    });
     expect(moveMock).toHaveBeenCalledWith("token", "1", "making");
-    expect(updateMock.mock.calls.some((call) => call[2]?.stage)).toBe(false);
+    expect(updateMock).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog", { name: "Card Fees" })).toBeInTheDocument();
+    expect(screen.getByRole("complementary", { name: "Preview" })).toBeInTheDocument();
+    const track = screen.getByRole("navigation", { name: "Column" });
+    expect(within(track).getByRole("button", { name: "Making" })).toHaveAttribute("aria-current", "step");
+    expect(within(track).getByRole("button", { name: "Chosen" }).querySelector("svg")).toBeTruthy();
+    expect(screen.getByRole("region", { name: "Making" })).toHaveTextContent("Fees");
+    expect(screen.getByRole("region", { name: "Chosen" })).not.toHaveTextContent("Fees");
+    fireEvent.click(screen.getByRole("button", { name: "Back to Chosen" }));
+    expect(moveMock).toHaveBeenCalledWith("token", "1", "chosen");
   });
 
   it("shortlists a thought and does not post", async () => {
@@ -904,6 +1197,14 @@ describe("Social shell", () => {
     expect(moveMock).toHaveBeenCalledWith("token", "1", "chosen");
     expect(updateMock).not.toHaveBeenCalled();
     expect(screen.queryByRole("button", { name: "Publish" })).not.toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Card Fees" })).toBeInTheDocument();
+    const track = screen.getByRole("navigation", { name: "Column" });
+    expect(within(track).getByRole("button", { name: "Chosen" })).toHaveAttribute("aria-current", "step");
+    expect(within(track).getByRole("button", { name: "Ideas" }).querySelector("svg")).toBeTruthy();
+    expect(screen.queryByText("Chosen. Start making when you are ready.")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Start making" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Chosen" })).toHaveTextContent("Fees");
+    expect(screen.getByRole("region", { name: "Ideas" })).not.toHaveTextContent("Fees");
   });
 
   it("restores one binned card, deletes another, and can empty the bin", async () => {
@@ -960,7 +1261,7 @@ describe("Social shell", () => {
     ]);
 
     render(<SocialClient token="token" />);
-    const thoughts = await screen.findByRole("region", { name: "Thoughts and ideas" });
+    const thoughts = await screen.findByRole("region", { name: "Ideas" });
     const making = screen.getByRole("region", { name: "Making" });
     const chosen = screen.getByRole("region", { name: "Chosen" });
     const ready = screen.getByRole("region", { name: "Ready" });
@@ -971,10 +1272,10 @@ describe("Social shell", () => {
     expect(within(chosen).getByRole("option", { name: "All" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Column menu for Ready" }));
     expect(within(ready).getByRole("option", { name: "Post" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Column menu for Thoughts and ideas" }));
+    fireEvent.click(screen.getByRole("button", { name: "Column menu for Ideas" }));
     expect(within(thoughts).queryByRole("option", { name: "Post" })).not.toBeInTheDocument();
 
-    fireEvent.change(screen.getByLabelText("Tags for Thoughts and ideas"), {
+    fireEvent.change(screen.getByLabelText("Tags for Ideas"), {
       target: { value: "topic:Cough" },
     });
 
@@ -1001,13 +1302,13 @@ describe("Social shell", () => {
     ]);
 
     const { unmount } = render(<SocialClient token="token" />);
-    const thoughts = await screen.findByRole("region", { name: "Thoughts and ideas" });
+    const thoughts = await screen.findByRole("region", { name: "Ideas" });
     expect(thoughts.textContent?.indexOf("Zebra")).toBeLessThan(
       thoughts.textContent?.indexOf("Apple") ?? 0
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Column menu for Thoughts and ideas" }));
-    fireEvent.change(screen.getByLabelText("Sort for Thoughts and ideas"), {
+    fireEvent.click(screen.getByRole("button", { name: "Column menu for Ideas" }));
+    fireEvent.change(screen.getByLabelText("Sort for Ideas"), {
       target: { value: "az" },
     });
     expect(thoughts.textContent?.indexOf("Apple")).toBeLessThan(
@@ -1017,9 +1318,9 @@ describe("Social shell", () => {
     unmount();
     render(<SocialClient token="token" />);
     fireEvent.click(
-      await screen.findByRole("button", { name: "Column menu for Thoughts and ideas" })
+      await screen.findByRole("button", { name: "Column menu for Ideas" })
     );
-    expect(screen.getByLabelText("Sort for Thoughts and ideas")).toHaveValue("latest");
+    expect(screen.getByLabelText("Sort for Ideas")).toHaveValue("latest");
   });
 
   it("opens a column in folded topic groups", async () => {
@@ -1031,9 +1332,9 @@ describe("Social shell", () => {
 
     render(<SocialClient token="token" />);
     expect(await screen.findByRole("button", { name: "Expand Chosen" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Expand Thoughts and ideas" }));
+    fireEvent.click(screen.getByRole("button", { name: "Expand Ideas" }));
 
-    const wide = await screen.findByRole("dialog", { name: "Thoughts and ideas" });
+    const wide = await screen.findByRole("dialog", { name: "Ideas" });
     expect(within(wide).getByRole("button", { name: "No topic" })).toHaveAttribute(
       "aria-expanded",
       "false"
@@ -1059,7 +1360,7 @@ describe("Social shell", () => {
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
     fireEvent.click(screen.getByRole("button", { name: "Close column" }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "Thoughts and ideas" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Ideas" })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Ready" })).toBeInTheDocument();
   });
 
@@ -1083,21 +1384,21 @@ describe("Social shell", () => {
     ]);
 
     render(<SocialClient token="token" />);
-    await screen.findByRole("region", { name: "Thoughts and ideas" });
-    fireEvent.click(screen.getByRole("button", { name: "Column menu for Thoughts and ideas" }));
-    fireEvent.change(screen.getByLabelText("Tags for Thoughts and ideas"), {
+    await screen.findByRole("region", { name: "Ideas" });
+    fireEvent.click(screen.getByRole("button", { name: "Column menu for Ideas" }));
+    fireEvent.change(screen.getByLabelText("Tags for Ideas"), {
       target: { value: "topic:Fees" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Expand Thoughts and ideas" }));
+    fireEvent.click(screen.getByRole("button", { name: "Expand Ideas" }));
 
-    const wide = await screen.findByRole("dialog", { name: "Thoughts and ideas" });
-    expect(within(wide).getByLabelText("Tags for Thoughts and ideas")).toHaveValue("topic:Fees");
+    const wide = await screen.findByRole("dialog", { name: "Ideas" });
+    expect(within(wide).getByLabelText("Tags for Ideas")).toHaveValue("topic:Fees");
     expect(within(wide).queryByRole("button", { name: "Cough" })).not.toBeInTheDocument();
     fireEvent.click(within(wide).getByRole("button", { name: "Fees" }));
     const text = wide.textContent ?? "";
     expect(text.indexOf("Zebra")).toBeLessThan(text.indexOf("Apple"));
 
-    fireEvent.change(within(wide).getByLabelText("Sort for Thoughts and ideas"), {
+    fireEvent.change(within(wide).getByLabelText("Sort for Ideas"), {
       target: { value: "az" },
     });
     const sorted = wide.textContent ?? "";
@@ -1108,17 +1409,18 @@ describe("Social shell", () => {
     listMock.mockResolvedValue([
       card({ id: "pick", title: "Shortlist", stage: "chosen" }),
       card({ id: "reel", title: "Cough reel", stage: "making", format: "reel" }),
-      card({ id: "story", title: "Dengue story", stage: "making", format: "story" }),
+      card({ id: "story", title: "Dengue story", stage: "making", format: "story", hasFile: true, fileKind: "photo" }),
       card({ id: "making", title: "In the edit", stage: "making" }),
       card({ id: "ready", title: "Fees photo", stage: "ready", hasFile: true }),
     ]);
 
     render(<SocialClient token="token" />);
 
-    expect(await screen.findByRole("button", { name: "Add to Ready" })).toBeInTheDocument();
+    expect(await screen.findByRole("region", { name: "Ready" })).toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: "Ready" })).getByRole("button", { name: "Add new" })).toBeInTheDocument();
     expect(screen.queryByLabelText("New idea")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("File already made")).not.toBeInTheDocument();
-    const columns = screen.getByRole("region", { name: "Thoughts and ideas" });
+    const columns = screen.getByRole("region", { name: "Ideas" });
     expect(columns.parentElement).toHaveClass("grid-cols-1");
     expect(screen.getByRole("region", { name: "Chosen" })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Making" })).toBeInTheDocument();
@@ -1132,15 +1434,28 @@ describe("Social shell", () => {
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
 
     fireEvent.click(screen.getByRole("button", { name: "Cough reel" }));
-    expect(screen.getByLabelText("Hook")).toBeInTheDocument();
-    expect(screen.getByLabelText("Cover line")).toBeInTheDocument();
     expect(screen.getByLabelText("Caption")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Hook")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Cover line")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Collaborators")).toBeInTheDocument();
+    expect(screen.getByLabelText("First comment")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Share to the feed" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Your story" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Turn off commenting" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("Alt text")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Script")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Shot 1")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
 
     fireEvent.click(screen.getByRole("button", { name: "Dengue story" }));
     expect(screen.getByLabelText("Line")).toBeInTheDocument();
+    expect(screen.getByLabelText("Add a picture")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "AI-generated" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Turn off commenting" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Caption")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Collaborators")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("First comment")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Your story" })).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Shot 1")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
 
@@ -1160,7 +1475,153 @@ describe("Social shell", () => {
     expect(await screen.findByText("Nothing has been posted.")).toBeInTheDocument();
   });
 
-  it("tells a Ready card to post from the phone and can clear the time", async () => {
+  it("lists an unscheduled Ready card before a timed one", async () => {
+    listMock.mockResolvedValue([
+      card({
+        id: "1",
+        title: "Fees",
+        stage: "ready",
+        hasFile: true,
+        scheduledAt: "2099-10-28T14:00:00.000Z",
+        updatedAt: "2026-10-20T00:00:00.000Z",
+      }),
+      card({
+        id: "2",
+        title: "Parked",
+        stage: "ready",
+        hasFile: true,
+        scheduledAt: null,
+        updatedAt: "2026-10-01T00:00:00.000Z",
+      }),
+      card({
+        id: "3",
+        title: "Late",
+        stage: "ready",
+        hasFile: true,
+        scheduledAt: "2020-01-02T08:00:00.000Z",
+        updatedAt: "2026-10-21T00:00:00.000Z",
+      }),
+    ]);
+
+    render(<SocialClient token="token" />);
+    const ready = await screen.findByRole("region", { name: "Ready" });
+    const text = ready.textContent ?? "";
+    expect(text.indexOf("Parked")).toBeLessThan(text.indexOf("Late"));
+    expect(text.indexOf("Late")).toBeLessThan(text.indexOf("Fees"));
+    expect(within(ready).getByRole("button", { name: "Parked" }).closest("li")).toHaveTextContent(
+      "Not scheduled"
+    );
+    expect(within(ready).getByRole("button", { name: "Late" }).closest("li")).toHaveTextContent(/Due · /);
+    const fees = within(ready).getByRole("button", { name: "Fees" }).closest("li");
+    expect(fees).not.toHaveTextContent("Not scheduled");
+    expect(fees).not.toHaveTextContent("Due");
+  });
+
+  it("treats a Ready card the doctor will post as a reminder", async () => {
+    listMock.mockResolvedValue([
+      card({
+        id: "1",
+        title: "Fees",
+        stage: "ready",
+        format: "post",
+        hasFile: true,
+        scheduledAt: "2099-10-28T14:00:00.000Z",
+        words: { byHand: true, caption: "Hello", music: "Soft" },
+      }),
+    ]);
+    updateMock.mockResolvedValue(
+      card({
+        id: "1",
+        title: "Fees",
+        stage: "posted",
+        format: "post",
+        hasFile: true,
+        words: { byHand: true, caption: "Hello" },
+      })
+    );
+
+    render(<SocialClient token="token" />);
+    const ready = await screen.findByRole("region", { name: "Ready" });
+    expect(within(ready).getByRole("button", { name: "Fees" }).closest("li")).toHaveTextContent(/You post · /);
+    fireEvent.click(within(ready).getByRole("button", { name: "Fees" }));
+    expect(screen.getByRole("button", { name: "Post for me" })).toBeDisabled();
+    const copyList = screen.getByRole("region", { name: "Copy into Instagram" });
+    expect(copyList).toHaveTextContent("Hello");
+    expect(copyList).toHaveTextContent("Soft");
+    expect(within(copyList).getAllByRole("button", { name: "Copy" }).length).toBeGreaterThan(0);
+    expect(screen.getByRole("heading", { name: "Reminder" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Remind me" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Post now" })).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Reminder message"), { target: { value: "Pin the clinic" } });
+    await waitFor(() => {
+      expect(updateMock).toHaveBeenCalledWith(
+        "token",
+        "1",
+        expect.objectContaining({ words: expect.objectContaining({ handNote: "Pin the clinic", byHand: true }) })
+      );
+    });
+    fireEvent.click(screen.getByRole("button", { name: "It's posted" }));
+    await waitFor(() => {
+      expect(updateMock).toHaveBeenCalledWith("token", "1", { manualPosted: true });
+    });
+  });
+
+  it("filters Ready by schedule status and keeps posted cards off the board", async () => {
+    listMock.mockResolvedValue([
+      card({ id: "1", title: "Parked", stage: "ready", hasFile: true, scheduledAt: null }),
+      card({
+        id: "2",
+        title: "Fees",
+        stage: "ready",
+        hasFile: true,
+        scheduledAt: "2099-10-28T14:00:00.000Z",
+      }),
+      card({
+        id: "3",
+        title: "Late",
+        stage: "ready",
+        hasFile: true,
+        scheduledAt: "2020-01-02T08:00:00.000Z",
+      }),
+      card({
+        id: "4",
+        title: "Live",
+        stage: "posted",
+        hasFile: true,
+        instagramUrl: "https://instagram.com/p/live",
+      }),
+    ]);
+
+    render(<SocialClient token="token" />);
+    const ready = await screen.findByRole("region", { name: "Ready" });
+    expect(within(ready).getByRole("button", { name: "Parked" })).toBeInTheDocument();
+    expect(within(ready).getByRole("button", { name: "Fees" })).toBeInTheDocument();
+    expect(within(ready).getByRole("button", { name: "Late" })).toBeInTheDocument();
+    expect(within(ready).queryByRole("button", { name: "Live" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Column menu for Ideas" }));
+    expect(screen.queryByLabelText("Status for Ideas")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Column menu for Ready" }));
+    const status = screen.getByLabelText("Status for Ready");
+    expect(status).toHaveValue("all");
+
+    fireEvent.change(status, { target: { value: "due" } });
+    expect(within(ready).getByRole("button", { name: "Late" })).toBeInTheDocument();
+    expect(within(ready).queryByRole("button", { name: "Parked" })).not.toBeInTheDocument();
+    expect(within(ready).queryByRole("button", { name: "Fees" })).not.toBeInTheDocument();
+
+    fireEvent.change(status, { target: { value: "scheduled" } });
+    expect(within(ready).getByRole("button", { name: "Fees" })).toBeInTheDocument();
+    expect(within(ready).queryByRole("button", { name: "Late" })).not.toBeInTheDocument();
+    expect(within(ready).queryByRole("button", { name: "Parked" })).not.toBeInTheDocument();
+
+    fireEvent.change(status, { target: { value: "open" } });
+    expect(within(ready).getByRole("button", { name: "Parked" })).toBeInTheDocument();
+    expect(within(ready).queryByRole("button", { name: "Fees" })).not.toBeInTheDocument();
+    expect(within(ready).queryByRole("button", { name: "Late" })).not.toBeInTheDocument();
+  });
+
+  it("keeps a Ready card on the week and the time, and can clear the time", async () => {
     updateMock.mockResolvedValue(
       card({ id: "1", title: "Fees", stage: "ready", hasFile: true, scheduledAt: null })
     );
@@ -1178,15 +1639,117 @@ describe("Social shell", () => {
     render(<SocialClient token="token" />);
     fireEvent.click(await screen.findByRole("button", { name: "Fees" }));
 
-    expect(screen.getByText("Post this from your phone at this time.")).toBeInTheDocument();
-    expect(screen.getByText("Page link /d/fees")).toBeInTheDocument();
-    expect(screen.getByLabelText("Post at")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Publish" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Note")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Caption")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Hour")).toBeInTheDocument();
+    expect(screen.getByRole("complementary", { name: "Preview" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Schedule" })).toBeInTheDocument();
+    expect(screen.queryByText("OR")).not.toBeInTheDocument();
+    expect(screen.getByText(/Skip the date and time above. This card goes out at this minute/)).toBeInTheDocument();
+    expect(screen.getByText(/Halo Aid posts this on /)).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Card Fees" })).not.toHaveTextContent("Not scheduled");
+    expect(screen.getByRole("button", { name: "Post now" })).toBeInTheDocument();
+    expect(screen.queryByText("Already posted?")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Instagram link")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Clear time" }));
     await waitFor(() => {
       expect(updateMock).toHaveBeenCalledWith("token", "1", { scheduledAt: null });
     });
+  });
+
+  it("posts a Ready card at this minute", async () => {
+    let answer: (value: ReturnType<typeof card>) => void = () => undefined;
+    updateMock.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          answer = resolve;
+        })
+    );
+    listMock.mockResolvedValue([
+      card({
+        id: "1",
+        title: "Fees",
+        stage: "ready",
+        format: "post",
+        hasFile: true,
+        words: { crop: "portrait" },
+        publishError: "not_connected",
+      }),
+    ]);
+
+    render(<SocialClient token="token" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Fees" }));
+
+    expect(screen.getByText("Post · 4:5")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Add a picture")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Remove picture 1" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Format" })).not.toBeInTheDocument();
+    expect(screen.getByText("Instagram is not connected. Connect it, then try again.")).toBeInTheDocument();
+
+    listMock.mockResolvedValue([
+      card({
+        id: "1",
+        title: "Fees",
+        stage: "ready",
+        format: "post",
+        hasFile: true,
+        words: { crop: "portrait" },
+        publishError: null,
+      }),
+    ]);
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByRole("button", { name: "Posting…" })).toBeDisabled();
+    await waitFor(() => {
+      expect(updateMock).toHaveBeenCalledWith("token", "1", { words: { crop: "portrait" }, postNow: true });
+    });
+    answer(card({ id: "1", title: "Fees", stage: "ready", format: "post", hasFile: true, words: { crop: "portrait" } }));
+    expect(await screen.findByRole("button", { name: "Posting…" })).toBeDisabled();
+    expect(screen.getByText("Sending to Instagram. A video can take a few minutes.")).toBeInTheDocument();
+    expect(screen.queryByText("Instagram is not connected. Connect it, then try again.")).not.toBeInTheDocument();
+
+    listMock.mockResolvedValue([
+      card({
+        id: "1",
+        title: "Fees",
+        stage: "posted",
+        format: "post",
+        hasFile: false,
+        instagramUrl: "https://www.instagram.com/p/DummyPost01/",
+      }),
+    ]);
+    expect(await screen.findByText("Posted on Instagram", undefined, { timeout: 4000 })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Open on Instagram" })).toHaveAttribute(
+      "href",
+      "https://www.instagram.com/p/DummyPost01/"
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Done" }));
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "Card Fees" })).not.toBeInTheDocument();
+    });
+  });
+
+  it("shows why a send did not go out and offers to try again", async () => {
+    updateMock.mockResolvedValue(
+      card({ id: "1", title: "Fees", stage: "ready", format: "post", hasFile: true })
+    );
+    listMock.mockResolvedValue([
+      card({ id: "1", title: "Fees", stage: "ready", format: "post", hasFile: true }),
+    ]);
+
+    render(<SocialClient token="token" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Fees" }));
+    listMock.mockResolvedValue([
+      card({ id: "1", title: "Fees", stage: "ready", format: "post", hasFile: true, publishError: "meta_rejected" }),
+    ]);
+    fireEvent.click(screen.getByRole("button", { name: "Post now" }));
+
+    expect(
+      await screen.findByText("Instagram did not take it. Halo Aid tries again in 15 minutes.", undefined, {
+        timeout: 4000,
+      })
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Try again" })).toBeEnabled();
   });
 
   it("lists timed cards under their days and opens the same card", async () => {
@@ -1300,7 +1863,7 @@ describe("Social shell", () => {
     expect(screen.getByRole("region", { name: dayLabel(second) })).toHaveTextContent("Cough");
   });
 
-  it("shows the durable page link in the first comment", async () => {
+  it("leaves the first comment empty when the card has a page link", async () => {
     listMock.mockResolvedValue([
       card({
         id: "1",
@@ -1314,98 +1877,62 @@ describe("Social shell", () => {
     render(<SocialClient token="token" />);
     fireEvent.click(await screen.findByRole("button", { name: "Fees" }));
 
-    expect(screen.getByLabelText("First comment")).toHaveValue("/d/fees?c=23456789AB");
+    expect(screen.getByLabelText("First comment")).toHaveValue("");
   });
 
-  it("moves a pasted post off Schedule and onto Analytics", async () => {
-    const url = "https://www.instagram.com/p/DummyPost01/";
+  it("hides the first comment while commenting is off and keeps the words", async () => {
+    listMock.mockResolvedValue([
+      card({
+        id: "1",
+        title: "Fees",
+        stage: "making",
+        format: "post",
+        words: { firstComment: "Book here", commentsOff: true },
+      }),
+    ]);
+
+    render(<SocialClient token="token" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Fees" }));
+
+    const comments = screen.getByRole("button", { name: "Turn off commenting" });
+    expect(comments).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByLabelText("First comment")).not.toBeInTheDocument();
+    expect(screen.queryByText("Book here")).not.toBeInTheDocument();
+
+    fireEvent.click(comments);
+    expect(screen.getByLabelText("First comment")).toHaveValue("Book here");
+  });
+
+  it("schedules from the month and does not ask for an Instagram link", async () => {
+    const today = new Date();
+    const dayName = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][today.getDay()];
     listMock.mockResolvedValue([
       card({
         id: "1",
         title: "Fees",
         stage: "ready",
         format: "post",
-        topic: "Cough",
         hasFile: true,
-        scheduledAt: "2026-10-13T08:00:00.000Z",
-        pagePath: "/d/fees?c=23456789AB",
       }),
     ]);
-    updateMock.mockResolvedValue(
-      card({
-        id: "1",
-        title: "Fees",
-        stage: "posted",
-        format: "post",
-        topic: "Cough",
-        hasFile: false,
-        scheduledAt: null,
-        instagramUrl: url,
-        visitCount: 0,
-        pagePath: "/d/fees?c=23456789AB",
-      })
-    );
 
     render(<SocialClient token="token" />);
     fireEvent.click(await screen.findByRole("button", { name: "Fees" }));
-    fireEvent.change(screen.getByLabelText("Instagram link"), {
-      target: { value: url },
-    });
-    listMock.mockResolvedValue([
-      card({
-        id: "1",
-        title: "Fees",
-        stage: "posted",
-        format: "post",
-        topic: "Cough",
-        hasFile: false,
-        scheduledAt: null,
-        instagramUrl: url,
-        visitCount: 0,
-        pagePath: "/d/fees?c=23456789AB",
-      }),
-    ]);
-    fireEvent.click(screen.getByRole("button", { name: "This is posted" }));
 
-    await waitFor(() => {
-      expect(updateMock).toHaveBeenCalledWith("token", "1", { instagramUrl: url });
-    });
-    await waitFor(() => {
-      expect(screen.queryByRole("button", { name: "Fees" })).not.toBeInTheDocument();
-    });
+    const todayButton = screen.getByRole("button", { name: `Choose ${dayName} ${today.getDate()}` });
+    expect(todayButton).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByRole("heading", { name: "Schedule" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("Instagram link")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "This is posted" })).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("tab", { name: "Schedule" }));
-    expect(await screen.findByText("Nothing is timed.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Next month" }));
+    expect(screen.queryByRole("button", { name: `Choose ${dayName} ${today.getDate()}` })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Previous month" }));
+    expect(screen.getByRole("button", { name: `Choose ${dayName} ${today.getDate()}` })).toBeInTheDocument();
 
-    analyticsMock.mockResolvedValue(
-      analyticsReport([
-        {
-          id: "1",
-          title: "Fees",
-          format: "post",
-          topic: "Cough",
-          date: "2026-10-18",
-          day: "Sunday, 18 Oct",
-          bookings: 0,
-          enquiries: 0,
-          instagramUrl: url,
-          thumbUrl: null,
-          caption: "",
-        },
-      ])
-    );
-    fireEvent.click(screen.getByRole("tab", { name: "Analytics" }));
-    const row = await screen.findByRole("heading", { name: "Fees" });
-    const item = row.closest("li");
-    expect(item).toHaveTextContent("Post");
-    expect(item).toHaveTextContent("Cough");
-    expect(item).not.toHaveTextContent("Page link");
-    expect(item).not.toHaveTextContent(url);
-    expect(item).not.toHaveTextContent("booking");
-    expect(within(item as HTMLElement).getByRole("link", { name: "Open on Instagram" })).toHaveAttribute(
-      "href",
-      url
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Next month" }));
+    fireEvent.click(screen.getByRole("button", { name: "Today" }));
+    expect(screen.getByRole("button", { name: `Choose ${dayName} ${today.getDate()}` })).toHaveAttribute("aria-pressed", "true");
   });
 
   it("lists posted cards newest first and shows a booking only after the first", async () => {
@@ -1485,7 +2012,7 @@ describe("Social shell", () => {
     expect(screen.getByText("Bookings")).toBeInTheDocument();
   });
 
-  it("copies a posted card into Thoughts and ideas", async () => {
+  it("copies a posted card into Ideas", async () => {
     listMock.mockResolvedValue([
       card({
         id: "1",
@@ -1546,7 +2073,7 @@ describe("Social shell", () => {
     fireEvent.click(screen.getByRole("button", { name: "Use again" }));
 
     expect(await screen.findByRole("button", { name: "Fees" })).toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "Thoughts and ideas" })).toHaveTextContent("Fees");
+    expect(screen.getByRole("region", { name: "Ideas" })).toHaveTextContent("Fees");
     expect(reuseMock).toHaveBeenCalledWith("token", "1");
     expect(screen.queryByText("https://www.instagram.com/p/DummyPost01/")).not.toBeInTheDocument();
     expect(screen.queryByText("2 bookings")).not.toBeInTheDocument();
@@ -1578,9 +2105,9 @@ describe("Social shell", () => {
     expect(screen.queryByRole("button", { name: "Add to Thoughts" })).not.toBeInTheDocument();
   });
 
-  it("keeps the four columns and shows a leftover named-column card under Thoughts and ideas", async () => {
+  it("keeps the four columns and shows a leftover named-column card under Ideas", async () => {
     listColumnsMock.mockResolvedValue([
-      { id: "col-thoughts", kind: "thoughts", name: "Thoughts and ideas", position: 0 },
+      { id: "col-thoughts", kind: "thoughts", name: "Ideas", position: 0 },
       { id: "col-sunday", kind: "custom", name: "Film on Sunday", position: 3 },
       { id: "col-ready", kind: "ready", name: "Ready", position: 4 },
     ]);
@@ -1590,7 +2117,7 @@ describe("Social shell", () => {
 
     render(<SocialClient token="token" />);
 
-    const thoughts = await screen.findByRole("region", { name: "Thoughts and ideas" });
+    const thoughts = await screen.findByRole("region", { name: "Ideas" });
     expect(thoughts).toHaveTextContent("Fees");
     expect(screen.getByRole("region", { name: "Chosen" })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Making" })).toBeInTheDocument();
@@ -1605,6 +2132,8 @@ describe("Social shell", () => {
     expect(cardDrop({ stage: "thoughts", hasFile: false }, "ready")).toBe("needs-file");
     expect(cardDrop({ stage: "thoughts", hasFile: true, fileKind: "document" }, "ready")).toBe("needs-media");
     expect(cardDrop({ stage: "making", hasFile: true, fileKind: "video" }, "ready")).toBe("move");
+    expect(cardDrop({ stage: "making", hasFile: true, fileKind: "photo", format: "reel" }, "ready")).toBe("move");
+    expect(cardDrop({ stage: "making", hasFile: true, fileKind: "video", format: "reel" }, "ready")).toBe("move");
     expect(cardDrop({ stage: "thoughts", hasFile: true, fileKind: "photo", postable: false }, "ready")).toBe(
       "needs-format"
     );

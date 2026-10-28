@@ -23,6 +23,8 @@ import {
 } from '../../../src/services/instagram-connect-service';
 import * as database from '../../../src/config/database';
 
+const mockInboundReplies = { enabled: false };
+
 jest.mock('../../../src/config/database', () => ({
   getSupabaseAdminClient: jest.fn(),
 }));
@@ -37,6 +39,7 @@ jest.mock('../../../src/config/env', () => {
   return {
     env: new Proxy(actual.env, {
       get(target, prop: string) {
+        if (prop === 'META_INBOUND_ENABLED') return mockInboundReplies.enabled;
         if (prop === 'INSTAGRAM_APP_ID') return 'ig-app-id-test';
         if (prop === 'INSTAGRAM_APP_SECRET') return 'ig-app-secret-test-min-32-chars!!';
         if (prop === 'INSTAGRAM_REDIRECT_URI') {
@@ -126,6 +129,7 @@ describe('Instagram Connect Service (e-task-2)', () => {
 describe('getInstagramDashboardStatus (RBH-10)', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockInboundReplies.enabled = false;
   });
 
   it('returns not_connected health when no Instagram row', async () => {
@@ -263,6 +267,50 @@ describe('getInstagramDashboardStatus (RBH-10)', () => {
     expect(r.health.level).toBe('error');
     expect(r.health.reconnectRecommended).toBe(true);
   });
+
+  it('ignores a stale last DM while inbound replies are off', async () => {
+    const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+    const staleDm = new Date(Date.now() - 20 * 24 * 60 * 60 * 1000).toISOString();
+    const statusChain = {
+      select: jest.fn().mockReturnThis(),
+      eq: jest.fn().mockReturnThis(),
+      maybeSingle: jest
+        .fn()
+        .mockResolvedValueOnce({
+          data: { instagram_username: 'halo.aid' },
+          error: null,
+        } as never)
+        .mockResolvedValueOnce({
+          data: {
+            instagram_access_token: 'ig-user-tok',
+            instagram_health_checked_at: null,
+            instagram_health_level: null,
+            instagram_health_error_code: null,
+            instagram_token_expires_at: expiresAt,
+            instagram_last_dm_success_at: staleDm,
+          },
+          error: null,
+        } as never),
+    };
+    const updateChain = {
+      update: jest.fn().mockReturnThis(),
+      eq: jest.fn().mockResolvedValue({ error: null } as never),
+    };
+    const from = jest
+      .fn()
+      .mockReturnValueOnce(statusChain)
+      .mockReturnValueOnce(statusChain)
+      .mockReturnValueOnce(updateChain);
+    mockedDb.getSupabaseAdminClient.mockReturnValue({ from } as never);
+    mockedAxios.get.mockResolvedValue({
+      data: { user_id: '17841433414940360', username: 'halo.aid' },
+    } as never);
+
+    const r = await getInstagramDashboardStatus(doctorId, 'corr-health-stale');
+
+    expect(r.health.level).toBe('ok');
+    expect(r.health.message).not.toMatch(/automated DM/i);
+  });
 });
 
 function createMockSupabaseDelete() {
@@ -318,19 +366,27 @@ describe('Instagram Connect Service – disconnectInstagram (e-task-4)', () => {
 describe('Instagram Login OAuth (ilr-18)', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockInboundReplies.enabled = false;
   });
 
-  it('buildMetaOAuthUrl uses Instagram authorize + business scopes', () => {
+  it('buildMetaOAuthUrl omits messages while inbound replies are off', () => {
     const url = buildMetaOAuthUrl('signed-state');
     expect(url).toContain('https://www.instagram.com/oauth/authorize?');
     expect(url).toContain('client_id=ig-app-id-test');
     expect(url).toContain('instagram_business_basic');
-    expect(url).toContain('instagram_business_manage_messages');
     expect(url).toContain('instagram_business_content_publish');
-    expect(url).not.toContain('instagram_business_manage_comments');
+    expect(url).toContain('instagram_business_manage_insights');
+    expect(url).toContain('instagram_business_manage_comments');
+    expect(url).not.toContain('instagram_business_manage_messages');
     expect(url).not.toContain('pages_show_list');
     expect(url).not.toContain('facebook.com');
     expect(url).toContain('state=signed-state');
+  });
+
+  it('buildMetaOAuthUrl asks for messages when inbound replies are on', () => {
+    mockInboundReplies.enabled = true;
+    const url = buildMetaOAuthUrl('signed-state');
+    expect(url).toContain('instagram_business_manage_messages');
   });
 
   it('exchangeCodeForShortLivedToken POSTs form body and parses top-level response', async () => {

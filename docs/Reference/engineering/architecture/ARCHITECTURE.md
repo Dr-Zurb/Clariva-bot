@@ -77,7 +77,7 @@ backend/src/
 │   └── sanitize-input.ts
 │
 ├── workers/             ← Background job processors
-│   ├── webhook-worker.ts ← BullMQ router + lifecycle (`processWebhookJob`, worker start/stop)
+│   ├── webhook-worker.ts ← BullMQ router + lifecycle (`processWebhookJob`, worker start/stop). Instagram and Facebook DM and comment jobs are marked processed and skipped unless `META_INBOUND_ENABLED` is on. Handler files stay in the repo.
 │   ├── instagram-comment-webhook-handler.ts ← Instagram comment jobs (RBH-05)
 │   ├── instagram-dm-webhook-handler.ts ← Instagram DM / messaging state machine (RBH-05)
 │   └── webhook-dm-send.ts ← Shared DM send locks + throttle + 2018001 fallback (RBH-04)

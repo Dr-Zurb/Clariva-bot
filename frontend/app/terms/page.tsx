@@ -3,7 +3,7 @@ import Link from "next/link";
 
 export const metadata = {
   title: "Terms of Service | Halo Aid",
-  description: "Terms of Service for Halo Aid AI Receptionist",
+  description: "Terms of Service for Halo Aid",
 };
 
 export default function TermsPage() {
@@ -52,8 +52,8 @@ export default function TermsPage() {
             Halo Aid provides software. It does not practise medicine. The
             Registered Medical Practitioner you consult is solely responsible for
             every clinical decision, diagnosis, and prescription. Nothing produced by
-            the automated assistant is medical advice — it schedules, reminds,
-            answers practice questions, and hands off to your doctor.
+            the automated assistant is medical advice. It does not diagnose, and it
+            does not replace your doctor.
           </p>
           <p>
             <strong className="text-foreground">This service is for scheduled

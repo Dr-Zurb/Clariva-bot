@@ -25,8 +25,8 @@ The single place I look when planning a week. If a thread isn't here, it doesn't
 | L10 | Meta platform-action clause | `NEXT` | Send the L10 draft below to ⟨attorney⟩ — briefing points only; counsel writes the clause |
 | M1 | Meta — data deletion callback | `ACTIVE` | Optional Send Request if this Facebook account ever connected Halo Aid |
 | M2 | Meta — business verification | `PARKED` | Later: open WhatsApp “needs more information” |
-| M3 | Meta — app review submission | `WAITING` | Disconnect @haloaid.test so the reviewer finds Not connected |
-| M4 | Meta — post-review account canary | `PARKED` | Unpark only after M3 Advanced Access is approved — then stand up 2–3 owned canaries |
+| M3 | Meta — app review submission | `ACTIVE` | Submit Advanced Access for `instagram_business_content_publish` and `instagram_business_manage_insights` only. Leave Request again on messages unclicked |
+| M4 | Meta — post-review account canary | `PARKED` | Do not start — 22 Oct healthcare rejection, no canary |
 | P1 | Desk / receptionist | `ACTIVE` | Review history-link spec; promote p1; then Opus `hl-01` |
 | P2 | Cockpit / EHR | `PARKED` | — |
 | P3 | Bot / messaging | `PARKED` | — |
@@ -165,7 +165,7 @@ We need contract language before a clinic with a large Instagram following goes 
 4. The doctor / clinic owns the Instagram account; Halo Aid is a software tool acting on their connection.
 5. Liability for platform actions (including account restriction) should be capped.
 6. Meta's Platform Terms treat Halo Aid as a "Tech Provider" and require us to contractually prohibit the clinic from processing Instagram-derived data in a way that violates Meta's terms (Platform Terms §5.b.ii.4.a). The agreement needs that clause.
-7. Separate question, please advise in writing: Meta's Developer Policies §5 say messaging must not be used "to facilitate direct conversations between people and healthcare providers or to send or collect any patient data obtained from healthcare providers." How does that read against (a) an appointment/FAQ receptionist bot on a clinic account, and (b) appointment reminders / prescription-ready notices sent in DMs? (Full text + our audit: `docs/Reference/engineering/compliance/meta-terms/2026-09-15/`.)
+7. Separate question, please advise in writing: Meta's Developer Policies §5 say messaging must not be used "to facilitate direct conversations between people and healthcare providers or to send or collect any patient data obtained from healthcare providers." How does that read against (a) an appointment/FAQ receptionist bot on a clinic account, and (b) appointment reminders / prescription-ready notices sent in DMs? (Full text + our audit: `docs/Reference/engineering/compliance/meta-terms/2026-09-15/`.) **22 Oct 2026:** Meta answered (a). They rejected `instagram_business_manage_messages` under Developer Policy 5.7.5 using that sentence. Do not ask counsel whether a clinic receptionist bot will pass App Review. Messaging Advanced Access stays closed.
 
 Please put this in the pilot / customer agreement.
 
@@ -251,15 +251,57 @@ Same Security Centre screen still shows **WhatsApp needs more information**. Not
 
 **Next action:** Later — open WhatsApp “needs more information” / View details.
 
-### M3 · App review submission — `WAITING`
-**Submitted Thu 8 Oct 2026, evening IST.** Dashboard status: **Review in progress**. Meta's own line: most submissions are reviewed within 20 days, and it can take longer. Do not treat that as a decision date.
+### M3 · App review submission — `ACTIVE`
+**Next file, 26 Oct 2026.** Advanced Access for two permissions only. Do not press **Request again** on `instagram_business_manage_messages`. Do not add comments, Human Agent, or any `pages_*` row. `instagram_business_basic` is already approved; leave it. Clock starts when Submit is pressed, about two weeks. Not submitted yet.
 
-New requests, each "In 1 use case":
+App Dashboard → App Review → Permissions and features → add:
 
-- `instagram_business_basic`
-- `instagram_business_manage_messages`
+- `instagram_business_content_publish`
+- `instagram_business_manage_insights`
 
-Comments are not in this file. Do not open Tech Provider Access verification. Do not resubmit while this is in progress.
+Reviewer still signs in at https://haloaid.com/login. Keep the tester login already in the instructions. Privacy `https://haloaid.com/privacy`, terms `https://haloaid.com/terms`, data-deletion `https://haloaid.com/data-deletion-callback`.
+
+The live homepage still says every Instagram DM gets a link. A reviewer who opens haloaid.com sees the use Meta refused on 22 Oct. That sentence is the risk on this file.
+
+**Screencasts (dummy post only, no patient, no symptom, no chart).** One file per permission. Record the action. Testers are enough.
+
+`instagram_business_content_publish`
+
+1. Settings → Connect Instagram → the grant screen that includes posting.
+2. A Ready card: one dummy photo and a caption that is not medical. Post now, or wait until the scheduled minute sends it.
+3. The same photo on the Instagram professional account.
+
+`instagram_business_manage_insights`
+
+1. The same grant screen, in this recording.
+2. After the post is live, the Analytics view for that card: views and reach. Account totals for the connected account are enough if the post row is not in yet.
+
+**Paste**
+
+`instagram_business_content_publish`  
+The clinic connects its own Instagram professional account. Halo Aid publishes that clinic’s own feed photo, carousel, reel, or story, with the caption the clinic wrote, at the minute the clinic chose. The media file and the caption are the clinic’s. Halo Aid does not publish to any other account. This is not messaging, and it is not used for ads.
+
+`instagram_business_manage_insights`  
+Halo Aid reads performance of the connected account’s own posts: views, reach, likes, comments, saves, and shares, plus average watch time on a reel. For the account it reads views by day, and reach, interactions, and views over 7, 30, and 90 days. Those numbers are shown to that clinic on its own analytics screen. No follower list is read. No media is downloaded. No patient data is read. This is not used for ads.
+
+**Decided Thu 22 Oct 2026.** Request submitted **Thu 8 Oct 2026, 19:14 IST**. The previous-submissions row is dated **22 Oct 2026, 07:59 IST**.
+
+| Permission | Result |
+|---|---|
+| `instagram_business_basic` | Approved |
+| `instagram_business_manage_messages` | Not approved |
+
+Meta's label: **Facilitating Direct Conversations with Healthcare Providers** — Developer Policy **5.7.5** (Messenger Platform). Their text: the app is using Messenger to facilitate direct conversations between people and healthcare providers, or to send or collect patient data obtained from healthcare providers. The screen offers **Request again** after revising the bot.
+
+This is the healthcare / not-an-allowed-use case locked **17 Sep 2026**. Do not press Request again. Do not resubmit the same receptionist story. Do not create a second app (circumvention, §7.e.i.3). A clinic Instagram that still answers people is the use they named. Describing it as something else would mislead Meta (Dev Policies §1).
+
+`instagram_business_basic` Advanced Access stands. It does not send or receive DMs. A clinic that is not an app tester cannot Connect for messaging. Tester accounts can still exercise the dev bot. Instagram for a clinic is the public page link in the bio (`/d/:slug`). M4 does not start.
+
+**Next action:** Submit the two permissions above. Leave Request again on messages unclicked.
+
+Acquisition and what to build from here: [`SOCIAL_AFTER_REVIEW.md`](../../Reference/business/SOCIAL_AFTER_REVIEW.md). §5 (26 Oct 2026): Meta already schedules posts and sells an agent that books from DMs. Autoposting is a convenience. The visit on the card is the product. This does not change the next action above.
+
+The rest of this section is the file that was submitted. It is not a new task. Comments stay out. Do not open Tech Provider Access verification.
 
 The reviewer signs in at https://haloaid.com/login. The Halo Aid test login is in the reviewer instructions. No Instagram password is in the form.
 
@@ -333,17 +375,16 @@ When someone comments on the clinic’s Feed post asking about appointments, we 
 4. **Record** the two shot lists above. Dummy only. Say the one line on the messages tape.
 5. **Submit** Advanced Access for `basic` + `messages`. Paste the two justifications. Clock is weeks.
 
-**Next action:** Disconnect @haloaid.test on Settings → Integrations, so the reviewer starts from Not connected and uses their own professional account.
-**Unblocked by:** submitted 8 Oct 2026. M2 verified. Policy URLs live.
+**Unblocked by:** submitted 8 Oct 2026. M2 verified. Policy URLs live. Decided 22 Oct 2026 — messaging refused.
 
-A pass here does **not** unlock a paying clinic. Next gate is **M4**.
+This file did not pass for DMs. A paying clinic does not Connect Instagram. Next gate is the bio link, not M4.
 
 ### M4 · Post-review account canary — `PARKED`
 Locked **18 Sep 2026**. App Review and “does Instagram slap the **clinic** account” are two machines. A pass lets non-testers Connect. It is not a hall pass.
 
 **What we already saw (do not treat as a kill):** 15 Sep, Halo Aid IG, Chrome, `instagram.com/accounts/scraping_warning/`. Copy: *We suspect automated behavior on your account* — to prevent temporary restrict or permanent disable, ensure no other users or **tools** have access, follow Terms of Use, consider a stronger password. One button: **Dismiss**. Not a ban. Not “remove Halo Aid.” That account was clinic + tester + web logins + API on one profile — contaminated. Proof the classifier exists, not that a quiet clinic FAQ + `/book` account gets restricted.
 
-**If M3 is rejected as healthcare / not-an-allowed-use:** there is no canary. `/book` in bio. Do not start M4.
+**22 Oct 2026 — this branch fired.** M3 was rejected as healthcare / not-an-allowed-use. There is no canary. The public page link goes in the bio. Do not start M4.
 
 **If M3 passes:** ~30 days on **2–3 Professional accounts we own** (throwaways we can lose). Separate dummy patient IGs. Clinic-shaped inbound only (hours/book → FAQ + `/book`, optional STOP). Stay inside the 40/day cap and kill switch. Phone Instagram for the patient side — do not live on `instagram.com` web on the canary. Do **not** farm random IGs (that is in the same scraping help doc). Daily check: this warning, restrict banner, login checkpoint, Professional Dashboard. Screenshot and date anything.
 
@@ -360,7 +401,7 @@ One isolated Dismiss ≠ don’t proceed. Repeat / restrict / ban = don’t proc
 
 **Before any paying Connect:** L10 in the agreement (platform action, no standing/delivery guarantee, liability cap). First clinic is small, founder-known, written acknowledgment. Not “approved, open the waitlist.”
 
-**Next action:** Do not start. Unpark when M3 Advanced Access is approved; then create 2–3 owned Professional canaries (not client accounts).
+**Next action:** Do not start. Healthcare rejection landed 22 Oct 2026. No canary.
 
 ---
 
@@ -379,7 +420,7 @@ Product order (30 Aug): **(1) history link → EHR** (bot after book, later the 
 Deliberately parked while desk and Meta are the critical path. The engineering backlog is already captured in `capture/features/` and the cockpit roadmap under `Product plans/`.
 
 ### P3 · Bot / messaging — `PARKED`
-Gated on M1–M3 anyway. No point building past the permissions I don't have yet.
+Messaging Advanced Access was refused **22 Oct 2026** (Developer Policy 5.7.5). Do not build the DM bot further. Instagram for a clinic is the public page link in the bio. Tester-only DMs can stay for our own accounts.
 
 ### P4 · Billing + usage metering — `PARKED`
 Manual invoicing is fine until there are enough customers for it to hurt. Revisit when G1 produces a second paying clinic.
@@ -391,7 +432,7 @@ Manual invoicing is fine until there are enough customers for it to hurt. Revisi
 ### G1 · First paying clinic — `PARKED`
 The product is closer to ready than the business is. One real clinic using this daily will teach me more than another month of features.
 
-**Next action:** — parked. Not naming clinics. Unpark when the account is open, the product is something a front desk can use daily, **and** M4 canary + L10 are done. Do not Connect a paying clinic off an M3 pass alone.
+**Next action:** — parked. Not naming clinics. Unpark when the account is open, the product is something a front desk can use daily, and L10 is done. Instagram Connect stays off after the 22 Oct healthcare rejection. The clinic bio carries the public page link.
 
 ### G2 · Pricing — `NEXT`
 **Next action:** pick a monthly number per clinic and practice saying it out loud. It can be wrong; it can't be absent.

@@ -2,7 +2,8 @@
 
 /**
  * Content board (soc-04, soc-05, soc-15, soc-17, soc-18, soc-21).
- * A card is added from the column it belongs in. Ready asks for the file.
+ * Ideas opens the note. Chosen and Making open the card sheet.
+ * Ready has no blank add. Add new on Ready takes a finished file into the preview.
  * A right arrow on a card moves it into the next column.
  * Each column filters and sorts on its own, for this sitting.
  * Expand opens that column over the board, grouped by topic.
@@ -55,10 +56,10 @@ import {
   fileFace,
   fileOpen,
   placeFile,
-  placeLink,
+  forgetLink,
+  linksInNote,
   normalizeLink,
   stripFile,
-  stripLink,
   type ResourceLink,
   FILE_ACCEPT,
   SCRAP_CAP,
@@ -66,28 +67,40 @@ import {
   useSheetFileDrop,
   type ShelfFile,
 } from "./idea-composer";
-import { SocialCardPanel } from "./SocialCardPanel";
+import { SocialCardPanel, readyLine, readyStatus, type ReadyStatus } from "./SocialCardPanel";
 import { loadSocialBoard, peekSocialCards } from "./social-board-cache";
 import {
   attachSocialCardFile,
+  cardFileAccept,
+  cardFileIssue,
   createReadySocialCard,
   createSocialCard,
+  prepareSocialCardFile,
   deleteSocialCard,
   duplicateSocialCard,
   addSocialCardScrap,
   moveSocialCard,
   socialFileIssue,
   socialFileKind,
+  postsByHand,
   updateSocialCard,
   type SocialCard,
   type SocialCardFormat,
 } from "./social-cards";
 
 type ColumnSort = "latest" | "az" | "free";
+type ReadyFilter = "all" | ReadyStatus;
 
 type Lanes = Record<string, string[]>;
 
 const SETTLE = "cubic-bezier(0.2, 0, 0, 1)";
+
+function cardNode(id: string): HTMLElement | null {
+  for (const node of document.querySelectorAll("[data-social-card]")) {
+    if (node instanceof HTMLElement && node.dataset.socialCard === id) return node;
+  }
+  return null;
+}
 
 const animateLayoutChanges: AnimateLayoutChanges = (args) =>
   defaultAnimateLayoutChanges({ ...args, wasDragging: true });
@@ -166,6 +179,18 @@ function matchesTag(card: SocialCard, tag: string): boolean {
   return true;
 }
 
+const READY_FILTERS: { value: ReadyFilter; label: string }[] = [
+  { value: "all", label: "All" },
+  { value: "open", label: "Not scheduled" },
+  { value: "scheduled", label: "Scheduled" },
+  { value: "due", label: "Due" },
+];
+
+function matchesReady(card: SocialCard, status: ReadyFilter): boolean {
+  if (status === "all") return true;
+  return readyStatus(card.scheduledAt) === status;
+}
+
 function orderedCards(
   cards: readonly SocialCard[],
   sort: ColumnSort,
@@ -228,15 +253,13 @@ function NewIdeaDialog({
   const insertAt = useRef<number | null>(null);
   const [title, setTitle] = useState("");
   const [topic, setTopic] = useState("");
-  const [link, setLink] = useState("");
   const [note, setNote] = useState("");
   const [line, setLine] = useState(0);
   const [file, setFile] = useState<File | null>(null);
   const [scraps, setScraps] = useState<LocalScrap[]>([]);
   const [links, setLinks] = useState<ResourceLink[]>([]);
-  const [askLink, setAskLink] = useState(false);
   const [fileError, setFileError] = useState<string | null>(null);
-  const [linkOpen, setLinkOpen] = useState(false);
+  const [noteFocus, setNoteFocus] = useState(0);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const needsFile = column.kind === "ready";
   const dump = column.kind === "thoughts";
@@ -310,6 +333,7 @@ function NewIdeaDialog({
     return {
       id: crypto.randomUUID(),
       file: next,
+      name: next.name,
       preview: URL.createObjectURL(next),
       video: savedKind === "video",
       audio: savedKind === "audio",
@@ -344,7 +368,7 @@ function NewIdeaDialog({
     setScraps((current) => [...current, ...added]);
     const placed = insertAt.current;
     if (placed !== null) {
-      setNote((current) => placeFile(current, added[0].id, placed));
+      setNote((current) => placeFile(current, added[0].id, placed, added[0].name ?? undefined));
       insertAt.current = null;
     }
   }
@@ -358,18 +382,15 @@ function NewIdeaDialog({
     setNote((current) => stripFile(current, id));
   }
 
-  function addResourceLink(url: string): void {
-    setFileError((current) => (current === "Use a link" ? null : current));
-    const next = normalizeLink(url);
-    if (!next) return;
-    setLinks((current) =>
-      current.some((item) => item.url === next) ? current : [...current, { id: crypto.randomUUID(), url: next }]
-    );
+  function changeNote(value: string): void {
+    setNote(value);
+    setLinks((current) => linksInNote(value, current));
   }
 
   function removeResourceLink(id: string): void {
-    setLinks((current) => current.filter((item) => item.id !== id));
-    setNote((current) => stripLink(current, id));
+    const found = linksInNote(note, links).find((item) => item.id === id);
+    if (!found) return;
+    changeNote(forgetLink(note, found));
   }
 
   return createPortal(
@@ -391,16 +412,13 @@ function NewIdeaDialog({
       {dump ? (
         <ScrapShelf
           items={scraps}
-          links={links}
-          asking={askLink}
+          links={linksInNote(note, links)}
           dropping={over}
           dropProps={dropProps}
           onAdd={() => fileRef.current?.click()}
           onRemove={removeScrap}
-          onPut={(id) => setNote((current) => placeFile(current, id, line))}
-          onAddLink={addResourceLink}
+          onPut={(id) => setNote((current) => placeFile(current, id, line, scraps.find((item) => item.id === id)?.name ?? undefined))}
           onRemoveLink={removeResourceLink}
-          onPutLink={(id) => setNote((current) => placeLink(current, id, line))}
         />
       ) : null}
       <form
@@ -408,7 +426,15 @@ function NewIdeaDialog({
         {...dropProps}
         onSubmit={(event) => {
           event.preventDefault();
-          onAdd({ title, topic, link, note, file, scraps: dump ? scraps : [], links: dump ? links : [] });
+          onAdd({
+            title,
+            topic,
+            link: linksInNote(note, links)[0]?.url ?? "",
+            note,
+            file,
+            scraps: dump ? scraps : [],
+            links: dump ? linksInNote(note, links) : [],
+          });
         }}
       >
         <div className="flex items-center gap-2 px-5 py-3">
@@ -418,7 +444,9 @@ function NewIdeaDialog({
             onChange={(event) => onColumn(event.target.value)}
             className="h-8 max-w-[14rem] truncate bg-transparent text-sm font-medium text-foreground outline-none"
           >
-            {columns.map((item) => (
+            {columns
+              .filter((item) => item.kind !== "ready")
+              .map((item) => (
               <option key={item.id} value={item.id}>
                 {item.label}
               </option>
@@ -454,58 +482,42 @@ function NewIdeaDialog({
             </button>
           </div>
         </div>
-        <div className="flex min-h-0 flex-1 flex-col px-6 pb-2">
-          <div className="mx-auto flex min-h-0 w-full max-w-[43.75rem] flex-1 flex-col">
+        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-6 pb-2">
+          <div className="mx-auto flex w-full max-w-[43.75rem] flex-1 flex-col">
           <input
             ref={titleRef}
             aria-label={`Title for ${column.label}`}
             value={title}
             onChange={(event) => setTitle(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
+              event.preventDefault();
+              setNoteFocus((current) => current + 1);
+            }}
             placeholder="A short title"
             maxLength={200}
-            className="w-full bg-transparent text-2xl text-foreground outline-none placeholder:text-muted-foreground/40"
+            className="w-full bg-transparent text-3xl font-semibold leading-9 text-foreground outline-none placeholder:text-muted-foreground/40"
           />
-          {linkOpen ? (
-            <input
-              aria-label="Link for the new card"
-              value={link}
-              onChange={(event) => setLink(event.target.value)}
-              placeholder="https://"
-              maxLength={500}
-              className="mt-3 h-8 w-full bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
-            />
-          ) : null}
           <IdeaNote
             value={note}
-            onChange={setNote}
+            onChange={changeNote}
             onPhoto={(index) => {
               insertAt.current = index;
               fileRef.current?.click();
             }}
-            onLink={() => (dump ? setAskLink(true) : setLinkOpen(true))}
             onLine={setLine}
-            onPasteLink={
-              dump
-                ? (url, at) => {
-                    const next = normalizeLink(url);
-                    if (!next) return;
-                    const id = links.find((item) => item.url === next)?.id ?? crypto.randomUUID();
-                    setLinks((current) =>
-                      current.some((item) => item.url === next) ? current : [...current, { id, url: next }]
-                    );
-                    setNote((current) => placeLink(current, id, at));
-                  }
-                : undefined
-            }
             onDropFiles={(list, at) => {
               insertAt.current = at;
               takeFiles(list);
             }}
-            onDropResource={(kind, id, at) =>
-              setNote((current) => (kind === "file" ? placeFile(current, id, at) : placeLink(current, id, at)))
-            }
+            onDropResource={(kind, id, at) => {
+              if (kind === "file") {
+                setNote((current) => placeFile(current, id, at, scraps.find((item) => item.id === id)?.name ?? undefined));
+              }
+            }}
             files={scraps}
-            links={links}
+            links={linksInNote(note, links)}
+            focusRequest={noteFocus}
           />
           </div>
           {fileError || error ? (
@@ -593,7 +605,7 @@ type BoardColumn = {
 };
 
 const OPENING_COLUMNS: readonly BoardColumn[] = [
-  { id: "thoughts", kind: "thoughts", label: "Thoughts and ideas" },
+  { id: "thoughts", kind: "thoughts", label: "Ideas" },
   { id: "chosen", kind: "chosen", label: "Chosen" },
   { id: "making", kind: "making", label: "Making" },
   { id: "ready", kind: "ready", label: "Ready" },
@@ -610,7 +622,10 @@ function nextColumn(
 }
 
 export function cardDrop(
-  card: Pick<SocialCard, "stage" | "hasFile" | "postable"> & { fileKind?: SocialCard["fileKind"] },
+  card: Pick<SocialCard, "stage" | "hasFile" | "postable"> & {
+    fileKind?: SocialCard["fileKind"];
+    format?: SocialCard["format"];
+  },
   kind: BoardColumn["kind"],
 ): "stay" | "needs-file" | "needs-media" | "needs-format" | "move" {
   const home = card.stage === "custom" ? "thoughts" : card.stage;
@@ -622,7 +637,10 @@ export function cardDrop(
 }
 
 function readyBlock(
-  card: Pick<SocialCard, "stage" | "hasFile" | "postable"> & { fileKind?: SocialCard["fileKind"] },
+  card: Pick<SocialCard, "stage" | "hasFile" | "postable"> & {
+    fileKind?: SocialCard["fileKind"];
+    format?: SocialCard["format"];
+  },
   kind: BoardColumn["kind"],
 ): string | null {
   const drop = cardDrop(card, kind);
@@ -642,8 +660,44 @@ function placedCard(card: SocialCard, kind: BoardColumn["kind"]): SocialCard {
   };
 }
 
+function orderReady(cards: readonly SocialCard[]): SocialCard[] {
+  const open: SocialCard[] = [];
+  const timed: SocialCard[] = [];
+  for (const card of cards) {
+    if (card.scheduledAt) timed.push(card);
+    else open.push(card);
+  }
+  timed.sort((left, right) => Date.parse(left.scheduledAt ?? "") - Date.parse(right.scheduledAt ?? ""));
+  return [...open, ...timed];
+}
+
+function pendingMadeCard(id: string): SocialCard {
+  const now = new Date().toISOString();
+  return {
+    id,
+    stage: "making",
+    title: "untitled",
+    format: null,
+    topic: null,
+    words: {},
+    hasFile: false,
+    fileKind: null,
+    sourceUrl: null,
+    scheduledAt: null,
+    publishError: null,
+    instagramUrl: null,
+    visitCount: 0,
+    columnId: null,
+    pagePath: null,
+    deletedAt: null,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
 function cardsInColumn(column: BoardColumn, cards: readonly SocialCard[]): SocialCard[] {
   return cards.filter((card) => {
+    if (card.id.startsWith("pending-")) return false;
     if (card.stage === "posted") return false;
     if (card.stage === "custom") return column.kind === "thoughts";
     return card.stage === column.kind;
@@ -663,6 +717,7 @@ function CardFace({
   onMove,
   onAdvance,
   dragging,
+  quiet,
   handle,
 }: {
   card: SocialCard;
@@ -677,6 +732,7 @@ function CardFace({
   onMove: (columnId: string) => void;
   onAdvance: () => void;
   dragging?: boolean;
+  quiet?: boolean;
   handle?: {
     setNodeRef: (element: HTMLElement | null) => void;
     listeners: ReturnType<typeof useSortable>["listeners"];
@@ -709,10 +765,14 @@ function CardFace({
       : "group-hover:pr-7 group-focus-within:pr-7 [@media(hover:none)]:pr-7";
   return (
     <li
+      data-social-card={card.id}
       ref={handle?.setNodeRef}
       style={handle?.style}
       {...handle?.listeners}
-      className={`group relative select-none rounded-lg border px-3.5 py-3 ${
+      onClick={selecting ? onToggle : undefined}
+      className={`group relative select-none rounded-lg border px-3.5 py-3 ${quiet ? "invisible" : ""} ${
+        selecting ? "cursor-pointer" : ""
+      } ${
         dragging
           ? "border-dashed border-primary/50 bg-primary/[0.06]"
           : picked
@@ -729,7 +789,6 @@ function CardFace({
               aria-label={`Select ${card.title}`}
               onPointerDown={holdStill}
               onMouseDown={holdStill}
-              onClick={onToggle}
               className={`mt-0.5 inline-flex h-4 w-4 shrink-0 items-center justify-center rounded border ${
                 picked
                   ? "border-primary bg-primary text-primary-foreground"
@@ -739,14 +798,19 @@ function CardFace({
               {picked ? <Check className="h-3 w-3" aria-hidden="true" /> : null}
             </button>
           ) : null}
-          <button
-            type="button"
-            className={`min-w-0 flex-1 text-left text-sm font-medium leading-5 text-foreground line-clamp-2 ${titleRoom}`}
-            {...(selecting ? {} : handle?.attributes)}
-            onClick={selecting ? onToggle : onOpen}
-          >
-            {card.title}
-          </button>
+          <div className={`min-w-0 flex-1 ${titleRoom}`}>
+            <button
+              type="button"
+              className="w-full text-left text-sm font-medium leading-5 text-foreground line-clamp-2"
+              {...(selecting ? {} : handle?.attributes)}
+              onClick={selecting ? undefined : onOpen}
+            >
+              {card.title}
+            </button>
+            {card.stage === "ready" ? (
+              <p className="mt-1 text-xs text-muted-foreground">{readyLine(card.scheduledAt, Date.now(), postsByHand(card.words))}</p>
+            ) : null}
+          </div>
           {next ? (
             <button
               type="button"
@@ -755,13 +819,20 @@ function CardFace({
               onPointerDown={holdStill}
               onMouseDown={holdStill}
               onTouchStart={holdStill}
-              onClick={() => onAdvance()}
+              onClick={(event) => {
+                event.stopPropagation();
+                onAdvance();
+              }}
               className="absolute right-2 top-3 z-10 inline-flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
             >
               <ArrowRight className="h-4 w-4" aria-hidden="true" />
             </button>
           ) : null}
-          <div className={`absolute top-3 z-10 ${next ? "right-9" : "right-2"}`} ref={menuRef}>
+          <div
+            className={`absolute top-3 z-10 ${next ? "right-9" : "right-2"}`}
+            ref={menuRef}
+            onClick={holdStill}
+          >
             <button
               type="button"
               aria-label={`Card menu for ${card.title}`}
@@ -901,6 +972,7 @@ function BoardCard({
   onMove,
   onAdvance,
   lifting,
+  quiet,
 }: {
   card: SocialCard;
   columns: readonly BoardColumn[];
@@ -914,6 +986,7 @@ function BoardCard({
   onMove: (columnId: string) => void;
   onAdvance: () => void;
   lifting?: boolean;
+  quiet?: boolean;
 }): JSX.Element {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: `card:${card.id}`,
@@ -935,6 +1008,7 @@ function BoardCard({
       onMove={onMove}
       onAdvance={onAdvance}
       dragging={lifting || isDragging}
+      quiet={quiet}
       handle={{
         setNodeRef,
         listeners: selecting ? undefined : listeners,
@@ -1039,11 +1113,20 @@ export function SocialBoard({
   const [adding, setAdding] = useState<string | null>(null);
   const [openId, setOpenId] = useState<string | null>(openCardId);
   const panelRef = useRef<HTMLDivElement>(null);
+  const starting = useRef(false);
+  const madeFileRef = useRef<HTMLInputElement>(null);
+  const madeRun = useRef(0);
+  const [madeId, setMadeId] = useState<string | null>(null);
+  const [sheetKey, setSheetKey] = useState<string | null>(null);
+  const [uploadingId, setUploadingId] = useState<string | null>(null);
   const moveTicket = useRef<Record<string, number>>({});
+  const flight = useRef<{ id: string; title: string; left: number; top: number; width: number; height: number } | null>(null);
+  const [flyingId, setFlyingId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [tags, setTags] = useState<Partial<Record<string, string>>>({});
+  const [statuses, setStatuses] = useState<Partial<Record<string, ReadyFilter>>>({});
   const [sorts, setSorts] = useState<Partial<Record<string, ColumnSort>>>({});
   const [orders, setOrders] = useState<Partial<Record<string, string[]>>>({});
   const [lanes, setLanes] = useState<Lanes | null>(null);
@@ -1122,9 +1205,102 @@ export function SocialBoard({
   }, [token, revision]);
 
   function openAdd(columnId: string) {
-    setAdding(columnId);
-    setOpenId(null);
+    const column = columns.find((item) => item.id === columnId);
+    if (!column || column.kind === "ready") return;
+    if (column.kind === "thoughts") {
+      setAdding(columnId);
+      setOpenId(null);
+      setError(null);
+      return;
+    }
+    setAdding(null);
+    void beginCard(column);
+  }
+
+  async function beginCard(column: BoardColumn): Promise<void> {
+    if (starting.current) return;
+    starting.current = true;
+    setBusy(true);
     setError(null);
+    setOpenId(null);
+    try {
+      const created = await createSocialCard(token, "untitled", column.kind);
+      setCards((current) => [...current, created]);
+      setMadeId(null);
+      setOpenId(created.id);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Could not add the card");
+    } finally {
+      starting.current = false;
+      setBusy(false);
+    }
+  }
+
+  function openMade(): void {
+    setError(null);
+    const input = madeFileRef.current;
+    if (!input) return;
+    input.value = "";
+    input.click();
+  }
+
+  function closeMade(): void {
+    madeRun.current += 1;
+    setUploadingId(null);
+    setMadeId(null);
+    setSheetKey(null);
+    setOpenId(null);
+    setCards((current) => current.filter((item) => !item.id.startsWith("pending-")));
+  }
+
+  async function takeMade(file: File | undefined): Promise<void> {
+    if (!file || starting.current) return;
+    const issue = cardFileIssue(file, "");
+    if (issue) {
+      setError(issue);
+      return;
+    }
+    const localId = `pending-${crypto.randomUUID()}`;
+    const run = madeRun.current + 1;
+    madeRun.current = run;
+    starting.current = true;
+    setBusy(true);
+    setError(null);
+    const uploaded = prepareSocialCardFile(token, file);
+    setCards((current) => [...current, pendingMadeCard(localId)]);
+    setMadeId(localId);
+    setSheetKey(localId);
+    setUploadingId(localId);
+    setOpenId(localId);
+    let createdId: string | null = null;
+    try {
+      const filePath = await uploaded;
+      if (madeRun.current !== run) return;
+      const created = await createSocialCard(token, "untitled", "making", { filePath });
+      if (madeRun.current !== run) {
+        await Promise.resolve(deleteSocialCard(token, created.id)).catch(() => undefined);
+        return;
+      }
+      createdId = created.id;
+      setCards((current) => current.map((item) => (item.id === localId ? created : item)));
+      setMadeId(created.id);
+      setOpenId(created.id);
+    } catch (err: unknown) {
+      if (createdId) {
+        await Promise.resolve(deleteSocialCard(token, createdId)).catch(() => undefined);
+      }
+      if (madeRun.current === run) {
+        setCards((current) => current.filter((item) => item.id !== localId && item.id !== createdId));
+        setMadeId(null);
+        setSheetKey(null);
+        setOpenId(null);
+        setError(err instanceof Error ? err.message : "Could not add the file");
+      }
+    } finally {
+      if (madeRun.current === run) setUploadingId(null);
+      starting.current = false;
+      setBusy(false);
+    }
   }
 
   async function addCard(
@@ -1204,6 +1380,11 @@ export function SocialBoard({
     if (!column || !previous) return false;
     const ticket = (moveTicket.current[id] ?? 0) + 1;
     moveTicket.current[id] = ticket;
+    const leaving = cardNode(id);
+    if (!openId && leaving instanceof HTMLElement) {
+      const box = leaving.getBoundingClientRect();
+      flight.current = { id, title: previous.title, left: box.left, top: box.top, width: box.width, height: box.height };
+    }
     setError(null);
     setCards((current) =>
       current.map((item) => (item.id === id ? placedCard(item, column.kind) : item))
@@ -1303,11 +1484,14 @@ export function SocialBoard({
     const selectedTag = tags[column.id] ?? "all";
     const tagOptions = columnTagOptions(inColumn);
     const activeTag = tagOptions.some((option) => option.value === selectedTag) ? selectedTag : "all";
-    return orderedCards(
-      inColumn.filter((card) => matchesTag(card, activeTag)),
-      sorts[column.id] ?? "latest",
+    const status = column.kind === "ready" ? (statuses[column.id] ?? "all") : "all";
+    const sort = sorts[column.id] ?? "latest";
+    const ordered = orderedCards(
+      inColumn.filter((card) => matchesTag(card, activeTag) && matchesReady(card, status)),
+      sort,
       orders[column.id]
     );
+    return column.kind === "ready" && sort === "latest" ? orderReady(ordered) : ordered;
   }
 
   function overColumn(current: Lanes, overId: UniqueIdentifier): string | null {
@@ -1411,6 +1595,7 @@ export function SocialBoard({
   function viewFor(column: BoardColumn): {
     tagOptions: { value: string; label: string }[];
     activeTag: string;
+    status: ReadyFilter;
     sort: ColumnSort;
     shown: SocialCard[];
   } {
@@ -1420,6 +1605,7 @@ export function SocialBoard({
     const activeTag = tagOptions.some((option) => option.value === selectedTag)
       ? selectedTag
       : "all";
+    const status = column.kind === "ready" ? (statuses[column.id] ?? "all") : "all";
     const sort = sorts[column.id] ?? "latest";
     const shown = lanes
       ? (lanes[column.id] ?? []).flatMap((id) => {
@@ -1430,6 +1616,7 @@ export function SocialBoard({
     return {
       tagOptions,
       activeTag,
+      status,
       sort,
       shown,
     };
@@ -1527,6 +1714,40 @@ export function SocialBoard({
     panelRef.current?.scrollIntoView({ block: "nearest" });
   }, [openId, cards]);
 
+  useLayoutEffect(() => {
+    const pending = flight.current;
+    if (!pending) return;
+    flight.current = null;
+    const landed = cardNode(pending.id);
+    if (!(landed instanceof HTMLElement) || typeof landed.animate !== "function") return;
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const to = landed.getBoundingClientRect();
+    const dx = to.left - pending.left;
+    const dy = to.top - pending.top;
+    if (Math.hypot(dx, dy) < 2) return;
+    const ghost = document.createElement("div");
+    ghost.setAttribute("aria-hidden", "true");
+    ghost.textContent = pending.title;
+    ghost.className =
+      "pointer-events-none fixed z-[80] overflow-hidden rounded-lg border border-border bg-background px-3.5 py-3 text-sm font-medium text-foreground shadow-lg";
+    ghost.style.left = `${pending.left}px`;
+    ghost.style.top = `${pending.top}px`;
+    ghost.style.width = `${Math.max(pending.width, to.width)}px`;
+    ghost.style.height = `${Math.max(pending.height, to.height)}px`;
+    document.body.appendChild(ghost);
+    setFlyingId(pending.id);
+    const animation = ghost.animate(
+      [{ transform: "translate(0px, 0px)" }, { transform: `translate(${dx}px, ${dy}px)` }],
+      { duration: 320, easing: SETTLE }
+    );
+    const finish = () => {
+      ghost.remove();
+      setFlyingId((current) => (current === pending.id ? null : current));
+    };
+    animation.onfinish = finish;
+    animation.oncancel = finish;
+  }, [cards]);
+
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4">
       {error && !addingColumn ? (
@@ -1534,6 +1755,18 @@ export function SocialBoard({
           {error}
         </p>
       ) : null}
+      <input
+        ref={madeFileRef}
+        type="file"
+        accept={cardFileAccept("")}
+        aria-label="Finished file"
+        className="sr-only"
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          event.target.value = "";
+          void takeMade(file);
+        }}
+      />
       {addingColumn ? (
         <NewIdeaDialog
           column={addingColumn}
@@ -1557,15 +1790,23 @@ export function SocialBoard({
           {open && !expandedColumn ? (
             <div ref={panelRef}>
               <SocialCardPanel
-                key={open.id}
+                key={sheetKey ?? open.id}
                 token={token}
                 card={open}
                 columns={columns}
                 topics={topicNames(cards)}
                 readyDrop={cardDrop(open, "ready")}
+                made={open.id === madeId}
+                uploading={open.id === uploadingId}
                 onMove={(columnId) => void move(open.id, columnId)}
                 onDelete={() => void removeCard(open.id)}
-                onClose={() => setOpenId(null)}
+                onClose={() => {
+                  if (uploadingId || sheetKey) closeMade();
+                  else {
+                    setMadeId(null);
+                    setOpenId(null);
+                  }
+                }}
                 onSaved={load}
               />
             </div>
@@ -1591,6 +1832,28 @@ export function SocialBoard({
                 </div>
                 {selectionBar}
                 <div className="mt-3 flex flex-wrap gap-2">
+                  {expandedColumn.kind === "ready" ? (
+                    <label className="text-xs text-muted-foreground">
+                      Status
+                      <select
+                        aria-label={`Status for ${expandedColumn.label}`}
+                        value={expandedView.status}
+                        onChange={(event) =>
+                          setStatuses((current) => ({
+                            ...current,
+                            [expandedColumn.id]: event.target.value as ReadyFilter,
+                          }))
+                        }
+                        className="mt-1 block w-full rounded-md border border-border bg-background px-2 py-1 text-sm text-foreground"
+                      >
+                        {READY_FILTERS.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  ) : null}
                   <label className="text-xs text-muted-foreground">
                     Tags
                     <select
@@ -1677,7 +1940,10 @@ export function SocialBoard({
                                   columns={columns}
                                   selecting={picked !== null}
                                   picked={picked?.includes(card.id) ?? false}
-                                  onOpen={() => setOpenId(card.id)}
+                                  onOpen={() => {
+                                    setMadeId(null);
+                                    setOpenId(card.id);
+                                  }}
                                   onToggle={() => togglePick(card.id)}
                                   onPick={() => startSelect(card.id)}
                                   onDelete={() => void removeCard(card.id)}
@@ -1741,6 +2007,7 @@ export function SocialBoard({
                   >
                     <Maximize2 className="h-4 w-4" aria-hidden="true" />
                   </button>
+                  {column.kind === "ready" ? null : (
                   <button
                     type="button"
                     aria-label={`Add to ${column.label}`}
@@ -1750,6 +2017,7 @@ export function SocialBoard({
                   >
                     <Plus className="h-4 w-4" aria-hidden="true" />
                   </button>
+                  )}
                   <button
                     type="button"
                     aria-label={`Column menu for ${column.label}`}
@@ -1764,6 +2032,28 @@ export function SocialBoard({
                 </div>
                 {menuId === column.id ? (
                   <div className="space-y-2 border-t border-border/60 px-3 py-2">
+                    {column.kind === "ready" ? (
+                      <label className="block text-xs text-muted-foreground">
+                        Status
+                        <select
+                          aria-label={`Status for ${column.label}`}
+                          value={view.status}
+                          onChange={(event) =>
+                            setStatuses((current) => ({
+                              ...current,
+                              [column.id]: event.target.value as ReadyFilter,
+                            }))
+                          }
+                          className="mt-1 block w-full rounded-md border border-border bg-background px-2 py-1 text-sm text-foreground"
+                        >
+                          {READY_FILTERS.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    ) : null}
                     <label className="block text-xs text-muted-foreground">
                       Tags
                       <select
@@ -1819,7 +2109,11 @@ export function SocialBoard({
                       selecting={picked !== null}
                       picked={picked?.includes(card.id) ?? false}
                       lifting={draggingId === card.id}
-                      onOpen={() => setOpenId(card.id)}
+                      quiet={flyingId === card.id}
+                      onOpen={() => {
+                        setMadeId(null);
+                        setOpenId(card.id);
+                      }}
                       onToggle={() => togglePick(card.id)}
                       onPick={() => startSelect(card.id)}
                       onDelete={() => void removeCard(card.id)}
@@ -1831,7 +2125,7 @@ export function SocialBoard({
                   <li className="flex justify-center px-2 py-1">
                     <button
                       type="button"
-                      onClick={() => openAdd(column.id)}
+                      onClick={() => (column.kind === "ready" ? openMade() : openAdd(column.id))}
                       className="rounded-md px-3 py-2 text-sm text-muted-foreground hover:bg-background hover:text-foreground"
                     >
                       Add new

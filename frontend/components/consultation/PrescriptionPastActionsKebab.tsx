@@ -167,22 +167,14 @@ export default function PrescriptionPastActionsKebab({
     try {
       const res = await sendPrescriptionToPatient(token, prescriptionId);
       const channels = res.data.channels ?? {};
-      const ig = channels.instagram;
       const email = channels.email;
       if (res.data.sent) {
         // Mirror the in-form "Sent to patient" toast vocabulary so
         // doctors don't have to learn two phrasings for the same
         // outcome.
-        const parts: string[] = [];
-        if (ig) parts.push("DM");
-        if (email) parts.push("email");
         showToast(
           "success",
-          parts.length === 2
-            ? "Sent to patient (email + DM)"
-            : parts.length === 1
-              ? `Sent to patient (${parts[0]} only)`
-              : "Sent to patient"
+          email ? "Sent to patient (email)." : "Sent to patient."
         );
         onResendSuccess?.();
       } else {
@@ -190,7 +182,7 @@ export default function PrescriptionPastActionsKebab({
         showToast(
           "error",
           reason === "no_patient_link"
-            ? "Patient has no linked email or DM channel"
+            ? "Patient has no email on file"
             : "Resend failed — please try again"
         );
       }
@@ -249,7 +241,7 @@ export default function PrescriptionPastActionsKebab({
                 setConfirm("resend");
               }}
               label="Resend to patient"
-              hint="Re-fires DM + email"
+              hint="Re-sends by email"
             />
             <MenuItem
               disabled
@@ -353,7 +345,7 @@ function ConfirmModal({
   const title = kind === "resend" ? "Resend prescription?" : "Regenerate PDF?";
   const body =
     kind === "resend"
-      ? "We'll re-send the prescription via DM and email. The patient will receive a new notification."
+      ? "We'll re-send the prescription by email. The patient will receive a new notification."
       : "We'll re-render the PDF using your current letterhead and save it over the existing file. No patient channels will fire.";
   const confirmLabel = kind === "resend" ? "Yes, resend" : "Yes, regenerate";
 

@@ -8,7 +8,7 @@ import { getSupabaseAdminClient } from '../config/database';
 import { logger } from '../config/logger';
 import { handleSupabaseError } from '../utils/db-helpers';
 import { logDataAccess, logDataModification } from '../utils/audit-logger';
-import { InternalError, NotFoundError, ValidationError } from '../utils/errors';
+import { ConflictError, InternalError, NotFoundError, ValidationError } from '../utils/errors';
 import { isPublicSlugShape } from '../utils/public-clinic-slug';
 import { getDoctorTimezone } from './doctor-settings-service';
 
@@ -130,13 +130,31 @@ export type SocialCardWords = {
   line?: string;
   location?: string;
   collaborator?: string;
-  crop?: 'original' | 'square' | 'portrait';
+  crop?: 'original' | 'square' | 'portrait' | 'landscape';
+  /** How a story or reel photo sits in the 9:16 frame. Fill is the default. */
+  storyPlace?: 'fill' | 'fit';
   aiGenerated?: boolean;
   shareToFeed?: boolean;
+  /** Also send this post or reel as a story. */
+  shareToStory?: boolean;
+  /** Comments stay closed. Set after the photo is up. */
+  commentsOff?: boolean;
   music?: string;
   stickers?: string;
   productTag?: string;
+  byHand?: boolean;
+  /** A reminder for posting from the phone. It is not sent. */
+  handNote?: string;
 };
+
+export function socialCardPostsByHand(words: SocialCardWords | null | undefined): boolean {
+  if (!words) return false;
+  if (words.byHand) return true;
+  return ['music', 'productTag'].some((key) => {
+    const value = words[key as keyof SocialCardWords];
+    return typeof value === 'string' && value.trim().length > 0;
+  });
+}
 
 export type SocialCard = {
   id: string;
@@ -149,6 +167,8 @@ export type SocialCard = {
   fileKind: SocialFileKind | null;
   postable: boolean;
   scraps: SocialScrap[];
+  /** Stays with the card file. A reorder does not change it. */
+  fileId: string | null;
   frames: SocialFrame[];
   links: { id: string; url: string }[];
   sourceUrl: string | null;
@@ -184,7 +204,9 @@ export type UpdateSocialCardInput = {
   sourceUrl?: string | null;
   links?: { id: string; url: string }[];
   scheduledAt?: string | null;
+  postNow?: true;
   instagramUrl?: string;
+  manualPosted?: true;
   columnId?: string;
 };
 
@@ -201,6 +223,7 @@ type SocialCardRow = {
   resource_links?: unknown;
   scheduled_at: string | null;
   publish_error?: string | null;
+  publish_attempt_at?: string | null;
   instagram_url: string | null;
   link_code: string | null;
   visit_count: number;
@@ -285,9 +308,15 @@ function cleanSourceUrl(value: string | null | undefined): string | null {
 }
 
 const FRAME_STORE = 'frameStore';
+const FILE_ID = 'fileId';
 const FRAME_CAP = 10;
 
 type StoredFrame = { id: string; path: string };
+
+function readFileId(words: SocialCardWords | null | undefined): string | null {
+  const raw = (words as Record<string, unknown> | null | undefined)?.[FILE_ID];
+  return typeof raw === 'string' && raw.length > 0 && raw !== 'piece' ? raw : null;
+}
 
 function readFrameStore(words: SocialCardWords | null | undefined): StoredFrame[] {
   const raw = (words as Record<string, unknown> | null | undefined)?.[FRAME_STORE];
@@ -309,13 +338,19 @@ function publicWords(words: SocialCardWords | null | undefined): SocialCardWords
   if (!words) return {};
   const rest = { ...(words as Record<string, unknown>) };
   delete rest[FRAME_STORE];
+  delete rest[FILE_ID];
   return rest as SocialCardWords;
 }
 
-function withFrameStore(words: SocialCardWords | null | undefined, frames: StoredFrame[]): SocialCardWords {
-  const visible = publicWords(words);
-  if (frames.length === 0) return visible;
-  return { ...visible, [FRAME_STORE]: frames } as SocialCardWords;
+function withPictures(
+  words: SocialCardWords | null | undefined,
+  frames: StoredFrame[],
+  fileId: string | null
+): SocialCardWords {
+  const next = { ...publicWords(words) } as Record<string, unknown>;
+  if (frames.length > 0) next[FRAME_STORE] = frames;
+  if (fileId) next[FILE_ID] = fileId;
+  return next as SocialCardWords;
 }
 
 function toCard(row: SocialCardRow): SocialCard {
@@ -331,6 +366,7 @@ function toCard(row: SocialCardRow): SocialCard {
     fileKind: fileKindFromPath(row.file_path),
     postable: isPostablePath(row.file_path),
     scraps: [],
+    fileId: row.file_path ? readFileId(row.words) : null,
     frames: stored.map((frame) => ({
       id: frame.id,
       fileKind: fileKindFromPath(frame.path),
@@ -454,6 +490,22 @@ function assertReadyFile(filePath: string | null): void {
     throw new ValidationError('Ready needs a JPEG, PNG, WebP, MP4, or MOV');
   }
   throw new ValidationError('Ready needs a photo or a video');
+}
+
+function assertCardMedia(format: SocialCardFormat | null, filePath: string | null): void {
+  if (!filePath) return;
+  if (format !== 'post' && format !== 'reel' && format !== 'story') return;
+  if (isPostablePath(filePath)) return;
+  const kind = fileKindFromPath(filePath);
+  throw new ValidationError(
+    kind === 'photo' || kind === 'video' ? 'Use a JPEG, PNG, WebP, MP4, or MOV' : 'Use a photo or a video'
+  );
+}
+
+function assertMediaUpload(format: SocialCardFormat | null, contentType: string): void {
+  if (format !== 'post' && format !== 'reel' && format !== 'story') return;
+  if (contentType.startsWith('image/') || contentType.startsWith('video/')) return;
+  throw new ValidationError('Use a photo or a video');
 }
 
 function assertObjectKey(filePath: string, doctorId: string, cardId: string | null): void {
@@ -856,13 +908,12 @@ export async function createSocialCard(
     assertObjectKey(input.filePath, doctorId, null);
     await assertObjectExists(input.filePath);
   }
-  if (stage === 'ready') {
-    try {
-      assertReadyFile(input.filePath ?? null);
-    } catch (error) {
-      if (input.filePath) await removeObject(input.filePath);
-      throw error;
-    }
+  try {
+    if (stage === 'ready') assertReadyFile(input.filePath ?? null);
+    assertCardMedia(input.format ?? null, input.filePath ?? null);
+  } catch (error) {
+    if (input.filePath) await removeObject(input.filePath);
+    throw error;
   }
 
   const admin = adminClient();
@@ -873,7 +924,7 @@ export async function createSocialCard(
     title: input.title,
     format: input.format ?? null,
     topic: input.topic ?? null,
-    words: input.words ?? {},
+    words: input.filePath ? withPictures(input.words ?? {}, [], crypto.randomUUID()) : (input.words ?? {}),
     file_path: input.filePath ?? null,
     ...(sourceUrl ? { source_url: sourceUrl } : {}),
     ...(columnId ? { column_id: columnId } : {}),
@@ -957,6 +1008,15 @@ async function updateOwnedCard(
   throw new InternalError('Could not save the card');
 }
 
+const SENDING_MS = 10 * 60 * 1000;
+
+/** The worker claimed this card and has not finished. A second send could post it twice. */
+function socialCardSending(current: SocialCardRow, now = Date.now()): boolean {
+  if (!current.publish_attempt_at || current.publish_error) return false;
+  const claimed = Date.parse(current.publish_attempt_at);
+  return !Number.isNaN(claimed) && now - claimed < SENDING_MS;
+}
+
 async function markSocialCardPosted(
   current: SocialCardRow,
   instagramUrl: string,
@@ -995,6 +1055,30 @@ async function markSocialCardPosted(
   return card;
 }
 
+async function markSocialCardPostedByHand(
+  current: SocialCardRow,
+  correlationId: string,
+  doctorId: string
+): Promise<SocialCard> {
+  if (current.stage !== 'ready' || !current.file_path) {
+    throw new ValidationError('Mark a Ready card posted');
+  }
+  if (!socialCardPostsByHand(current.words)) {
+    throw new ValidationError('This card is set to send itself');
+  }
+
+  const patch: Record<string, unknown> = {
+    stage: 'posted',
+    publish_error: null,
+  };
+  const data = await updateOwnedCard(current.id, doctorId, patch, correlationId);
+  if (!data) throw new NotFoundError('Social card not found');
+
+  const card = toCard(data);
+  await logDataModification(correlationId, doctorId, 'update', RESOURCE, card.id, Object.keys(patch));
+  return card;
+}
+
 export async function updateSocialCard(
   id: string,
   input: UpdateSocialCardInput,
@@ -1002,6 +1086,9 @@ export async function updateSocialCard(
   doctorId: string
 ): Promise<SocialCard> {
   const current = await loadOwned(id, doctorId, correlationId);
+  if (input.manualPosted) {
+    return markSocialCardPostedByHand(current, correlationId, doctorId);
+  }
   if (input.instagramUrl !== undefined) {
     return markSocialCardPosted(current, input.instagramUrl, correlationId, doctorId);
   }
@@ -1015,7 +1102,10 @@ export async function updateSocialCard(
     stageChange = column.kind === 'custom' ? 'custom' : column.kind;
     nextColumnId = column.id;
   }
-  if (stageChange === 'ready') assertReadyFile(current.file_path);
+  if (stageChange === 'ready') {
+    assertReadyFile(current.file_path);
+    assertCardMedia(input.format !== undefined ? input.format : current.format, current.file_path);
+  }
 
   const patch: Record<string, unknown> = {};
   if (input.title !== undefined) patch.title = input.title;
@@ -1024,7 +1114,7 @@ export async function updateSocialCard(
   if (input.format !== undefined) patch.format = input.format;
   if (input.topic !== undefined) patch.topic = input.topic;
   if (input.words !== undefined) {
-    patch.words = withFrameStore(input.words, readFrameStore(current.words));
+    patch.words = withPictures(input.words, readFrameStore(current.words), readFileId(current.words));
   }
   if (input.sourceUrl !== undefined) patch.source_url = cleanSourceUrl(input.sourceUrl);
   if (input.links !== undefined) {
@@ -1032,7 +1122,25 @@ export async function updateSocialCard(
     patch.resource_links = links;
     patch.source_url = links[0]?.url ?? null;
   }
-  if (input.scheduledAt) {
+  if (input.postNow) {
+    if (current.stage === 'posted') {
+      throw new ValidationError('This card is already posted.');
+    }
+    if (socialCardPostsByHand(current.words)) {
+      throw new ValidationError('Halo Aid will not send this. You post it from the phone.');
+    }
+    const nextStage = stageChange ?? current.stage;
+    if (nextStage !== 'ready' || !current.file_path) {
+      throw new ValidationError('A time needs a Ready card with a file');
+    }
+    if (socialCardSending(current)) {
+      throw new ConflictError('Halo Aid is already sending this.');
+    }
+    patch.scheduled_at = new Date().toISOString();
+    patch.publish_attempt_at = null;
+    patch.publish_error = null;
+    if (!current.link_code) patch.link_code = newSocialCardCode();
+  } else if (input.scheduledAt) {
     const nextStage = stageChange ?? current.stage;
     if (nextStage !== 'ready' || !current.file_path) {
       throw new ValidationError('A time needs a Ready card with a file');
@@ -1154,7 +1262,8 @@ export async function createSocialCardFileUpload(
   correlationId: string,
   doctorId: string
 ): Promise<{ path: string; token: string }> {
-  await loadOwned(id, doctorId, correlationId);
+  const card = await loadOwned(id, doctorId, correlationId);
+  assertMediaUpload(card.format, assertContentType(contentType));
   return mintUpload(doctorId, id, contentType, correlationId);
 }
 
@@ -1167,10 +1276,14 @@ export async function attachSocialCardFile(
   const current = await loadOwned(id, doctorId, correlationId);
   assertObjectKey(filePath, doctorId, id);
   await assertObjectExists(filePath);
+  assertCardMedia(current.format, filePath);
 
   const { data, error } = await adminClient()
     .from('social_cards')
-    .update({ file_path: filePath })
+    .update({
+      file_path: filePath,
+      words: withPictures(current.words, readFrameStore(current.words), crypto.randomUUID()),
+    })
     .eq('id', id)
     .eq('doctor_id', doctorId)
     .select('*')
@@ -1200,7 +1313,7 @@ export async function removeSocialCardFile(
       .from('social_cards')
       .update({
         file_path: next.path,
-        words: withFrameStore(current.words, stored.slice(1)),
+        words: withPictures(current.words, stored.slice(1), next.id),
       })
       .eq('id', id)
       .eq('doctor_id', doctorId)
@@ -1217,7 +1330,12 @@ export async function removeSocialCardFile(
 
   const { data, error } = await adminClient()
     .from('social_cards')
-    .update({ file_path: null, stage, scheduled_at: null })
+    .update({
+      file_path: null,
+      stage,
+      scheduled_at: null,
+      words: withPictures(current.words, [], null),
+    })
     .eq('id', id)
     .eq('doctor_id', doctorId)
     .select('*')
@@ -1439,6 +1557,14 @@ export async function addSocialCardScrap(
   doctorId: string
 ): Promise<SocialScrap> {
   const card = await loadOwned(id, doctorId, correlationId);
+  const scrapKind = fileKindFromPath(filePath);
+  if (
+    (card.format === 'post' || card.format === 'reel' || card.format === 'story') &&
+    scrapKind !== 'photo' &&
+    scrapKind !== 'video'
+  ) {
+    throw new ValidationError('Use a photo or a video');
+  }
   const existing = await adminClient()
     .from('social_card_scraps')
     .select('file_path')
@@ -1556,11 +1682,12 @@ async function saveFrames(
   current: SocialCardRow,
   filePath: string | null,
   frames: StoredFrame[],
+  fileId: string | null,
   correlationId: string,
   doctorId: string
 ): Promise<SocialCard> {
   const patch: Record<string, unknown> = {
-    words: withFrameStore(current.words, frames),
+    words: withPictures(current.words, frames, fileId),
   };
   if (filePath) patch.file_path = filePath;
   const { data, error } = await adminClient()
@@ -1586,13 +1713,19 @@ export async function addSocialCardFrame(
   if (!current.file_path) throw new ValidationError('Add the file');
   if (!isCarouselPhoto(filePath)) throw new ValidationError('Use a JPEG, PNG, or WebP');
   const existing = readFrameStore(current.words);
-  if (existing.length + 1 >= FRAME_CAP) throw new ValidationError('A post holds ten pictures');
+  if (existing.length + 1 >= FRAME_CAP) {
+    throw new ValidationError(
+      current.format === 'story' ? 'A story holds ten pictures' : 'A post holds ten pictures'
+    );
+  }
+  const fileId = readFileId(current.words) ?? crypto.randomUUID();
   assertObjectKey(filePath, doctorId, id);
   await assertObjectExists(filePath);
   return saveFrames(
     current,
     null,
     [...existing, { id: crypto.randomUUID(), path: filePath }],
+    fileId,
     correlationId,
     doctorId
   );
@@ -1612,6 +1745,7 @@ export async function removeSocialCardFrame(
     current,
     null,
     existing.filter((frame) => frame.id !== frameId),
+    readFileId(current.words),
     correlationId,
     doctorId
   );
@@ -1628,23 +1762,20 @@ export async function orderSocialCardFrames(
   const current = await loadOwned(id, doctorId, correlationId);
   if (!current.file_path) throw new ValidationError('Add the file');
   const existing = readFrameStore(current.words);
-  const expected = ['piece', ...existing.map((frame) => frame.id)];
+  const fileId = readFileId(current.words) ?? crypto.randomUUID();
+  const pictures = [{ id: fileId, path: current.file_path }, ...existing];
+  const known = new Map(pictures.map((picture) => [picture.id, picture.path]));
+  const canonical = ids.map((slot) => (slot === 'piece' ? fileId : slot));
   const same =
-    ids.length === expected.length &&
-    new Set(ids).size === ids.length &&
-    ids.every((slot) => expected.includes(slot));
+    canonical.length === pictures.length &&
+    new Set(canonical).size === canonical.length &&
+    canonical.every((slot) => known.has(slot));
   if (!same) throw new ValidationError('Keep the pictures on this post');
-  const pathOf = new Map<string, string>([['piece', current.file_path]]);
-  for (const frame of existing) pathOf.set(frame.id, frame.path);
-  const ordered = ids.map((slot) => ({ id: slot, path: pathOf.get(slot) ?? '' }));
-  if (ordered.some((frame) => !frame.path)) throw new ValidationError('Keep the pictures on this post');
+  const ordered = canonical.map((slot) => ({ id: slot, path: known.get(slot) ?? '' }));
+  if (ordered.some((picture) => !picture.path)) throw new ValidationError('Keep the pictures on this post');
   const first = ordered[0];
   if (!first) throw new ValidationError('Keep the pictures on this post');
-  const rest = ordered.slice(1).map((frame) => ({
-    id: frame.id === 'piece' ? crypto.randomUUID() : frame.id,
-    path: frame.path,
-  }));
-  return saveFrames(current, first.path, rest, correlationId, doctorId);
+  return saveFrames(current, first.path, ordered.slice(1), first.id, correlationId, doctorId);
 }
 
 export async function getSocialCardFrameUrl(

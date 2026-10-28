@@ -1,40 +1,40 @@
 import {
   CalendarCheck,
-  MessageCircle,
+  ClipboardList,
   RefreshCw,
-  Sparkles,
-  Video,
+  Stethoscope,
+  Users,
 } from "lucide-react";
 
 const STEPS = [
   {
-    icon: MessageCircle,
-    title: "They message you",
-    body: "Patients message your Instagram account, day or night.",
-  },
-  {
-    icon: Sparkles,
-    title: "Halo Aid sends your page",
-    body: "One reply: a link to your page. The message itself is not answered.",
+    icon: ClipboardList,
+    title: "Post",
+    body: "Plan it on the board — Ideas, Chosen, Making, Ready — then put it on the schedule.",
   },
   {
     icon: CalendarCheck,
-    title: "They book on your page",
-    body: "The visit is scheduled there — teleconsult or in-clinic.",
+    title: "Book",
+    body: "They pick a time on your page. The booking lands on the post that sent them.",
   },
   {
-    icon: Video,
-    title: "You see the patient",
-    body: "Video, voice, text, or in your OPD — with their history already in front of you.",
+    icon: Users,
+    title: "Check in",
+    body: "The desk adds walk-ins, vitals, and history before they sit down.",
+  },
+  {
+    icon: Stethoscope,
+    title: "See",
+    body: "Chart the visit, write the prescription, or see them by video, voice, or text.",
   },
   {
     icon: RefreshCw,
-    title: "They come back",
-    body: "Follow-ups, reminders, and a record that remembers.",
+    title: "Come back",
+    body: "The record is waiting, and the post that brought them is counted.",
   },
 ] as const;
 
-/** The 5-step "how it works" flow from first message to follow-up. */
+/** Five steps from a post to the next visit. */
 export function HowItWorks() {
   return (
     <section id="how-it-works" className="scroll-mt-20 bg-white py-20 sm:py-24">
@@ -44,7 +44,7 @@ export function HowItWorks() {
             How Halo Aid works
           </h2>
           <p className="mt-4 text-lg text-[hsl(var(--halo-ink))]/70">
-            From the first message to the follow-up — in five steps.
+            From the post to the follow-up.
           </p>
         </div>
         <ol className="mt-14 grid gap-6 sm:grid-cols-2 xl:grid-cols-5">

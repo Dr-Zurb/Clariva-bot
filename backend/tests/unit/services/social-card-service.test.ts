@@ -25,6 +25,7 @@ import {
   getSocialCardFileUrl,
   getSocialPagePath,
   listSocialCards,
+  orderSocialCardFrames,
   purgeBinnedSocialCard,
   recordSocialCardVisit,
   removeSocialCardFile,
@@ -34,7 +35,7 @@ import {
   renameSocialColumn,
   deleteSocialColumn,
 } from '../../../src/services/social-card-service';
-import { NotFoundError, ValidationError } from '../../../src/utils/errors';
+import { ConflictError, NotFoundError, ValidationError } from '../../../src/utils/errors';
 import {
   createSocialCardSchema,
   updateSocialCardSchema,
@@ -118,6 +119,7 @@ describe('social cards', () => {
         fileKind: null,
         postable: false,
         scraps: [],
+        fileId: null,
         frames: [],
         links: [],
         sourceUrl: null,
@@ -354,6 +356,7 @@ describe('social cards', () => {
       file_path: null,
       stage: 'making',
       scheduled_at: null,
+      words: {},
     });
     expect(remove).toHaveBeenCalledWith([filePath]);
   });
@@ -574,6 +577,58 @@ describe('social cards', () => {
     expect(() =>
       updateSocialCardSchema.parse({ words: { patientName: "no" } })
     ).toThrow(ZodError);
+    expect(updateSocialCardSchema.parse({ words: { byHand: true } }).words?.byHand).toBe(true);
+    expect(updateSocialCardSchema.parse({ words: { handNote: "Pin the clinic" } }).words?.handNote).toBe("Pin the clinic");
+    expect(() => updateSocialCardSchema.parse({ words: { handNote: "a".repeat(501) } })).toThrow(ZodError);
+    expect(updateSocialCardSchema.parse({ manualPosted: true }).manualPosted).toBe(true);
+    expect(updateSocialCardSchema.parse({ postNow: true }).postNow).toBe(true);
+    expect(() =>
+      updateSocialCardSchema.parse({ manualPosted: true, title: "Fees" })
+    ).toThrow(ZodError);
+  });
+
+  it('refuses Post now while the card is being sent', async () => {
+    const sending = {
+      ...row,
+      stage: 'ready' as const,
+      file_path: `${doctorId}/file.jpg`,
+      publish_attempt_at: new Date().toISOString(),
+      publish_error: null,
+    };
+    const chain = writeChain({ data: sending, error: null });
+    mockedDb.getSupabaseAdminClient.mockReturnValue({
+      from: jest.fn(() => chain),
+    } as never);
+
+    await expect(updateSocialCard(row.id, { postNow: true }, correlationId, doctorId)).rejects.toBeInstanceOf(
+      ConflictError
+    );
+    expect(chain.update).not.toHaveBeenCalled();
+  });
+
+  it('clears the last send error when Post now starts again', async () => {
+    const failed = {
+      ...row,
+      stage: 'ready' as const,
+      file_path: `${doctorId}/file.jpg`,
+      link_code: '23456789AB',
+      publish_attempt_at: new Date(Date.now() - 60 * 1000).toISOString(),
+      publish_error: 'meta_rejected',
+    };
+    const chain = writeChain({ data: failed, error: null });
+    mockedDb.getSupabaseAdminClient.mockReturnValue({
+      from: jest.fn(() => chain),
+    } as never);
+
+    await updateSocialCard(row.id, { postNow: true }, correlationId, doctorId);
+
+    expect(chain.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        scheduled_at: expect.any(String),
+        publish_attempt_at: null,
+        publish_error: null,
+      })
+    );
   });
 
   it('rejects a time when the card has no file', async () => {
@@ -854,6 +909,52 @@ describe('social cards', () => {
     expect(remove).toHaveBeenCalledWith([filePath]);
     expect(removeRow).toHaveBeenCalled();
     expect(JSON.stringify(mockedAudit.mock.calls)).not.toContain(filePath);
+  });
+
+  it('keeps each picture id when the order changes', async () => {
+    const fileA = `${doctorId}/11111111-1111-4111-8111-111111111111.jpg`;
+    const fileB = `${doctorId}/11111111-1111-4111-8111-222222222222.jpg`;
+    const frameId = '22222222-2222-4222-8222-222222222222';
+    const storedFileId = '33333333-3333-4333-8333-333333333333';
+    let current = {
+      ...row,
+      stage: 'making' as const,
+      format: 'post' as const,
+      file_path: fileA,
+      words: { fileId: storedFileId, frameStore: [{ id: frameId, path: fileB }] },
+    };
+    const from = jest.fn(() => {
+      const chain = {
+        select: jest.fn(),
+        eq: jest.fn(),
+        update: jest.fn(),
+        maybeSingle: jest.fn(),
+      };
+      chain.select.mockReturnValue(chain);
+      chain.eq.mockReturnValue(chain);
+      chain.update.mockImplementation((patch: unknown) => {
+        const next = patch as { file_path?: string; words?: typeof current.words };
+        current = { ...current, ...next };
+        return chain;
+      });
+      chain.maybeSingle.mockImplementation(() => Promise.resolve({ data: current, error: null }));
+      return chain;
+    });
+    mockedDb.getSupabaseAdminClient.mockReturnValue({ from } as never);
+
+    const moved = await orderSocialCardFrames(row.id, [frameId, storedFileId], correlationId, doctorId);
+
+    expect(moved.fileId).toBe(frameId);
+    expect(moved.frames.map((frame) => frame.id)).toEqual([storedFileId]);
+    expect(current.file_path).toBe(fileB);
+    expect(current.words.fileId).toBe(frameId);
+    expect(current.words.frameStore).toEqual([{ id: storedFileId, path: fileA }]);
+
+    const back = await orderSocialCardFrames(row.id, [storedFileId, frameId], correlationId, doctorId);
+
+    expect(back.fileId).toBe(storedFileId);
+    expect(back.frames.map((frame) => frame.id)).toEqual([frameId]);
+    expect(current.file_path).toBe(fileA);
   });
 });
 

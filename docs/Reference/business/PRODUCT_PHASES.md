@@ -49,6 +49,8 @@ retrofitting our shape means fighting their own assumptions.
 
 ### The naming hides an overlap worth being precise about
 
+**22 Oct 2026.** Meta refused Instagram messaging. The front door is the public page, not a DM. Read [`SOCIAL_AFTER_REVIEW.md`](./SOCIAL_AFTER_REVIEW.md) before treating the next paragraph as current. The paragraph stays as the phase shape it described.
+
 Phase 1 is *already* social — DM intake is the front door. What phase 2 adds is the other half of the same
 loop:
 

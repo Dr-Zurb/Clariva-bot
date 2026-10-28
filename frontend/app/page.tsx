@@ -1,17 +1,19 @@
 import type { Metadata } from "next";
 
+import { EdgeBand } from "@/components/marketing/EdgeBand";
 import { FeatureGrid } from "@/components/marketing/FeatureGrid";
 import { FinalCtaBand } from "@/components/marketing/FinalCtaBand";
 import { Hero } from "@/components/marketing/Hero";
 import { HowItWorks } from "@/components/marketing/HowItWorks";
 import { MarketingFooter } from "@/components/marketing/MarketingFooter";
 import { MarketingNav } from "@/components/marketing/MarketingNav";
+import { PricingTeaser } from "@/components/marketing/PricingTeaser";
 import { ThesisBand } from "@/components/marketing/ThesisBand";
 import { TrustBand } from "@/components/marketing/TrustBand";
 
 const TITLE = "Halo Aid — Social media assistance for doctors";
 const DESCRIPTION =
-  "Instagram messages, teleconsultation, and records and prescriptions. Every DM gets one link to your page.";
+  "Plan your posts, book the visit, and keep the record — in one place. See which post filled the chair.";
 
 // `title.absolute` keeps the landing title clean (no "· Halo Aid" template
 // suffix) since the headline already leads with the brand name.
@@ -42,7 +44,9 @@ export default function HomePage() {
         <ThesisBand />
         <HowItWorks />
         <FeatureGrid />
+        <EdgeBand />
         <TrustBand />
+        <PricingTeaser />
         <FinalCtaBand />
       </main>
       <MarketingFooter />

@@ -3,7 +3,7 @@ import Link from "next/link";
 
 export const metadata = {
   title: "Privacy Policy | Halo Aid",
-  description: "Privacy Policy for Halo Aid AI Receptionist",
+  description: "Privacy Policy for Halo Aid",
 };
 
 export default function PrivacyPage() {
@@ -12,7 +12,7 @@ export default function PrivacyPage() {
       <h1 className="text-3xl font-bold tracking-tight text-foreground">
         Privacy Policy
       </h1>
-      <p className="mt-2 text-sm text-muted-foreground">Last updated: August 2026</p>
+      <p className="mt-2 text-sm text-muted-foreground">Last updated: October 2026</p>
 
       <div className="mt-8 space-y-8 text-foreground/80">
         <section className="space-y-3">
@@ -30,8 +30,8 @@ export default function PrivacyPage() {
             .
           </p>
           <p>
-            We provide software that healthcare practices use to answer patient
-            enquiries, book appointments, run consultations, and record clinical
+            We provide software that healthcare practices use to organize their
+            posts, book appointments, run consultations, and record clinical
             notes. This policy explains how information is handled when you
             interact with the service through Instagram, Facebook, our booking
             pages, a consultation link, or a practice&apos;s front desk.
@@ -113,8 +113,7 @@ export default function PrivacyPage() {
             </li>
             <li>
               <strong className="text-foreground">AI assistant</strong> — OpenAI and
-              Anthropic, which generate assistant replies and draft summaries (see
-              section 5)
+              Anthropic, which draft summaries (see section 5)
             </li>
             <li>
               <strong className="text-foreground">Messaging</strong> — Meta, where
@@ -140,8 +139,8 @@ export default function PrivacyPage() {
             5. AI and your data
           </h2>
           <p>
-            The assistant that answers enquiries and drafts summaries is powered by
-            third-party AI models. Before any request leaves our systems for those
+            Where an assistant drafts a summary, it is powered by third-party AI
+            models. Before any request leaves our systems for those
             models, we strip out identifying details such as name and phone number.
           </p>
           <p>

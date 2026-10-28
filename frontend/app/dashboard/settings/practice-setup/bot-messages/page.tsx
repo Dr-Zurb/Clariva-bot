@@ -10,8 +10,8 @@ export default function MessagingPage() {
   if (isLoading || !token) {
     return (
       <SettingsPageShell
-        title="Messaging"
-        description="Welcome message and default appointment notes for the receptionist bot."
+        title="Appointment notes"
+        description="Default notes added to new appointments."
         isLoading
       />
     );

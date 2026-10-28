@@ -186,11 +186,9 @@ export const callbackHandler = asyncHandler(async (req: Request, res: Response) 
     throw err;
   }
 
-  const subscribed = await subscribeInstagramAccountApps(
-    instagramAccountId,
-    longLivedToken,
-    correlationId
-  );
+  const messagesSubscribed = env.META_INBOUND_ENABLED
+    ? await subscribeInstagramAccountApps(instagramAccountId, longLivedToken, correlationId)
+    : false;
 
   await logAuditEvent({
     correlationId,
@@ -202,7 +200,7 @@ export const callbackHandler = asyncHandler(async (req: Request, res: Response) 
   });
 
   const successUrl = buildFrontendConnectRedirect(
-    subscribed
+    !env.META_INBOUND_ENABLED || messagesSubscribed
       ? { connected: '1' }
       : { connected: '0', error: 'webhook_subscribe_failed' }
   );
@@ -210,7 +208,9 @@ export const callbackHandler = asyncHandler(async (req: Request, res: Response) 
     res.redirect(302, successUrl);
     return;
   }
-  res.status(200).json(successResponse({ connected: true, messagesEnabled: subscribed }, req));
+  res.status(200).json(
+    successResponse({ connected: true, messagesEnabled: messagesSubscribed }, req)
+  );
 });
 
 /**

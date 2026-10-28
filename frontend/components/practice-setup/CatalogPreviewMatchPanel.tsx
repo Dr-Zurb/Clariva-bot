@@ -192,7 +192,7 @@ export function CatalogPreviewMatchPanel({ catalog, doctorProfile }: Props): JSX
 
           {result.mixedComplaints && (
             <p className="text-xs text-indigo-900">
-              Mixed complaints detected — production DM would ask for clarification before booking.
+              Mixed complaints detected — ask which visit they want before booking.
             </p>
           )}
 

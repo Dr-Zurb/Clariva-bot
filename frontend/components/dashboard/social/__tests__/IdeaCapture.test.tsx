@@ -157,7 +157,9 @@ describe("IdeaCapture", () => {
   it("saves a thought and clears the form", async () => {
     render(<IdeaCapture token="token" />);
     fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Fees reel" } });
-    fireEvent.change(screen.getByLabelText("Note"), { target: { value: "New slot" } });
+    const note = screen.getByLabelText("Note");
+    note.textContent = "New slot";
+    fireEvent.input(note);
     fireEvent.click(screen.getByRole("button", { name: "Add" }));
 
     await waitFor(() =>
@@ -189,11 +191,13 @@ describe("IdeaCapture", () => {
     createMock.mockRejectedValue(new Error("Request failed"));
     render(<IdeaCapture token="token" />);
     fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Clinic hours" } });
-    fireEvent.change(screen.getByLabelText("Note"), { target: { value: "Evening slot" } });
+    const note = screen.getByLabelText("Note");
+    note.textContent = "Evening slot";
+    fireEvent.input(note);
     fireEvent.click(screen.getByRole("button", { name: "Add" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Not saved");
     expect(screen.getByLabelText("Title")).toHaveValue("Clinic hours");
-    expect(screen.getByLabelText("Note")).toHaveValue("Evening slot");
+    expect(screen.getByLabelText("Note").textContent).toBe("Evening slot");
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
     expect(window.localStorage.getItem(PENDING_KEY)).toBeNull();
   });
@@ -244,7 +248,7 @@ describe("IdeaCapture", () => {
     expect(screen.getByLabelText("Title")).toHaveAttribute("autocomplete", "halo-idea-title");
     expect(screen.getByLabelText("Link")).toHaveAttribute("autocomplete", "halo-idea-link");
     expect(screen.getByLabelText("Link")).toHaveValue("https://www.instagram.com/reel/abc");
-    expect(screen.getByLabelText("Note")).toHaveValue("");
+    expect(screen.getByLabelText("Note").textContent).toBe("");
     expect(screen.getByRole("button", { name: "Add" })).toBeEnabled();
     expect(createMock).not.toHaveBeenCalled();
   });

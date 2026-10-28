@@ -50,7 +50,7 @@ export const ONBOARDING_STEPS: readonly OnboardingStepDef[] = [
     id: "instagram",
     title: "Connect socials",
     description:
-      "Link Instagram so messages get an automated reply.",
+      "Link Instagram to post your cards.",
     href: "/dashboard/settings/integrations",
     cta: "Connect socials",
     doneKey: "instagramConnected",
@@ -58,7 +58,7 @@ export const ONBOARDING_STEPS: readonly OnboardingStepDef[] = [
   {
     id: "practice",
     title: "Add practice info",
-    description: "Practice name, timezone, and specialty so booking messages are correct.",
+    description: "Practice name, timezone, and specialty so the booking page is correct.",
     href: "/dashboard/settings/practice-setup/practice-info",
     cta: "Add practice info",
     doneKey: "practiceInfoSet",

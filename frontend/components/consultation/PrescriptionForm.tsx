@@ -895,18 +895,14 @@ function PrescriptionFormBody({
       const { sent, channels } = sendRes.data;
       if (sent) {
         setSuccessMessage(
-          channels?.instagram && channels?.email
-            ? "Prescription saved and sent to patient (DM + email)."
-            : channels?.instagram
-              ? "Prescription saved and sent to patient (DM)."
-              : channels?.email
-                ? "Prescription saved and sent to patient (email)."
-                : "Prescription saved and sent."
+          channels?.email
+            ? "Prescription saved and sent to patient (email)."
+            : "Prescription saved and sent to patient."
         );
       } else {
         setSuccessMessage(
           sendRes.data.reason === "no_patient_link"
-            ? "Prescription saved. Could not send (no Instagram link or email for patient)."
+            ? "Prescription saved. Could not send (no email on file)."
             : "Prescription saved. Send to patient failed."
         );
       }

@@ -10,13 +10,11 @@ import { useDoctorSettingsForm } from "@/hooks/useDoctorSettingsForm";
 import type { DoctorSettings, PatchDoctorSettingsPayload } from "@/types/doctor-settings";
 
 type MessagingForm = {
-  welcome_message: string;
   default_notes: string;
 };
 
 function toForm(s: DoctorSettings): MessagingForm {
   return {
-    welcome_message: s.welcome_message ?? "",
     default_notes: s.default_notes ?? "",
   };
 }
@@ -26,8 +24,8 @@ interface MessagingClientProps {
 }
 
 /**
- * Settings → Messaging (settings-refresh · sr-03/04).
- * Instagram pause lives on Integrations (SR-D4).
+ * Settings → Appointment notes.
+ * The stored welcome line stays on the record and is not shown here.
  */
 export function MessagingClient({ token }: MessagingClientProps) {
   const {
@@ -47,7 +45,6 @@ export function MessagingClient({ token }: MessagingClientProps) {
     e.preventDefault();
     if (!form) return;
     const payload: PatchDoctorSettingsPayload = {
-      welcome_message: form.welcome_message.trim() || null,
       default_notes: form.default_notes.trim() || null,
     };
     await save(payload);
@@ -55,8 +52,8 @@ export function MessagingClient({ token }: MessagingClientProps) {
 
   return (
     <SettingsPageShell
-      title="Messaging"
-      description="Welcome message and default appointment notes for the receptionist bot."
+      title="Appointment notes"
+      description="Default notes added to new appointments."
       isLoading={isLoading || !form}
       loadError={loadError}
       onRetry={() => void refetch()}
@@ -67,25 +64,6 @@ export function MessagingClient({ token }: MessagingClientProps) {
           onSubmit={(e) => void handleSubmit(e)}
           className="mt-6 space-y-4 rounded-lg border border-border bg-card p-4"
         >
-          <div>
-            <FieldLabel
-              htmlFor="welcome_message"
-              tooltip="Greeting or context the AI bot uses when starting a conversation."
-            >
-              Welcome message (AI context)
-            </FieldLabel>
-            <textarea
-              id="welcome_message"
-              rows={3}
-              value={form.welcome_message}
-              onChange={(e) =>
-                setForm((p) => ({ ...p, welcome_message: e.target.value }))
-              }
-              maxLength={1000}
-              placeholder="Optional greeting for the bot"
-              className={settingsFieldClassName}
-            />
-          </div>
           <div>
             <FieldLabel
               htmlFor="default_notes"

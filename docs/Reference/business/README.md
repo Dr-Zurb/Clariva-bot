@@ -16,6 +16,7 @@ Strategy, regulatory launch planning, and go-to-market — for founders and comm
 | [PRICING_AND_UNIT_ECONOMICS.md](./PRICING_AND_UNIT_ECONOMICS.md) | Plan structure, cost to serve per doctor, gross margin |
 | [PRICING_MODEL_DECISIONS.md](./PRICING_MODEL_DECISIONS.md) | Live pricing discussion — what we ruled out and why. Nothing locked |
 | [ICP_AND_FIRST_CUSTOMER.md](./ICP_AND_FIRST_CUSTOMER.md) | Who to sell to first, objection handling, sourcing |
+| [SOCIAL_AFTER_REVIEW.md](./SOCIAL_AFTER_REVIEW.md) | After the 22 Oct 2026 messaging refusal: the page, how to get doctors, what else to build. §5 (26 Oct): autoposting is Meta’s, so it is not the product |
 | [PILOT_AGREEMENT.md](./PILOT_AGREEMENT.md) | One-page founding-doctor paper + the P0 gate for pilots |
 | [ONBOARDING_RUNBOOK.md](./ONBOARDING_RUNBOOK.md) | Signature → first completed consult, step by step |
 

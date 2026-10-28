@@ -38,13 +38,22 @@ import { instagramAccountNameForGreeting } from '../utils/instagram-greeting-cop
 const INSTAGRAM_OAUTH_AUTHORIZE = 'https://www.instagram.com/oauth/authorize';
 const INSTAGRAM_OAUTH_ACCESS_TOKEN = 'https://api.instagram.com/oauth/access_token';
 const INSTAGRAM_GRAPH_BASE = 'https://graph.instagram.com';
-/** Business Login scopes. The review file of 8 Oct stays basic + messages. Posting and insights are requested so a test account can grant them on reconnect. Comments stay out. */
-const INSTAGRAM_BUSINESS_SCOPES = [
-  'instagram_business_basic',
-  'instagram_business_manage_messages',
-  'instagram_business_content_publish',
-  'instagram_business_manage_insights',
-];
+/**
+ * Business Login scopes. Page permissions stay out.
+ * Messages is requested only when inbound replies are switched on.
+ */
+function instagramBusinessScopes(): string[] {
+  const scopes = [
+    'instagram_business_basic',
+    'instagram_business_content_publish',
+    'instagram_business_manage_insights',
+    'instagram_business_manage_comments',
+  ];
+  if (env.META_INBOUND_ENABLED) {
+    scopes.splice(1, 0, 'instagram_business_manage_messages');
+  }
+  return scopes;
+}
 /** Messages only. Comments and reactions are not in this review file's token. */
 export const INSTAGRAM_DM_SUBSCRIBED_FIELDS = 'messages';
 const META_HTTP_TIMEOUT_MS = 10000;
@@ -328,7 +337,7 @@ function summarizeHealthFromProbe(
       errorCode: probe.errorCode,
       tokenExpiresAt: storedExpiresAt,
       message:
-        "We couldn't verify your Instagram token with Meta right now. If patients can't reach the bot, try reconnecting.",
+        "We couldn't verify your Instagram token with Meta right now. Try reconnecting if posting fails.",
       reconnectRecommended: false,
     };
   }
@@ -361,7 +370,7 @@ function summarizeHealthFromProbe(
     };
   }
 
-  if (lastDmSuccessAt) {
+  if (env.META_INBOUND_ENABLED && lastDmSuccessAt) {
     const last = new Date(lastDmSuccessAt).getTime();
     if (!Number.isNaN(last) && now - last > STALE_DM_WARN_MS) {
       return {
@@ -765,7 +774,7 @@ export function buildMetaOAuthUrl(state: string): string {
   const params = new URLSearchParams({
     client_id: appId,
     redirect_uri: redirectUri,
-    scope: INSTAGRAM_BUSINESS_SCOPES.join(','),
+    scope: instagramBusinessScopes().join(','),
     state,
     response_type: 'code',
   });

@@ -274,7 +274,7 @@ updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 
 **Bin:** `deleted_at` hides the card from the board. The file stays so it can be restored. Delete on a binned card, or Empty bin, removes that row, its file, and its code immediately. Thirty days later the service does the same for anything still in the bin.
 
-**Posted:** `social_cards_posted_has_url` — `posted` has an `instagram_url`, and every other stage has none. Pasting the URL does not call Instagram. Do not log the URL.
+**Posted:** `social_cards_posted_has_url` — a card that is not `posted` has no `instagram_url`. A `posted` card may have none, which is how a doctor marks “I’ll post it” done, or a link of 1–500 characters. Pasting the URL does not call Instagram. Do not log the URL.
 
 **Visits:** `visit_count` is bookings that started from this card’s code. It is a number. The card has no patient, phone, or appointment id. Deleting an appointment does not rewind the count. A new card from Use again starts at 0.
 

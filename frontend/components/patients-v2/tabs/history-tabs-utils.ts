@@ -17,7 +17,7 @@ export const CHANNEL_ORDER: ConversationChannel[] = [
 
 export const CHANNEL_LABELS: Record<ConversationChannel, string> = {
   whatsapp: "WhatsApp",
-  instagram: "Instagram DM",
+  instagram: "Instagram",
   web_chat: "Web chat",
   in_app: "In-app",
 };

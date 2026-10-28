@@ -26,7 +26,9 @@ Run 1 and 2 in parallel — Anjali closes fast and funds the month, Raj's ROI-ev
 
 ## The roadmap item hiding in Priya
 
-A **DM-only tier with no video** costs roughly ₹500/month to serve at 100 consults, since the only variable cost is AI. At ₹1,500/month that is a ~67% gross margin and it re-opens the 200,000-doctor market the archive was aiming at. Worth promoting to a product plan once the first five doctors are live — not before, because it splits your product surface while you are still proving the core.
+**Closed 22 Oct 2026.** A DM-only tier depended on Instagram messaging, which Meta refused. The way back to this market is a free public page, with the social board and the chart as the paid product. See [`SOCIAL_AFTER_REVIEW.md`](./SOCIAL_AFTER_REVIEW.md).
+
+A **DM-only tier with no video** was costed at roughly ₹500/month to serve at 100 consults, since the only variable cost is AI. At ₹1,500/month that was a ~67% gross margin. The arithmetic is historical. Do not promote it.
 
 ---
 

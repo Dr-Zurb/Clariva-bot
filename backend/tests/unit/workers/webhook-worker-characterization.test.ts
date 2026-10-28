@@ -40,6 +40,7 @@ jest.mock('../../../src/config/env', () => ({
     INSTAGRAM_ACCESS_TOKEN: '',
     RETURNING_PATIENT_MEMORY_ENABLED: false,
     BOOKING_RELATION_LLM_ENABLED: false,
+    META_INBOUND_ENABLED: true,
   },
 }));
 jest.mock('../../../src/config/queue', () => ({

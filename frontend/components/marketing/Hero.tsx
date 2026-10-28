@@ -1,11 +1,5 @@
 import Link from "next/link";
-import {
-  ArrowRight,
-  CalendarCheck,
-  Check,
-  ClipboardList,
-  MessageCircle,
-} from "lucide-react";
+import { ArrowRight, CalendarCheck, Check, Clapperboard, FileText } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -16,8 +10,8 @@ import {
 } from "./constants";
 
 /**
- * Landing hero — headline, sub, dual CTA, and a DM→visit mock visual built
- * from primitives (no raster asset).
+ * Landing hero — headline, sub, dual CTA, and a post → booking → visit mock.
+ * No patient names. Column-free so the cards stay readable on a phone.
  */
 export function Hero() {
   return (
@@ -27,7 +21,6 @@ export function Hero() {
         className="pointer-events-none absolute inset-0 -z-10 bg-gradient-to-b from-[hsl(var(--halo-mist))] to-white"
       />
       <div className="mx-auto grid max-w-6xl items-center gap-12 px-4 py-20 sm:px-6 lg:grid-cols-2 lg:py-28">
-        {/* Copy */}
         <div>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
             <span className="inline-flex items-center gap-2 rounded-full border border-[hsl(var(--halo-blue))]/20 bg-white px-3 py-1 text-xs font-medium text-[hsl(var(--halo-navy))]">
@@ -49,29 +42,9 @@ export function Hero() {
             Social media assistance{" "}
             <span className="text-[hsl(var(--halo-blue))]">for doctors</span>.
           </h1>
-          <ul className="mt-5 max-w-lg space-y-2 text-base leading-6 text-[hsl(var(--halo-ink))]/75">
-            <li>
-              <span className="font-medium text-[hsl(var(--halo-navy))]">
-                Instagram messages
-              </span>
-              {" — "}
-              every DM gets one link to your page.
-            </li>
-            <li>
-              <span className="font-medium text-[hsl(var(--halo-navy))]">
-                Teleconsultation
-              </span>
-              {" — "}
-              video, voice, or text.
-            </li>
-            <li>
-              <span className="font-medium text-[hsl(var(--halo-navy))]">
-                Records and prescriptions
-              </span>
-              {" — "}
-              kept with the visit.
-            </li>
-          </ul>
+          <p className="mt-5 max-w-lg text-base leading-6 text-[hsl(var(--halo-ink))]/75">
+            Plan your posts, book the visit, and keep the record — in one place.
+          </p>
           <div className="mt-8 flex flex-wrap items-center gap-3">
             <Button asChild size="lg" className={haloPrimaryButton}>
               <Link href={SIGNUP_HREF}>
@@ -90,36 +63,29 @@ export function Hero() {
           </div>
         </div>
 
-        {/* Visual: DM → one page link → visit on the page */}
-        <div className="relative mx-auto w-full max-w-md">
+        <figure className="relative mx-auto w-full max-w-md">
           <div
             aria-hidden
             className="halo-gradient absolute -inset-4 -z-10 rounded-[2rem] opacity-10 blur-2xl"
           />
           <div className="space-y-3 rounded-2xl border border-black/5 bg-white p-5 shadow-xl">
-            <div className="flex items-start gap-3">
+            <figcaption className="text-xs font-semibold uppercase tracking-wide text-[hsl(var(--halo-ink))]/45">
+              From the post
+            </figcaption>
+            <div className="flex items-center gap-3 rounded-xl border border-[hsl(var(--halo-blue))]/15 bg-white p-3">
               <span
                 aria-hidden
-                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[hsl(var(--halo-mist))] text-[hsl(var(--halo-blue))]"
+                className="flex h-10 w-10 items-center justify-center rounded-lg bg-[hsl(var(--halo-blue))]/10 text-[hsl(var(--halo-blue))]"
               >
-                <MessageCircle className="h-4 w-4" />
+                <Clapperboard className="h-5 w-5" />
               </span>
-              <p className="rounded-2xl rounded-tl-sm bg-[hsl(var(--halo-mist))] px-4 py-2 text-sm text-[hsl(var(--halo-ink))]">
-                Do you have any slots this week?
-              </p>
+              <div className="flex-1">
+                <p className="text-sm font-semibold text-[hsl(var(--halo-navy))]">
+                  Knee pain reel
+                </p>
+                <p className="text-xs text-[hsl(var(--halo-ink))]/60">Ready · on the board</p>
+              </div>
             </div>
-            <div className="flex justify-end">
-              <p className="halo-gradient max-w-[85%] rounded-2xl rounded-tr-sm px-4 py-2 text-sm text-white shadow-sm">
-                Hello.
-                <span className="mt-1 block">Please continue on your page:</span>
-                <span className="mt-1 block font-medium underline underline-offset-2">
-                  haloaid.com/d/your-name
-                </span>
-              </p>
-            </div>
-            <p className="text-xs font-semibold uppercase tracking-wide text-[hsl(var(--halo-ink))]/45">
-              On your page
-            </p>
             <div className="flex items-center gap-3 rounded-xl border border-[hsl(var(--halo-blue))]/15 bg-white p-3">
               <span
                 aria-hidden
@@ -129,11 +95,9 @@ export function Hero() {
               </span>
               <div className="flex-1">
                 <p className="text-sm font-semibold text-[hsl(var(--halo-navy))]">
-                  Visit booked
+                  Booked from this post
                 </p>
-                <p className="text-xs text-[hsl(var(--halo-ink))]/60">
-                  Thursday · 4:30 PM · Video
-                </p>
+                <p className="text-xs text-[hsl(var(--halo-ink))]/60">Thursday · 4:30 PM</p>
               </div>
               <span
                 aria-hidden
@@ -147,15 +111,13 @@ export function Hero() {
                 aria-hidden
                 className="flex h-10 w-10 items-center justify-center rounded-lg bg-[hsl(var(--halo-blue))]/10 text-[hsl(var(--halo-blue))]"
               >
-                <ClipboardList className="h-5 w-5" />
+                <FileText className="h-5 w-5" />
               </span>
               <div className="flex-1">
                 <p className="text-sm font-semibold text-[hsl(var(--halo-navy))]">
-                  Record saved
+                  Visit done
                 </p>
-                <p className="text-xs text-[hsl(var(--halo-ink))]/60">
-                  Follow-up in 2 weeks
-                </p>
+                <p className="text-xs text-[hsl(var(--halo-ink))]/60">Prescription sent</p>
               </div>
               <span
                 aria-hidden
@@ -165,7 +127,7 @@ export function Hero() {
               </span>
             </div>
           </div>
-        </div>
+        </figure>
       </div>
     </section>
   );

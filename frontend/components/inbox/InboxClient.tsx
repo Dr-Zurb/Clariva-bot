@@ -363,12 +363,12 @@ function rowTitle(row: InteractionListItem): string {
 function rowSubtitle(row: InteractionListItem): string {
   const snippet = row.last_message_snippet?.trim();
   if (row.kind === "comment_lead") {
-    return snippet ? snippet : "Commented · Waiting for DM";
+    return snippet ? snippet : "Commented";
   }
   const parts: string[] = [];
   if (snippet) parts.push(snippet);
   else parts.push(statusLabel(row.status));
-  if (row.has_comment_lead) parts.push("From comment");
+  if (row.has_comment_lead) parts.push("From a post");
   return parts.join(" · ");
 }
 
@@ -1373,20 +1373,19 @@ function InboxDetailPane({
                       <div data-testid="comment-lead-detail" className="space-y-3">
                         <div>
                           <h3 className="text-[11px] font-semibold tracking-wide text-muted-foreground">
-                            Their comment
+                            Their words
                           </h3>
                           <blockquote className="mt-2 rounded-2xl bg-muted/40 px-3.5 py-2.5 text-sm leading-relaxed text-foreground whitespace-pre-wrap break-words">
                             {detail.comment_text?.trim() ||
                               detail.last_message_snippet ||
-                              "Comment unavailable"}
+                              "Nothing to show yet."}
                           </blockquote>
                         </div>
                         <p
                           className="text-sm text-muted-foreground"
                           data-testid="comment-lead-no-thread"
                         >
-                          Waiting for DM — when they reply, the thread and booking path
-                          will show here.
+                          Waiting for a reply — the thread and booking path will show here.
                         </p>
                       </div>
                     ) : (

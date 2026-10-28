@@ -9,7 +9,7 @@ import { SIGNUP_HREF } from "@/components/marketing/constants";
 
 const TITLE = "Book a Halo Aid demo";
 const DESCRIPTION =
-  "Schedule a 20-minute live walkthrough — bookings, consults, records, and follow-ups. No commitment.";
+  "A 20-minute walkthrough of the board, the desk, the chart, and which posts booked a visit.";
 
 export const metadata: Metadata = {
   title: TITLE,
@@ -30,9 +30,9 @@ export const metadata: Metadata = {
 };
 
 const BULLETS = [
-  "See how visits get booked — teleconsult or in-clinic",
-  "Walk through the doctor dashboard, consult, and follow-up — Instagram if you use it",
-  "Ask anything — no commitment, 20 minutes",
+  "The board, and which posts booked",
+  "The desk, the chart, and the prescription",
+  "Ask anything — 20 minutes",
 ] as const;
 
 /**
@@ -55,8 +55,9 @@ export default function DemoPage() {
                 Book a 20-minute Halo Aid demo
               </h1>
               <p className="mt-4 text-lg text-[hsl(var(--halo-ink))]/70">
-                Live walkthrough of Halo Aid — OPD, teleconsults, records,
-                and follow-ups. Pick a time that works for you.
+                Live walkthrough of the posts and the practice — the board,
+                the desk, the chart, and which posts booked a visit. Pick a
+                time that works for you.
               </p>
               <ul className="mx-auto mt-8 max-w-md space-y-3 text-left">
                 {BULLETS.map((item) => (

@@ -21,6 +21,7 @@ Strategy and launch — not code rules.
 | [COST_TRACKER.md](./business/COST_TRACKER.md) | Vendor spend ledger (Cursor, Twilio, Resend, OpenAI) |
 | [PRICING_AND_UNIT_ECONOMICS.md](./business/PRICING_AND_UNIT_ECONOMICS.md) | Plan structure, cost to serve per doctor, gross margin |
 | [ICP_AND_FIRST_CUSTOMER.md](./business/ICP_AND_FIRST_CUSTOMER.md) | Who to sell to first, objections, sourcing |
+| [SOCIAL_AFTER_REVIEW.md](./business/SOCIAL_AFTER_REVIEW.md) | After the 22 Oct 2026 messaging refusal: the page, acquisition, what else to build |
 | [PILOT_AGREEMENT.md](./business/PILOT_AGREEMENT.md) | One-page founding-doctor paper |
 | [ONBOARDING_RUNBOOK.md](./business/ONBOARDING_RUNBOOK.md) | Signature → first completed consult |
 

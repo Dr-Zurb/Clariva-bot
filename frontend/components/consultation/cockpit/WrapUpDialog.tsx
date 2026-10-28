@@ -401,7 +401,7 @@ export function WrapUpDialog({
           <DialogTitle>Done with {patientName}</DialogTitle>
           {showTelemDmLine && (
             <p className="text-sm text-muted-foreground">
-              We&apos;ll DM the chat history to the patient on close.
+              We&apos;ll send the chat history to the patient on close.
             </p>
           )}
         </DialogHeader>

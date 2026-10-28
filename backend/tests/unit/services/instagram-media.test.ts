@@ -59,10 +59,32 @@ describe('instagram photo fit', () => {
     expect(box.width / box.height).toBeGreaterThanOrEqual(0.8);
   });
 
+  it('crops to 1:1, 4:5, or 16:9 when that ratio is chosen', async () => {
+    const square = await size(await toInstagramJpeg(jpeg(1600, 900), 'feed', 1));
+    const portrait = await size(await toInstagramJpeg(jpeg(1600, 900), 'feed', 4 / 5));
+    const wide = await size(await toInstagramJpeg(jpeg(800, 1200), 'feed', 16 / 9));
+    expect(Math.abs(square.width / square.height - 1)).toBeLessThan(0.02);
+    expect(Math.abs(portrait.width / portrait.height - 4 / 5)).toBeLessThan(0.02);
+    expect(Math.abs(wide.width / wide.height - 16 / 9)).toBeLessThan(0.02);
+  });
+
   it('makes a story 9:16', async () => {
     const out = await toInstagramJpeg(jpeg(1600, 900), 'story');
     const box = await size(out);
     expect(box.width).toBeLessThanOrEqual(1080);
     expect(Math.abs(box.width / box.height - 9 / 16)).toBeLessThan(0.02);
+  });
+
+  it('fits a wide photo inside a 9:16 story', async () => {
+    const out = await toInstagramJpeg(jpeg(1600, 900), 'story', undefined, 'fit');
+    const image = await loadImage(out);
+    expect(Math.abs(image.width / image.height - 9 / 16)).toBeLessThan(0.02);
+    const canvas = createCanvas(image.width, image.height);
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(image, 0, 0);
+    const corner = ctx.getImageData(0, 0, 1, 1).data;
+    const middle = ctx.getImageData(Math.floor(image.width / 2), Math.floor(image.height / 2), 1, 1).data;
+    expect(corner[0]).toBeLessThan(16);
+    expect(middle[2]).toBeGreaterThan(80);
   });
 });

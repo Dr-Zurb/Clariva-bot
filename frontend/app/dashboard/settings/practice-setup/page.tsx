@@ -48,8 +48,8 @@ const cards = [
   },
   {
     href: `${practiceSetupBase}/bot-messages`,
-    label: "Messaging",
-    description: "Welcome message and default appointment notes",
+    label: "Appointment notes",
+    description: "Default notes on new appointments",
     icon: <MessageSquare className="h-6 w-6" aria-hidden />,
   },
   {
@@ -68,7 +68,7 @@ export default function PracticeSetupLandingPage() {
     <div>
       <h1 className="text-2xl font-semibold text-foreground">Practice setup</h1>
       <p className="mt-1 text-muted-foreground">
-        Configure practice details, pricing, scheduling, and patient messaging.
+        Configure practice details, pricing, and scheduling.
       </p>
       <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 2xl:grid-cols-6">
         <PracticeSetupCard

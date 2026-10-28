@@ -2,6 +2,10 @@ import dotenv from "dotenv";
 import path from "path";
 import { fileURLToPath } from "url";
 import fs from "fs";
+import { installLookupFallback } from "./lib/system-lookup.mjs";
+
+// Before Next opens a socket to Supabase. See lib/system-lookup.mjs.
+installLookupFallback();
 
 // Load .env.local from frontend dir and use parsed values so client bundle gets them reliably
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
