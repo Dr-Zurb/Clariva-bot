@@ -75,7 +75,7 @@ import {
 
 const SEND_POLL_MS = 1500;
 const SEND_WAIT_MS = 7 * 60 * 1000;
-const STILL_SENDING = "Still sending. Once it is up, the card shows as Posted on the Schedule.";
+const STILL_SENDING = "Still publishing. Once it is up, the card shows on the Schedule.";
 
 const FORMATS: readonly { id: SocialCardFormat; label: string }[] = [
   { id: "post", label: "Post" },
@@ -1105,7 +1105,7 @@ export function SocialCardPanel({
   async function postNow(): Promise<void> {
     if (busy || sending) return;
     if (postsByHand(words)) {
-      setError("Halo Aid will not send this. You post it from the phone.");
+      setError("Halo Aid will not publish this. You publish it from the phone.");
       return;
     }
     setBusy(true);
@@ -1589,16 +1589,16 @@ export function SocialCardPanel({
           {card.stage === "ready" && card.hasFile ? (
             <div className="mt-4 space-y-3 rounded-md border border-dashed border-border p-4">
               <label className="block text-xs text-muted-foreground">
-                Post at
+                Publish at
                 <input
                   type="datetime-local"
-                  aria-label="Post at"
+                  aria-label="Publish at"
                   value={postAt}
                   onChange={(event) => setPostAt(event.target.value)}
                   className="mt-1 h-9 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground"
                 />
               </label>
-              <p className="text-sm text-foreground">Post this from your phone at this time.</p>
+              <p className="text-sm text-foreground">Publish this from your phone at this time.</p>
               {card.pagePath ? (
                 <p className="text-sm text-muted-foreground">Page link {card.pagePath}</p>
               ) : null}
@@ -1676,7 +1676,7 @@ function PostingChoice({
   onChange: (byHand: boolean) => void;
 }): JSX.Element {
   return (
-    <div className="grid grid-cols-2 gap-1 rounded-lg border border-border p-0.5" role="group" aria-label="Who posts">
+    <div className="grid grid-cols-2 gap-1 rounded-lg border border-border p-0.5" role="group" aria-label="Who publishes">
         <button
           type="button"
           aria-pressed={!byHand}
@@ -1684,7 +1684,7 @@ function PostingChoice({
           onClick={() => onChange(false)}
           className={`h-8 rounded-md text-sm disabled:opacity-50 ${byHand ? "text-muted-foreground" : "bg-primary text-primary-foreground"}`}
         >
-          Post for me
+          Publish for me
         </button>
         <button
           type="button"
@@ -1693,7 +1693,7 @@ function PostingChoice({
           onClick={() => onChange(true)}
           className={`h-8 rounded-md text-sm disabled:opacity-50 ${byHand ? "bg-primary text-primary-foreground" : "text-muted-foreground"}`}
         >
-          I&apos;ll post it
+          I&apos;ll publish it
         </button>
     </div>
   );
@@ -1806,7 +1806,7 @@ function SendableFields({
         <WordInput label="Collaborators" hint="Up to three Instagram usernames, separated by commas. They still accept the invite." value={words.collaborator ?? ""} onChange={(value) => onWord("collaborator", value)} />
       ) : null}
       {format !== "story" && !words.commentsOff ? (
-        <WordInput label="First comment" hint="The comment under your photo. A link can go here. Halo Aid posts it after the photo is up." value={words.firstComment ?? ""} onChange={(value) => onWord("firstComment", value)} />
+        <WordInput label="First comment" hint="The comment under your photo. A link can go here. Halo Aid publishes it after the photo is up." value={words.firstComment ?? ""} onChange={(value) => onWord("firstComment", value)} />
       ) : null}
       <FlagRow label="AI-generated" hint="Turn this on when an AI tool made the picture or the words. Instagram can show that." on={Boolean(words.aiGenerated)} onToggle={() => onFlag("aiGenerated", !words.aiGenerated)} />
       {format !== "story" ? (
@@ -1816,7 +1816,7 @@ function SendableFields({
         <FlagRow label="Share to the feed" hint="Also place this reel on your main grid, not only in Reels." on={Boolean(words.shareToFeed)} onToggle={() => onFlag("shareToFeed", !words.shareToFeed)} />
       ) : null}
       {format === "post" || format === "reel" ? (
-        <FlagRow label="Your story" hint="Also send this to your story when Halo Aid posts it. Each photo in a set goes up as its own story." on={Boolean(words.shareToStory)} onToggle={() => onFlag("shareToStory", !words.shareToStory)} />
+        <FlagRow label="Your story" hint="Also publish this to your story when Halo Aid publishes it. Each photo in a set goes up as its own story." on={Boolean(words.shareToStory)} onToggle={() => onFlag("shareToStory", !words.shareToStory)} />
       ) : null}
       {format === "post" ? (
         <WordInput label="Alt text" hint="For the phone's read-aloud. It is not shown under the photo. On Instagram it goes in Alt text, under Advanced." value={words.altText ?? ""} onChange={(value) => onWord("altText", value)} onLift={(value) => onWord("altText", value)} />
@@ -1857,8 +1857,8 @@ function MoreExtras({
         <WordInput label="Collaborators" hint="Another Instagram account credited on the story. You invite them from the phone." value={words.collaborator ?? ""} onChange={(value) => onWord("collaborator", value)} />
       ) : null}
       <WordInput label="Location" hint="The place named on the post, such as the clinic. You pin it from the phone." value={words.location ?? ""} onChange={(value) => onWord("location", value)} />
-      <WordInput label="Music" hint="A song you add in the Instagram app. Halo Aid cannot attach it, so you post this one yourself." value={words.music ?? ""} onChange={(value) => onWord("music", value)} />
-      <WordInput label="Product" hint="A product you tag in the Instagram app. Halo Aid cannot attach it, so you post this one yourself." value={words.productTag ?? ""} onChange={(value) => onWord("productTag", value)} />
+      <WordInput label="Music" hint="A song you add in the Instagram app. Halo Aid cannot attach it, so you publish this one yourself." value={words.music ?? ""} onChange={(value) => onWord("music", value)} />
+      <WordInput label="Product" hint="A product you tag in the Instagram app. Halo Aid cannot attach it, so you publish this one yourself." value={words.productTag ?? ""} onChange={(value) => onWord("productTag", value)} />
     </div>
   );
 }
@@ -2088,7 +2088,7 @@ export function readyLine(scheduledAt: string | null, now = Date.now(), byHand =
     hour: "numeric",
     minute: "2-digit",
   });
-  if (byHand) return status === "due" ? `Post this · ${label}` : `You post · ${label}`;
+  if (byHand) return status === "due" ? `Publish this · ${label}` : `You publish · ${label}`;
   return status === "due" ? `Due · ${label}` : label;
 }
 
@@ -2522,7 +2522,7 @@ function HandNote({
         value={value}
         rows={1}
         maxLength={500}
-        placeholder="Anything else to do before posting to Instagram."
+        placeholder="Anything else to do before publishing to Instagram."
         onChange={(event) => {
           setCopied(false);
           onChange(event.target.value);
@@ -2794,9 +2794,9 @@ function ReleasePlan({
           <span className="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-primary">
             <Check className="h-6 w-6" aria-hidden="true" />
           </span>
-          <p className="mt-3 text-base font-semibold text-foreground">Posted on Instagram</p>
+          <p className="mt-3 text-base font-semibold text-foreground">On Instagram</p>
           <p className="mt-1 text-sm text-muted-foreground">
-            It is live. The card leaves the board and shows as Posted on the Schedule.
+            It is live. The card leaves the board and shows on the Schedule.
           </p>
           <div className="mt-5 flex items-center gap-2">
             {sent.url ? (
@@ -3090,7 +3090,7 @@ function ReleasePlan({
               className="h-9 w-full rounded-md border border-border bg-background text-sm text-foreground disabled:opacity-50"
               onClick={onMarkPosted}
             >
-              {"It's posted"}
+              I published it
             </button>
           ) : (
             <button
@@ -3100,12 +3100,12 @@ function ReleasePlan({
               onClick={onPostNow}
             >
               {sending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : null}
-              {sending ? "Posting…" : publishError ? "Try again" : "Post now"}
+              {sending ? "Publishing…" : publishError ? "Try again" : "Publish now"}
             </button>
           )}
           {byHand ? null : sending ? (
             <p className="mt-2 text-sm text-muted-foreground" role="status">
-              Sending to Instagram. A video can take a few minutes.
+              Publishing to Instagram. A video can take a few minutes.
             </p>
           ) : publishError === "not_connected" ? (
             <p className="mt-2 text-sm text-destructive" role="alert">
@@ -3121,11 +3121,11 @@ function ReleasePlan({
           <p className="mb-1 min-h-10 text-xs leading-5 text-muted-foreground">
             {byHand
               ? whenLine
-                ? `You'll post this ${whenLine}. The time is a reminder.`
-                : "You post this. The time is a reminder."
+                ? `You'll publish this ${whenLine}. The time is a reminder.`
+                : "You publish this. The time is a reminder."
               : whenLine
-                ? `Halo Aid posts this on ${whenLine}.`
-                : "Halo Aid posts this on your Instagram at the time you set."}
+                ? `Halo Aid publishes this on ${whenLine}.`
+                : "Halo Aid publishes this to your Instagram at the time you set."}
           </p>
           <button
             type="button"

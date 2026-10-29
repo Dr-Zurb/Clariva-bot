@@ -850,7 +850,7 @@ describe("Social shell", () => {
     fireEvent.click(screen.getByLabelText("Minute"));
     fireEvent.click(screen.getByRole("option", { name: "00" }));
     const clock = when.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
-    expect(screen.getByText(new RegExp(`Halo Aid posts this on .+${clock.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`))).toBeInTheDocument();
+    expect(screen.getByText(new RegExp(`Halo Aid publishes this on .+${clock.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`))).toBeInTheDocument();
     listMock.mockResolvedValue([timed]);
     fireEvent.click(screen.getByRole("button", { name: "Schedule" }));
     await waitFor(() => {
@@ -1046,8 +1046,8 @@ describe("Social shell", () => {
     expect(screen.queryByText("AI info")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "AI-generated" }));
     expect(screen.getByText("AI info")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Post for me" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "I'll post it" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Publish for me" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "I'll publish it" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "More" })).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Location")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Music")).not.toBeInTheDocument();
@@ -1079,28 +1079,28 @@ describe("Social shell", () => {
 
     render(<SocialClient token="token" />);
     fireEvent.click(await screen.findByRole("button", { name: "Song" }));
-    expect(screen.getByRole("button", { name: "Post for me" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "I'll post it" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Publish for me" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "I'll publish it" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.queryByLabelText("Music")).not.toBeInTheDocument();
     expect(screen.getByLabelText("Reminder message")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
     fireEvent.click(await screen.findByRole("button", { name: "Place" }));
     const place = screen.getByRole("dialog", { name: "Card Place" });
-    expect(within(place).getByRole("button", { name: "Post for me" })).toHaveAttribute("aria-pressed", "true");
-    expect(within(place).getByRole("button", { name: "Post now" })).toBeInTheDocument();
+    expect(within(place).getByRole("button", { name: "Publish for me" })).toHaveAttribute("aria-pressed", "true");
+    expect(within(place).getByRole("button", { name: "Publish now" })).toBeInTheDocument();
     expect(within(place).queryByLabelText("Reminder message")).not.toBeInTheDocument();
     expect(within(place).getByText(/Skip the date and time above. This card goes out at this minute/)).toBeInTheDocument();
-    expect(within(place).getByText("Halo Aid posts this on your Instagram at the time you set.")).toBeInTheDocument();
+    expect(within(place).getByText("Halo Aid publishes this to your Instagram at the time you set.")).toBeInTheDocument();
     const copyList = within(place).getByRole("region", { name: "Copy into Instagram" });
     expect(copyList).toHaveTextContent("Clinic");
-    fireEvent.click(within(place).getByRole("button", { name: "I'll post it" }));
-    expect(within(place).getByRole("button", { name: "It's posted" })).toBeInTheDocument();
-    expect(within(place).queryByRole("button", { name: "Post now" })).not.toBeInTheDocument();
+    fireEvent.click(within(place).getByRole("button", { name: "I'll publish it" }));
+    expect(within(place).getByRole("button", { name: "I published it" })).toBeInTheDocument();
+    expect(within(place).queryByRole("button", { name: "Publish now" })).not.toBeInTheDocument();
     expect(within(place).getByText(/Mark it once it is on Instagram/)).toBeInTheDocument();
-    expect(within(place).getByText("You post this. The time is a reminder.")).toBeInTheDocument();
+    expect(within(place).getByText("You publish this. The time is a reminder.")).toBeInTheDocument();
     expect(within(place).getByLabelText("Reminder message")).toBeInTheDocument();
-    expect(within(place).queryByText("Halo Aid posts this on your Instagram at the time you set.")).not.toBeInTheDocument();
+    expect(within(place).queryByText("Halo Aid publishes this to your Instagram at the time you set.")).not.toBeInTheDocument();
     expect(within(place).getByRole("region", { name: "Copy into Instagram" })).toHaveTextContent("Clinic");
   });
 
@@ -1543,16 +1543,16 @@ describe("Social shell", () => {
 
     render(<SocialClient token="token" />);
     const ready = await screen.findByRole("region", { name: "Ready" });
-    expect(within(ready).getByRole("button", { name: "Fees" }).closest("li")).toHaveTextContent(/You post · /);
+    expect(within(ready).getByRole("button", { name: "Fees" }).closest("li")).toHaveTextContent(/You publish · /);
     fireEvent.click(within(ready).getByRole("button", { name: "Fees" }));
-    expect(screen.getByRole("button", { name: "Post for me" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Publish for me" })).toBeDisabled();
     const copyList = screen.getByRole("region", { name: "Copy into Instagram" });
     expect(copyList).toHaveTextContent("Hello");
     expect(copyList).toHaveTextContent("Soft");
     expect(within(copyList).getAllByRole("button", { name: "Copy" }).length).toBeGreaterThan(0);
     expect(screen.getByRole("heading", { name: "Reminder" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Remind me" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Post now" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Publish now" })).not.toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Reminder message"), { target: { value: "Pin the clinic" } });
     await waitFor(() => {
       expect(updateMock).toHaveBeenCalledWith(
@@ -1561,7 +1561,7 @@ describe("Social shell", () => {
         expect.objectContaining({ words: expect.objectContaining({ handNote: "Pin the clinic", byHand: true }) })
       );
     });
-    fireEvent.click(screen.getByRole("button", { name: "It's posted" }));
+    fireEvent.click(screen.getByRole("button", { name: "I published it" }));
     await waitFor(() => {
       expect(updateMock).toHaveBeenCalledWith("token", "1", { manualPosted: true });
     });
@@ -1647,9 +1647,9 @@ describe("Social shell", () => {
     expect(screen.getByRole("heading", { name: "Schedule" })).toBeInTheDocument();
     expect(screen.queryByText("OR")).not.toBeInTheDocument();
     expect(screen.getByText(/Skip the date and time above. This card goes out at this minute/)).toBeInTheDocument();
-    expect(screen.getByText(/Halo Aid posts this on /)).toBeInTheDocument();
+    expect(screen.getByText(/Halo Aid publishes this on /)).toBeInTheDocument();
     expect(screen.getByRole("dialog", { name: "Card Fees" })).not.toHaveTextContent("Not scheduled");
-    expect(screen.getByRole("button", { name: "Post now" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Publish now" })).toBeInTheDocument();
     expect(screen.queryByText("Already posted?")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Instagram link")).not.toBeInTheDocument();
 
@@ -1700,13 +1700,13 @@ describe("Social shell", () => {
       }),
     ]);
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
-    expect(await screen.findByRole("button", { name: "Posting…" })).toBeDisabled();
+    expect(await screen.findByRole("button", { name: "Publishing…" })).toBeDisabled();
     await waitFor(() => {
       expect(updateMock).toHaveBeenCalledWith("token", "1", { words: { crop: "portrait" }, postNow: true });
     });
     answer(card({ id: "1", title: "Fees", stage: "ready", format: "post", hasFile: true, words: { crop: "portrait" } }));
-    expect(await screen.findByRole("button", { name: "Posting…" })).toBeDisabled();
-    expect(screen.getByText("Sending to Instagram. A video can take a few minutes.")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Publishing…" })).toBeDisabled();
+    expect(screen.getByText("Publishing to Instagram. A video can take a few minutes.")).toBeInTheDocument();
     expect(screen.queryByText("Instagram is not connected. Connect it, then try again.")).not.toBeInTheDocument();
 
     listMock.mockResolvedValue([
@@ -1719,7 +1719,7 @@ describe("Social shell", () => {
         instagramUrl: "https://www.instagram.com/p/DummyPost01/",
       }),
     ]);
-    expect(await screen.findByText("Posted on Instagram", undefined, { timeout: 4000 })).toBeInTheDocument();
+    expect(await screen.findByText("On Instagram", undefined, { timeout: 4000 })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Open on Instagram" })).toHaveAttribute(
       "href",
       "https://www.instagram.com/p/DummyPost01/"
@@ -1743,7 +1743,7 @@ describe("Social shell", () => {
     listMock.mockResolvedValue([
       card({ id: "1", title: "Fees", stage: "ready", format: "post", hasFile: true, publishError: "meta_rejected" }),
     ]);
-    fireEvent.click(screen.getByRole("button", { name: "Post now" }));
+    fireEvent.click(screen.getByRole("button", { name: "Publish now" }));
 
     expect(
       await screen.findByText("Instagram did not take it. Halo Aid tries again in 15 minutes.", undefined, {
