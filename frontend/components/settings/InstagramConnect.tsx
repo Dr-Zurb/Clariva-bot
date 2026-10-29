@@ -175,7 +175,7 @@ export default function InstagramConnect({ token }: InstagramConnectProps) {
           <InstagramIcon />
         </div>
         <h2 className="font-semibold text-gray-900">Instagram</h2>
-        <p className="mt-1 text-sm text-gray-600">Connect Instagram to post your cards.</p>
+        <p className="mt-1 text-sm text-gray-600">Connect Instagram to post your content.</p>
         <div className="mt-3 rounded-md border border-red-200 bg-red-50 p-3 text-red-800">
           <p className="font-medium">Error</p>
           <p className="mt-1 text-sm">{error}</p>
@@ -192,7 +192,7 @@ export default function InstagramConnect({ token }: InstagramConnectProps) {
       <h2 className="font-semibold text-gray-900">Instagram</h2>
       <p className="mt-1 text-sm text-gray-600">
         Connect your Instagram professional account (Business or Creator) to
-        post your cards and see how they did.
+        post your content and see how it did.
       </p>
       {message && (
         <div
@@ -265,11 +265,6 @@ export default function InstagramConnect({ token }: InstagramConnectProps) {
           </>
         ) : (
           <>
-            {status?.health?.level === "not_connected" && (
-              <p className="text-sm text-gray-600" role="status">
-                {status.health.message}
-              </p>
-            )}
             <p className="text-gray-600">Not connected</p>
             {mustVerifyFirst ? (
               <div className="mt-2 space-y-2">

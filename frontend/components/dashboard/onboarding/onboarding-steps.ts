@@ -50,7 +50,7 @@ export const ONBOARDING_STEPS: readonly OnboardingStepDef[] = [
     id: "instagram",
     title: "Connect socials",
     description:
-      "Link Instagram to post your cards.",
+      "Link Instagram to post your content.",
     href: "/dashboard/settings/integrations",
     cta: "Connect socials",
     doneKey: "instagramConnected",
@@ -168,7 +168,7 @@ export function buildGoLiveChecklist(
       id: step.id,
       title: optional ? "Connect socials (optional)" : step.title,
       description: optional
-        ? "Link Instagram later to post your cards."
+        ? "Link Instagram later to post your content."
         : step.description,
       href: step.href,
       cta: step.cta,

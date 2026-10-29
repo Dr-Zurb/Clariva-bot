@@ -25,7 +25,7 @@ const cards = [
   {
     href: "/dashboard/settings/integrations",
     label: "Integrations",
-    description: "Connect Instagram to post your cards",
+    description: "Connect Instagram to post your content",
     icon: <Plug className="h-6 w-6" aria-hidden />,
   },
   {

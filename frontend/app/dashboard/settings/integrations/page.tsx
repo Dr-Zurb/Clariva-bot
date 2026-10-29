@@ -16,7 +16,7 @@ export default function IntegrationsPage() {
     return (
       <SettingsPageShell
         title="Integrations"
-        description="Connect Instagram to post your cards."
+        description="Connect Instagram to post your content."
         isLoading
       />
     );
@@ -27,7 +27,7 @@ export default function IntegrationsPage() {
       <div>
         <h1 className="text-2xl font-semibold text-foreground">Integrations</h1>
         <p className="mt-1 text-muted-foreground">
-          Connect Instagram to post your cards.
+          Connect Instagram to post your content.
         </p>
       </div>
       <VerificationBanner token={token} />

@@ -247,7 +247,7 @@ function notConnectedHealth(): InstagramHealthSummary {
     checkedAt: null,
     tokenExpiresAt: null,
     lastDmSuccessAt: null,
-    message: 'Connect Instagram to post your cards.',
+    message: 'Connect Instagram to post your content.',
     reconnectRecommended: true,
   };
 }
