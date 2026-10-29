@@ -117,7 +117,7 @@ export const ISSUE_TYPE_COPY: Readonly<
   strict_thin_keywords: {
     title: "Strict card with very few keywords",
     helpText:
-      "Strict matching works best with several synonyms. A single keyword will cause the bot to miss obvious phrases patients actually type.",
+      "Strict matching works best with several synonyms. A single keyword will miss phrases patients actually type.",
   },
   flexible_should_be_strict: {
     title: "Flexible card that reads like a specific condition",
@@ -126,7 +126,7 @@ export const ISSUE_TYPE_COPY: Readonly<
   },
   empty_hints: {
     title: "No routing hints set",
-    helpText: "Without any keywords or include_when, the bot cannot reliably match patients to this card.",
+    helpText: "Without any keywords or include_when, this card cannot be matched to a visit.",
   },
   missing_catchall: {
     title: "Missing catch-all card",

@@ -695,7 +695,7 @@ function facebookSummaryFromCachedRow(row: DoctorFacebookHealthRow): FacebookHea
     message = 'Facebook Page connection looks healthy.';
   } else if (level === 'warning') {
     message =
-      'Check token expiry or recent Messenger activity. Reconnect if patients report the bot is not replying.';
+      'Your Facebook connection needs attention. Reconnect if it stops working.';
     reconnectRecommended = true;
   } else if (level === 'error') {
     message = 'Facebook Page access token needs attention. Reconnect your Page.';

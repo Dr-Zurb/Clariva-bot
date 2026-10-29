@@ -168,7 +168,7 @@ export function buildGoLiveChecklist(
       id: step.id,
       title: optional ? "Connect socials (optional)" : step.title,
       description: optional
-        ? "Link Instagram or Facebook later if patients start messaging you there."
+        ? "Link Instagram later to post your cards."
         : step.description,
       href: step.href,
       cta: step.cta,

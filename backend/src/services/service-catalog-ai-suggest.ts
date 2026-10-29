@@ -1290,9 +1290,9 @@ export function runDeterministicCatalogReview(
           type: 'strict_empty_hints',
           severity: 'error',
           services: [card.service_key],
-          message: `"${card.label}" is set to strict matching but has no routing hints — the bot will not route to this service.`,
+          message: `"${card.label}" is set to strict matching but has no routing hints, so it will not be offered.`,
           suggestion:
-            'Fill in matching hints so the bot has something concrete to anchor on, or switch this card to flexible matching.',
+            'Fill in matching hints so this card can be matched, or switch this card to flexible matching.',
           suggestions: [
             { action: 'fill_with_ai' },
             { action: 'switch_to_flexible' },
@@ -1309,7 +1309,7 @@ export function runDeterministicCatalogReview(
           type: 'strict_thin_keywords',
           severity: 'warning',
           services: [card.service_key],
-          message: `"${card.label}" is strict but has very few keywords — the bot will miss obvious synonyms patients actually type.`,
+          message: `"${card.label}" is strict but has very few keywords, so common phrases may not match.`,
           suggestion:
             'Add more keywords (synonyms patients actually type) so the strict matcher has something to hit on.',
           suggestions: [{ action: 'fill_with_ai' }],
@@ -1324,7 +1324,7 @@ export function runDeterministicCatalogReview(
           type: 'empty_hints',
           severity: 'suggestion',
           services: [card.service_key],
-          message: `"${card.label}" has no routing hints — the bot may struggle to match patients correctly.`,
+          message: `"${card.label}" has no routing hints, so it may not match a visit.`,
           suggestions: [{ action: 'fill_with_ai' }],
         })
       );

@@ -247,7 +247,7 @@ function notConnectedHealth(): InstagramHealthSummary {
     checkedAt: null,
     tokenExpiresAt: null,
     lastDmSuccessAt: null,
-    message: 'Connect Instagram to enable automated replies.',
+    message: 'Connect Instagram to post your cards.',
     reconnectRecommended: true,
   };
 }
@@ -378,7 +378,7 @@ function summarizeHealthFromProbe(
         errorCode: null,
         tokenExpiresAt: storedExpiresAt,
         message:
-          'No automated DM reply has been recorded recently. If something seems off, reconnect or check Meta / inbox.',
+          'Instagram has not been checked recently. Reconnect if posting fails.',
         reconnectRecommended: false,
       };
     }
@@ -431,7 +431,7 @@ function summaryFromCachedRow(row: DoctorInstagramHealthRow): InstagramHealthSum
     message = 'Instagram connection looks healthy.';
   } else if (level === 'warning') {
     message =
-      'Check token expiry or recent DM activity. Reconnect if patients report the bot is not replying.';
+      'Your Instagram connection needs attention. Reconnect if posting fails.';
     reconnectRecommended = true;
   } else if (level === 'error') {
     message = 'Instagram access token needs attention. Reconnect your account.';

@@ -131,9 +131,9 @@ export function runLocalCatalogChecks(services: ServiceOfferingDraft[]): Quality
           type: "strict_empty_hints",
           severity: "error",
           services: [idKey],
-          message: `"${label}" is set to strict matching but has no routing hints — the bot will not route to this service.`,
+          message: `"${label}" is set to strict matching but has no routing hints, so it will not be offered.`,
           suggestion:
-            "Fill in matching hints so the bot has something to anchor on, or switch this card to flexible matching.",
+            "Fill in matching hints so this card can be matched, or switch it to flexible matching.",
           suggestions: pickSuggestions([
             { action: "fill_with_ai" },
             { action: "switch_to_flexible" },
@@ -149,7 +149,7 @@ export function runLocalCatalogChecks(services: ServiceOfferingDraft[]): Quality
           type: "strict_thin_keywords",
           severity: "warning",
           services: [idKey],
-          message: `"${label}" is strict but has very few keywords — the bot will miss obvious synonyms patients actually type.`,
+          message: `"${label}" is strict but has very few keywords, so common phrases may not match.`,
           suggestion:
             "Add more keywords (synonyms patients actually type) so the strict matcher has something to hit on.",
           suggestions: pickSuggestions([{ action: "fill_with_ai" }]),
@@ -163,7 +163,7 @@ export function runLocalCatalogChecks(services: ServiceOfferingDraft[]): Quality
           type: "empty_hints",
           severity: "suggestion",
           services: [idKey],
-          message: `"${label}" has no routing hints — the bot may struggle to match patients correctly.`,
+          message: `"${label}" has no routing hints, so it may not match a visit.`,
           suggestions: pickSuggestions([{ action: "fill_with_ai" }]),
         })
       );
