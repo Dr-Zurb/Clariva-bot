@@ -90,7 +90,7 @@ const EXT_TYPE = {
 };
 
 const IDEA_KIND_CAP = 10;
-const PHOTO_BYTES = 8 * 1024 * 1024;
+const PHOTO_BYTES = 10 * 1024 * 1024;
 const VIDEO_BYTES = 100 * 1024 * 1024;
 const AUDIO_BYTES = 15 * 1024 * 1024;
 const DOCUMENT_BYTES = 10 * 1024 * 1024;
@@ -221,7 +221,7 @@ function kindOf(file) {
 export function fileIssue(file) {
   const kind = kindOf(file);
   if (!kind) return "Use a photo, a video, audio, or a document";
-  if (kind === "photo" && file.size > PHOTO_BYTES) return "Photo is over 8 MB";
+  if (kind === "photo" && file.size > PHOTO_BYTES) return "Photo is over 10 MB";
   if (kind === "video" && file.size > VIDEO_BYTES) return "Video is over 100 MB";
   if (kind === "audio" && file.size > AUDIO_BYTES) return "Audio is over 15 MB";
   if (kind === "document" && file.size > DOCUMENT_BYTES) return "Document is over 10 MB";

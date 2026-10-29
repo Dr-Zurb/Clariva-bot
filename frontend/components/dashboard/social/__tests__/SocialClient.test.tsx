@@ -596,6 +596,7 @@ describe("Social shell", () => {
     expect(screen.getByRole("button", { name: "Post" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Reel" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Story" })).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Choose Post, Reel, or Story" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Choose a format" })).toBeDisabled();
     expect(screen.queryByLabelText("Caption")).not.toBeInTheDocument();
 

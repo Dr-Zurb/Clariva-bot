@@ -54,7 +54,7 @@ export const SOCIAL_CARD_FILE_TYPES = [
 const CARD_CODE_ALPHABET = '23456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
 const CARD_CODE_LENGTH = 10;
 const BUCKET = 'social-card-files';
-const PHOTO_BYTES = 8 * 1024 * 1024;
+const PHOTO_BYTES = 10 * 1024 * 1024;
 const VIDEO_BYTES = 100 * 1024 * 1024;
 const DOCUMENT_BYTES = 10 * 1024 * 1024;
 const AUDIO_BYTES = 15 * 1024 * 1024;
@@ -558,7 +558,7 @@ async function assertObjectExists(filePath: string): Promise<void> {
         ? 'Audio is over 15 MB'
         : kind === 'document'
           ? 'Document is over 10 MB'
-          : 'Photo is over 8 MB';
+          : 'Photo is over 10 MB';
   if (typeof size === 'number' && size > cap) {
     await removeObject(filePath);
     throw new ValidationError(tooBig);

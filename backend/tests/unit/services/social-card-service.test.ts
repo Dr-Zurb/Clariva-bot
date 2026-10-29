@@ -245,11 +245,11 @@ describe('social cards', () => {
     expect(remove).toHaveBeenCalledWith([filePath]);
   });
 
-  it('rejects a photo over 8 MB', async () => {
+  it('rejects a photo over 10 MB', async () => {
     const fileName = '11111111-1111-4111-8111-111111111111.jpg';
     const filePath = `${doctorId}/${fileName}`;
     const list = jest.fn().mockResolvedValue({
-      data: [{ name: fileName, metadata: { size: 9 * 1024 * 1024 } }],
+      data: [{ name: fileName, metadata: { size: 11 * 1024 * 1024 } }],
       error: null,
     } as never);
     const remove = jest.fn().mockResolvedValue({ error: null } as never);
@@ -260,7 +260,7 @@ describe('social cards', () => {
 
     await expect(
       createSocialCard({ title: 'A poster', stage: 'thoughts', filePath }, correlationId, doctorId)
-    ).rejects.toThrow('Photo is over 8 MB');
+    ).rejects.toThrow('Photo is over 10 MB');
     expect(remove).toHaveBeenCalledWith([filePath]);
   });
 

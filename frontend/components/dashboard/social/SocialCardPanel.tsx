@@ -4725,6 +4725,7 @@ function Composer({
               />
             </div>
           ) : null}
+          {!format && hasPictures && !uploading ? null : (
           <div className="flex items-center justify-center gap-2 border-b border-border px-3 py-3">
             {release ? (
               <p className="text-sm text-muted-foreground">{previewFace(format, words.crop)}</p>
@@ -4750,6 +4751,7 @@ function Composer({
             </div>
             )}
           </div>
+          )}
           <div className="flex min-h-0 flex-1 flex-col">
           <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-x-hidden overflow-y-auto px-3 py-3">
             {uploading && !shown && !card.hasFile ? (
@@ -4795,6 +4797,30 @@ function Composer({
                 className="absolute inset-0 z-10 flex items-center justify-center rounded-xl bg-background/60"
               >
                 <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" aria-hidden="true" />
+              </div>
+            ) : null}
+            {!format && hasPictures && !uploading ? (
+              <div className="absolute inset-0 z-10 flex items-center justify-center p-4">
+                <div
+                  role="dialog"
+                  aria-label="Choose Post, Reel, or Story"
+                  className="w-full max-w-[16rem] rounded-2xl border border-border bg-background/95 p-3 shadow-xl"
+                >
+                  <p className="text-center text-sm font-medium text-foreground">Post, Reel, or Story</p>
+                  <div className="mt-3 grid grid-cols-3 gap-2">
+                    {FORMATS.map((item) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        disabled={busy}
+                        className="h-10 rounded-full bg-primary text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+                        onClick={() => onChooseFormat(item.id)}
+                      >
+                        {item.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </div>
             ) : null}
             </div>

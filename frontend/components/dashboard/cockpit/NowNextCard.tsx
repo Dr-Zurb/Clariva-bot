@@ -394,7 +394,7 @@ export function NowNextCard({ token }: NowNextCardProps) {
         {/* Error — muted, non-breaking, with retry */}
         {!loading && error && (
           <div className="py-3 text-center space-y-1">
-            <p className="text-sm text-muted-foreground">
+            <div className="text-sm text-muted-foreground">
               Couldn&apos;t load.{" "}
               <button
                 type="button"
@@ -403,7 +403,7 @@ export function NowNextCard({ token }: NowNextCardProps) {
               >
                 Tap to retry.
               </button>
-            </p>
+            </div>
           </div>
         )}
 

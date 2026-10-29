@@ -316,7 +316,7 @@ export function OpdQueueStrip({ token }: OpdQueueStripProps) {
 
         {/* Error */}
         {!isLoading && error && (
-          <p className="py-2 text-xs text-muted-foreground">
+          <div className="py-2 text-xs text-muted-foreground">
             Couldn&apos;t load queue.{" "}
             <button
               type="button"
@@ -325,7 +325,7 @@ export function OpdQueueStrip({ token }: OpdQueueStripProps) {
             >
               Tap to retry.
             </button>
-          </p>
+          </div>
         )}
 
         {/* Empty state — no active, no done, no missed */}

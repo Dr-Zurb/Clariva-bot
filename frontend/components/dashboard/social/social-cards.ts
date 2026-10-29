@@ -113,7 +113,7 @@ export type SocialColumn = {
   position: number;
 };
 const BUCKET = "social-card-files";
-const PHOTO_BYTES = 8 * 1024 * 1024;
+const PHOTO_BYTES = 10 * 1024 * 1024;
 const VIDEO_BYTES = 100 * 1024 * 1024;
 const DOCUMENT_BYTES = 10 * 1024 * 1024;
 const AUDIO_BYTES = 15 * 1024 * 1024;
@@ -237,7 +237,7 @@ export function socialFileIssue(file: File, postable = false): string | null {
       ? "Ready needs a JPEG, PNG, WebP, MP4, or MOV"
       : "Ready needs a photo or a video";
   }
-  if (kind === "photo" && file.size > PHOTO_BYTES) return "Photo is over 8 MB";
+  if (kind === "photo" && file.size > PHOTO_BYTES) return "Photo is over 10 MB";
   if (kind === "video" && file.size > VIDEO_BYTES) return "Video is over 100 MB";
   if (kind === "audio" && file.size > AUDIO_BYTES) return "Audio is over 15 MB";
   if (kind === "document" && file.size > DOCUMENT_BYTES) return "Document is over 10 MB";
@@ -257,7 +257,7 @@ export function cardFileIssue(file: File, _format: SocialCardFormat | ""): strin
   const kind = socialFileKind(file);
   if (kind !== "photo" && kind !== "video") return "Use a photo or a video";
   if (!canPost(file)) return "Use a JPEG, PNG, WebP, MP4, or MOV";
-  if (kind === "photo" && file.size > PHOTO_BYTES) return "Photo is over 8 MB";
+  if (kind === "photo" && file.size > PHOTO_BYTES) return "Photo is over 10 MB";
   if (kind === "video" && file.size > VIDEO_BYTES) return "Video is over 100 MB";
   return null;
 }
