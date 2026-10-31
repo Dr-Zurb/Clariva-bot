@@ -25,7 +25,7 @@ The single place I look when planning a week. If a thread isn't here, it doesn't
 | L10 | Meta platform-action clause | `NEXT` | Send the L10 draft below to ⟨attorney⟩ — briefing points only; counsel writes the clause |
 | M1 | Meta — data deletion callback | `ACTIVE` | Optional Send Request if this Facebook account ever connected Halo Aid |
 | M2 | Meta — business verification | `PARKED` | Later: open WhatsApp “needs more information” |
-| M3 | Meta — app review submission | `ACTIVE` | Submit Advanced Access for `instagram_business_content_publish` and `instagram_business_manage_insights` only. Leave Request again on messages unclicked |
+| M3 | Meta — app review submission | `WAITING` | When Meta replies, paste the result here. Same gap as last time: morning of Thu 12 Nov. Meta’s own window ends Wed 18 Nov. Until then leave @halo.aid connected and the two test posts up |
 | M4 | Meta — post-review account canary | `PARKED` | Do not start — 22 Oct healthcare rejection, no canary |
 | P1 | Desk / receptionist | `ACTIVE` | Review history-link spec; promote p1; then Opus `hl-01` |
 | P2 | Cockpit / EHR | `PARKED` | — |
@@ -251,8 +251,29 @@ Same Security Centre screen still shows **WhatsApp needs more information**. Not
 
 **Next action:** Later — open WhatsApp “needs more information” / View details.
 
-### M3 · App review submission — `ACTIVE`
-**Next file, 26 Oct 2026.** Advanced Access for two permissions only. Do not press **Request again** on `instagram_business_manage_messages`. Do not add comments, Human Agent, or any `pages_*` row. `instagram_business_basic` is already approved; leave it. Clock starts when Submit is pressed, about two weeks. Not submitted yet.
+### M3 · App review submission — `WAITING`
+**Submitted Thu 29 Oct 2026, 21:56 IST.** Dashboard status: Review in progress. Meta says most submissions are reviewed within 20 days, which is **Wed 18 Nov 2026**.
+
+The last App Review took just under 14 days: sent Thu 8 Oct 2026, 19:14 IST, result on the dashboard Thu 22 Oct 2026, 07:59 IST. The same gap from this submission lands on the morning of **Thu 12 Nov 2026**. That file came back as a refusal, so 12 Nov is the matching date, not a promise.
+
+New requests:
+
+- `instagram_business_content_publish`
+- `instagram_business_manage_insights`
+- `instagram_business_manage_comments`
+
+Existing access for renewal: `instagram_business_basic`, `instagram_basic`.
+
+`instagram_business_manage_messages` is not on this submission. Leave **Request again** unclicked.
+
+The Halo Aid test account stays connected as @halo.aid. Leave these posts up until Meta replies:
+
+- First comment: https://www.instagram.com/p/DfFPssVGnM7/
+- Comments turned off: https://www.instagram.com/p/DfFPOXamhNm/
+
+**Next action:** When Meta replies, paste the result here. Until then do not disconnect @halo.aid.
+
+**Plan written 26 Oct 2026, superseded by the submission above.** That plan was two permissions only. The file that went in also includes comments, for the first comment the user wrote and for turning comments off. It does not include Human Agent or any `pages_*` row.
 
 App Dashboard → App Review → Permissions and features → add:
 
@@ -261,7 +282,7 @@ App Dashboard → App Review → Permissions and features → add:
 
 Reviewer still signs in at https://haloaid.com/login. Keep the tester login already in the instructions. Privacy `https://haloaid.com/privacy`, terms `https://haloaid.com/terms`, data-deletion `https://haloaid.com/data-deletion-callback`.
 
-The live homepage still says every Instagram DM gets a link. A reviewer who opens haloaid.com sees the use Meta refused on 22 Oct. That sentence is the risk on this file.
+26 Oct note, no longer true: the homepage then still said every Instagram DM gets a link. That copy was removed before the 29 Oct submission.
 
 **Screencasts (dummy post only, no patient, no symptom, no chart).** One file per permission. Record the action. Testers are enough.
 
@@ -297,7 +318,7 @@ This is the healthcare / not-an-allowed-use case locked **17 Sep 2026**. Do not 
 
 `instagram_business_basic` Advanced Access stands. It does not send or receive DMs. A clinic that is not an app tester cannot Connect for messaging. Tester accounts can still exercise the dev bot. Instagram for a clinic is the public page link in the bio (`/d/:slug`). M4 does not start.
 
-**Next action:** Submit the two permissions above. Leave Request again on messages unclicked.
+**Next action at the time:** Submit the two permissions above. Leave Request again on messages unclicked. Superseded Thu 29 Oct 2026 — the submission is in review. See the top of M3.
 
 Acquisition and what to build from here: [`SOCIAL_AFTER_REVIEW.md`](../../Reference/business/SOCIAL_AFTER_REVIEW.md). §5 (26 Oct 2026): Meta already schedules posts and sells an agent that books from DMs. Autoposting is a convenience. The visit on the card is the product. This does not change the next action above.
 
