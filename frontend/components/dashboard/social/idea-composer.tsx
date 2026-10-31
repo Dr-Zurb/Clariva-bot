@@ -83,7 +83,7 @@ export const FILE_ACCEPT = [
 type LineKind = "text" | "heading" | "list" | "bullet" | "number" | "quote" | "file" | "link" | "rule" | "cols" | "split" | "endcols";
 
 /** The thought note, including file and link markers. */
-export const NOTE_MAX = 4000;
+export const NOTE_MAX = 20000;
 
 const WRITING = new Set<LineKind>(["text", "heading", "list", "bullet", "number", "quote"]);
 
@@ -3787,6 +3787,7 @@ export function ScrapShelf({
   onPut,
   onRemoveLink,
   folded = false,
+  onExpanded,
 }: {
   items: readonly ShelfFile[];
   links?: readonly ResourceLink[];
@@ -3802,11 +3803,17 @@ export function ScrapShelf({
   onPut: (id: string) => void;
   onRemoveLink?: (id: string) => void;
   folded?: boolean;
+  onExpanded?: (expanded: boolean) => void;
 }): JSX.Element {
   const [group, setGroup] = useState<ResourceGroup>("all");
   const [open, setOpen] = useState(() => items.length > 0 || links.length > 0);
   const known = useRef<Set<string> | null>(null);
   const expanded = open && !folded;
+  const reportExpanded = useRef(onExpanded);
+  reportExpanded.current = onExpanded;
+  useEffect(() => {
+    reportExpanded.current?.(expanded);
+  }, [expanded]);
   useEffect(() => {
     const next = new Set(items.map((item) => item.id));
     if (known.current) {

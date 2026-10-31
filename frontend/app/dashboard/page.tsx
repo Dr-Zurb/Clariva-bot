@@ -12,6 +12,7 @@ import { CockpitNowNextSection } from "@/components/dashboard/cockpit/streaming/
 import { CockpitOpdQueueSection } from "@/components/dashboard/cockpit/streaming/CockpitOpdQueueSection";
 import { CockpitTodaysScheduleSection } from "@/components/dashboard/cockpit/streaming/CockpitTodaysScheduleSection";
 import { OnboardingChecklistCard } from "@/components/dashboard/onboarding/OnboardingChecklistCard";
+import { SocialStartStrip } from "@/components/dashboard/cockpit/SocialStartStrip";
 import {
   CockpitNowNextSkeleton,
   CockpitOpdQueueSkeleton,
@@ -37,6 +38,7 @@ export default async function DashboardPage() {
   return (
     <div className="space-y-6">
       <OnboardingChecklistCard token={token} />
+      <SocialStartStrip token={token} />
 
       <Suspense fallback={<KpiCardsSkeleton count={2} className="sm:grid-cols-2" />}>
         <CockpitKpiStripSection token={token} />

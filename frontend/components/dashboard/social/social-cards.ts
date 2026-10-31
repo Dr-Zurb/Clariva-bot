@@ -79,6 +79,8 @@ export type SocialCard = {
   links?: { id: string; url: string }[];
   sourceUrl: string | null;
   scheduledAt: string | null;
+  /** When to start making this card. Chosen and Making only. */
+  makeAt: string | null;
   publishError: string | null;
   instagramUrl: string | null;
   visitCount: number;
@@ -98,6 +100,7 @@ export type SocialCardPatch = {
   sourceUrl?: string | null;
   links?: { id: string; url: string }[];
   scheduledAt?: string | null;
+  makeAt?: string | null;
   postNow?: true;
   instagramUrl?: string;
   manualPosted?: true;

@@ -251,6 +251,7 @@ words       JSONB NOT NULL DEFAULT '{}'
 file_path   TEXT NULL
 source_url  TEXT NULL
 scheduled_at TIMESTAMPTZ NULL
+make_at     TIMESTAMPTZ NULL
 link_code   TEXT NULL
 instagram_url TEXT NULL
 visit_count INTEGER NOT NULL DEFAULT 0
@@ -268,7 +269,7 @@ updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 - `social_cards_doctor_updated_idx` ON `(doctor_id, updated_at DESC)`
 - `social_cards_link_code_idx` UNIQUE ON `(link_code)` WHERE `link_code IS NOT NULL`
 
-**Check:** `social_cards_ready_has_file` — `ready` has a `file_path`. Any other stage may have one. `social_cards_time_needs_file` — `scheduled_at` is set when the card is Ready and has a file, or when the card is posted and keeps the time it went out. The time is not a publish. `social_cards_source_url_len` — `source_url` is empty or 1–500 characters. It is an inspiration link, not the Instagram post. Do not log it. Do not log the object key. `publish_error` is null, `not_connected`, or `meta_rejected`. `instagram_media_id` is the id from a send. Pasting a URL does not set it. `thumb_path` is the small picture kept after the file is removed. Do not log either.
+**Check:** `social_cards_ready_has_file` — `ready` has a `file_path`. Any other stage may have one. `social_cards_time_needs_file` — `scheduled_at` is set when the card is Ready and has a file, or when the card is posted and keeps the time it went out. The time is not a publish. `social_cards_make_at_stage` — `make_at` is set only on Chosen or Making. It is when to start making, and it is not a publish. Moving the card off those columns clears it. `social_cards_source_url_len` — `source_url` is empty or 1–500 characters. It is an inspiration link, not the Instagram post. Do not log it. Do not log the object key. `publish_error` is null, `not_connected`, or `meta_rejected`. `instagram_media_id` is the id from a send. Pasting a URL does not set it. `thumb_path` is the small picture kept after the file is removed. Do not log either.
 
 **Link code:** `link_code` is unique when set. No expiry and no conversation. It is not a `visit_page_links` row. Do not log the value.
 

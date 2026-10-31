@@ -124,6 +124,7 @@ describe('social cards', () => {
         links: [],
         sourceUrl: null,
         scheduledAt: null,
+        makeAt: null,
         publishError: null,
         instagramUrl: null,
         visitCount: 0,
@@ -186,13 +187,13 @@ describe('social cards', () => {
     expect(
       createSocialCardSchema.parse({
         title: 'Fees for a first visit',
-        words: { note: 'a'.repeat(4000) },
+        words: { note: 'a'.repeat(20000) },
       }).words?.note
-    ).toHaveLength(4000);
+    ).toHaveLength(20000);
     expect(() =>
       createSocialCardSchema.parse({
         title: 'Fees for a first visit',
-        words: { note: 'a'.repeat(4001) },
+        words: { note: 'a'.repeat(20001) },
       })
     ).toThrow(ZodError);
   });
@@ -405,6 +406,54 @@ describe('social cards', () => {
     const auditPayload = JSON.stringify(mockedAudit.mock.calls);
     expect(auditPayload).not.toContain(when);
     expect(auditPayload).not.toContain(minted.link_code);
+  });
+
+  it('saves a start time on Chosen and clears it when the card is Ready', async () => {
+    const when = '2026-11-12T03:30:00.000Z';
+    const chosen = { ...row, stage: 'chosen' as const, file_path: `${doctorId}/file.jpg` };
+    const timed = { ...chosen, make_at: when };
+    const ready = { ...timed, stage: 'ready' as const, make_at: null };
+    const chain = writeChain({ data: null, error: null });
+    chain.maybeSingle
+      .mockResolvedValueOnce({ data: chosen, error: null } as never)
+      .mockResolvedValueOnce({ data: timed, error: null } as never)
+      .mockResolvedValueOnce({ data: timed, error: null } as never)
+      .mockResolvedValueOnce({ data: timed, error: null } as never)
+      .mockResolvedValueOnce({ data: ready, error: null } as never);
+    mockedDb.getSupabaseAdminClient.mockReturnValue({
+      from: jest.fn(() => chain),
+    } as never);
+
+    const saved = await updateSocialCard(row.id, { makeAt: when }, correlationId, doctorId);
+    expect(saved.makeAt).toBe(when);
+    expect(chain.update).toHaveBeenLastCalledWith({ make_at: when });
+
+    await expect(
+      updateSocialCard(row.id, { makeAt: when, stage: 'ready' }, correlationId, doctorId)
+    ).rejects.toBeInstanceOf(ValidationError);
+
+    const moved = await updateSocialCard(row.id, { stage: 'ready' }, correlationId, doctorId);
+    expect(moved.stage).toBe('ready');
+    expect(moved.makeAt).toBeNull();
+    expect(chain.update).toHaveBeenLastCalledWith({ stage: 'ready', make_at: null });
+  });
+
+  it('clears the start time when a Chosen card starts making', async () => {
+    const when = '2026-11-12T03:30:00.000Z';
+    const chosen = { ...row, stage: 'chosen' as const, make_at: when };
+    const making = { ...chosen, stage: 'making' as const, make_at: null };
+    const chain = writeChain({ data: null, error: null });
+    chain.maybeSingle
+      .mockResolvedValueOnce({ data: chosen, error: null } as never)
+      .mockResolvedValueOnce({ data: making, error: null } as never);
+    mockedDb.getSupabaseAdminClient.mockReturnValue({
+      from: jest.fn(() => chain),
+    } as never);
+
+    const started = await updateSocialCard(row.id, { stage: 'making' }, correlationId, doctorId);
+    expect(started.stage).toBe('making');
+    expect(started.makeAt).toBeNull();
+    expect(chain.update).toHaveBeenCalledWith({ stage: 'making', scheduled_at: null, make_at: null });
   });
 
   it('keeps a card code the next day and still expires a chat code', async () => {
@@ -1081,6 +1130,7 @@ describe('social columns', () => {
       stage: 'thoughts',
       column_id: null,
       scheduled_at: null,
+      make_at: null,
     });
     expect(cards.eq).toHaveBeenCalledWith('stage', 'custom');
     expect(columns.delete).toHaveBeenCalled();
@@ -1118,6 +1168,7 @@ describe('social columns', () => {
       stage: 'custom',
       column_id: columnId,
       scheduled_at: null,
+      make_at: null,
     });
     expect(JSON.stringify(mockedAudit.mock.calls)).not.toContain('Film on Sunday');
     expect(JSON.stringify(mockedAudit.mock.calls)).not.toContain(`${doctorId}/file.mp4`);

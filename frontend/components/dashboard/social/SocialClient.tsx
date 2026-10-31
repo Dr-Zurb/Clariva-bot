@@ -27,9 +27,15 @@ const TABS: readonly { id: SocialTab; label: string }[] = [
   { id: "analytics", label: "Analytics" },
 ];
 
-export function SocialClient({ token }: { token: string }): JSX.Element {
+export function SocialClient({
+  token,
+  openCardId: opened,
+}: {
+  token: string;
+  openCardId?: string | null;
+}): JSX.Element {
   const [tab, setTab] = useState<SocialTab>("content");
-  const [openCardId, setOpenCardId] = useState<string | null>(null);
+  const [openCardId, setOpenCardId] = useState<string | null>(opened ?? null);
   const [boardRevision, setBoardRevision] = useState(0);
 
   return (

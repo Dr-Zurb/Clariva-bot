@@ -1,7 +1,8 @@
 "use client";
 
 /**
- * Schedule (soc-23). Ready cards that have a time, by day, week, or month.
+ * Schedule (soc-23). Ready cards that have a publish time, and Chosen or
+ * Making cards that have a start-making time, by day, week, or month.
  * A blank day stays blank. Nothing here publishes.
  */
 
@@ -14,6 +15,7 @@ import {
   type SocialCard,
   type SocialCardFormat,
 } from "./social-cards";
+import { makeLine } from "./make-plan";
 
 type ScheduleView = "calendar" | "list" | "gallery";
 type CalendarSpan = "day" | "week" | "month";
@@ -152,25 +154,39 @@ function SendNote({ card }: { card: SocialCard }): JSX.Element | null {
   return null;
 }
 
+type PlanKind = "publish" | "make";
+
+type PlanItem = {
+  card: SocialCard;
+  at: string;
+  kind: PlanKind;
+};
+
+function planLabel(item: PlanItem): string {
+  const when = timeLabel(item.at);
+  if (item.kind === "make") {
+    const stage = item.card.stage === "making" ? "making" : "chosen";
+    return makeLine(item.card.makeAt, stage) ?? `Start making · ${when}`;
+  }
+  return item.card.format ? `${when} · ${FORMAT_LABEL[item.card.format]}` : when;
+}
+
 function TimedChip({
-  card,
+  item,
   onOpen,
 }: {
-  card: SocialCard;
+  item: PlanItem;
   onOpen: (id: string) => void;
 }): JSX.Element {
   return (
     <button
       type="button"
-      onClick={() => onOpen(card.id)}
+      onClick={() => onOpen(item.card.id)}
       className="w-full rounded-md border border-border bg-background px-2 py-1.5 text-left hover:border-primary/40"
     >
-      <span className="block text-xs text-muted-foreground">
-        {timeLabel(card.scheduledAt as string)}
-        {card.format ? ` · ${FORMAT_LABEL[card.format]}` : ""}
-      </span>
-      <span className="block truncate text-sm text-foreground">{card.title}</span>
-      <SendNote card={card} />
+      <span className="block text-xs text-muted-foreground">{planLabel(item)}</span>
+      <span className="block truncate text-sm text-foreground">{item.card.title}</span>
+      {item.kind === "publish" ? <SendNote card={item.card} /> : null}
     </button>
   );
 }
@@ -187,6 +203,21 @@ function timedCards(cards: readonly SocialCard[]): SocialCard[] {
     )
     .slice()
     .sort((a, b) => (a.scheduledAt as string).localeCompare(b.scheduledAt as string));
+}
+
+function planItems(cards: readonly SocialCard[]): PlanItem[] {
+  const publish = timedCards(cards).map((card) => ({
+    card,
+    at: card.scheduledAt as string,
+    kind: "publish" as const,
+  }));
+  const make = cards
+    .filter(
+      (card): card is SocialCard & { makeAt: string } =>
+        Boolean(card.makeAt) && (card.stage === "chosen" || card.stage === "making")
+    )
+    .map((card) => ({ card, at: card.makeAt, kind: "make" as const }));
+  return [...publish, ...make].sort((left, right) => left.at.localeCompare(right.at));
 }
 
 function readyCards(cards: readonly SocialCard[]): SocialCard[] {
@@ -268,25 +299,24 @@ export function SocialSchedule({
     );
   }
 
-  const timed = timedCards(cards);
+  const plans = planItems(cards);
   const ready = readyCards(cards);
   const untimed = ready.filter((card) => !card.scheduledAt);
   const todayKey = dayKey(new Date());
   const visibleDays =
     span === "day" ? [cursor] : span === "week" ? Array.from({ length: 7 }, (_, index) => addDays(startOfWeek(cursor), index)) : monthDays(cursor);
-  const cardsOn = (day: Date): SocialCard[] =>
-    timed.filter((card) => dayKeyFromIso(card.scheduledAt as string) === dayKey(day));
+  const itemsOn = (day: Date): PlanItem[] => plans.filter((item) => dayKeyFromIso(item.at) === dayKey(day));
   const previousLabel = span === "day" ? "Previous day" : span === "week" ? "Previous week" : "Previous month";
   const nextLabel = span === "day" ? "Next day" : span === "week" ? "Next week" : "Next month";
 
-  const byDay: { key: string; label: string; cards: SocialCard[] }[] = [];
-  for (const card of timed) {
-    const key = dayKeyFromIso(card.scheduledAt as string);
+  const byDay: { key: string; label: string; items: PlanItem[] }[] = [];
+  for (const item of plans) {
+    const key = dayKeyFromIso(item.at);
     const current = byDay[byDay.length - 1];
     if (!current || current.key !== key) {
-      byDay.push({ key, label: dayLabel(card.scheduledAt as string), cards: [card] });
+      byDay.push({ key, label: dayLabel(item.at), items: [item] });
     } else {
-      current.cards.push(card);
+      current.items.push(item);
     }
   }
 
@@ -375,7 +405,7 @@ export function SocialSchedule({
         </div>
       </div>
 
-      {view === "calendar" && !loading && timed.length === 0 ? (
+      {view === "calendar" && !loading && plans.length === 0 ? (
         <p className="text-sm text-muted-foreground">Nothing is timed.</p>
       ) : null}
       {view !== "calendar" && loading && cards.length === 0 ? (
@@ -384,31 +414,28 @@ export function SocialSchedule({
           <div className="h-14 w-4/5 motion-safe:animate-pulse rounded-lg bg-muted/70" />
         </div>
       ) : null}
-      {view !== "calendar" && !loading && ready.length === 0 && timed.length === 0 ? (
+      {view !== "calendar" && !loading && ready.length === 0 && plans.length === 0 ? (
         <p className="text-sm text-muted-foreground">Nothing is ready.</p>
       ) : null}
 
-      {view === "list" && (timed.length > 0 || untimed.length > 0) ? (
+      {view === "list" && (plans.length > 0 || untimed.length > 0) ? (
         <div className="min-h-0 flex-1 space-y-6 overflow-y-auto">
           {byDay.map((day) => (
             <section key={day.key} aria-label={day.label} className="space-y-2">
               <h3 className="text-sm font-medium text-foreground">{day.label}</h3>
               <ul className="divide-y divide-border rounded-lg border border-border bg-card">
-                {day.cards.map((card) => (
-                  <li key={card.id}>
+                {day.items.map((item) => (
+                  <li key={`${item.kind}-${item.card.id}`}>
                     <button
                       type="button"
-                      onClick={() => onOpen(card.id)}
+                      onClick={() => onOpen(item.card.id)}
                       className="flex w-full items-baseline justify-between gap-3 px-4 py-3 text-left hover:bg-muted"
                     >
                       <span>
-                        <span className="block text-sm text-foreground">{card.title}</span>
-                        <SendNote card={card} />
+                        <span className="block text-sm text-foreground">{item.card.title}</span>
+                        {item.kind === "publish" ? <SendNote card={item.card} /> : null}
                       </span>
-                      <span className="shrink-0 text-xs text-muted-foreground">
-                        {card.format ? `${FORMAT_LABEL[card.format]} · ` : ""}
-                        {timeLabel(card.scheduledAt as string)}
-                      </span>
+                      <span className="shrink-0 text-xs text-muted-foreground">{planLabel(item)}</span>
                     </button>
                   </li>
                 ))}
@@ -505,9 +532,9 @@ export function SocialSchedule({
                     {loading && cards.length === 0 ? (
                       <li aria-hidden="true" className="mx-0.5 h-8 motion-safe:animate-pulse rounded-md bg-muted" />
                     ) : null}
-                    {cardsOn(day).map((card) => (
-                      <li key={card.id}>
-                        <TimedChip card={card} onOpen={onOpen} />
+                    {itemsOn(day).map((item) => (
+                      <li key={`${item.kind}-${item.card.id}`}>
+                        <TimedChip item={item} onOpen={onOpen} />
                       </li>
                     ))}
                   </ul>
@@ -556,9 +583,9 @@ export function SocialSchedule({
                     </span>
                   </h3>
                   <ul className="flex flex-col gap-1 px-1 pb-1">
-                    {cardsOn(day).map((card) => (
-                      <li key={card.id}>
-                        <TimedChip card={card} onOpen={onOpen} />
+                    {itemsOn(day).map((item) => (
+                      <li key={`${item.kind}-${item.card.id}`}>
+                        <TimedChip item={item} onOpen={onOpen} />
                       </li>
                     ))}
                   </ul>

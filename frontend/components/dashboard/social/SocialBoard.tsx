@@ -68,6 +68,7 @@ import {
   type ShelfFile,
 } from "./idea-composer";
 import { SocialCardPanel, readyLine, readyStatus, type ReadyStatus } from "./SocialCardPanel";
+import { makeLine, makeRank, makeTone } from "./make-plan";
 import { loadSocialBoard, peekSocialCards } from "./social-board-cache";
 import {
   attachSocialCardFile,
@@ -657,7 +658,19 @@ function placedCard(card: SocialCard, kind: BoardColumn["kind"]): SocialCard {
     columnId: null,
     hasFile: card.hasFile,
     scheduledAt: kind === "ready" ? card.scheduledAt : null,
+    makeAt: card.stage === "chosen" && kind === "making" ? null : kind === "chosen" || kind === "making" ? card.makeAt : null,
   };
+}
+
+function orderChosen(cards: readonly SocialCard[], now = Date.now()): SocialCard[] {
+  return cards
+    .map((card, index) => ({ card, index, rank: makeRank(card.makeAt, "chosen", now) }))
+    .sort((left, right) => {
+      if (left.rank !== right.rank) return left.rank - right.rank;
+      if (left.rank < 3) return Date.parse(left.card.makeAt ?? "") - Date.parse(right.card.makeAt ?? "");
+      return left.index - right.index;
+    })
+    .map((item) => item.card);
 }
 
 function orderReady(cards: readonly SocialCard[]): SocialCard[] {
@@ -684,6 +697,7 @@ function pendingMadeCard(id: string): SocialCard {
     fileKind: null,
     sourceUrl: null,
     scheduledAt: null,
+    makeAt: null,
     publishError: null,
     instagramUrl: null,
     visitCount: 0,
@@ -756,6 +770,9 @@ function CardFace({
     (column) => column.kind !== card.stage && (column.kind !== "ready" || card.hasFile)
   );
   const next = nextColumn(columns, card);
+  const startStage = card.stage === "chosen" || card.stage === "making" ? card.stage : null;
+  const startLine = startStage ? makeLine(card.makeAt, startStage) : null;
+  const startLate = startStage ? makeTone(card.makeAt, startStage) === "late" : false;
   const titleRoom = next
     ? menu
       ? "pr-16"
@@ -809,6 +826,9 @@ function CardFace({
             </button>
             {card.stage === "ready" ? (
               <p className="mt-1 text-xs text-muted-foreground">{readyLine(card.scheduledAt, Date.now(), postsByHand(card.words))}</p>
+            ) : null}
+            {startLine ? (
+              <p className={`mt-1 text-xs ${startLate ? "text-destructive" : "text-muted-foreground"}`}>{startLine}</p>
             ) : null}
           </div>
           {next ? (
@@ -1491,7 +1511,10 @@ export function SocialBoard({
       sort,
       orders[column.id]
     );
-    return column.kind === "ready" && sort === "latest" ? orderReady(ordered) : ordered;
+    if (sort !== "latest") return ordered;
+    if (column.kind === "ready") return orderReady(ordered);
+    if (column.kind === "chosen") return orderChosen(ordered);
+    return ordered;
   }
 
   function overColumn(current: Lanes, overId: UniqueIdentifier): string | null {

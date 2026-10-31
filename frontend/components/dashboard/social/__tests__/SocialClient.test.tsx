@@ -156,6 +156,7 @@ function card(
         | "words"
         | "hasFile"
         | "scheduledAt"
+        | "makeAt"
         | "publishError"
         | "instagramUrl"
         | "visitCount"
@@ -177,6 +178,7 @@ function card(
     fileKind: null,
     sourceUrl: null,
     scheduledAt: null,
+    makeAt: null,
     publishError: null,
     instagramUrl: null,
     visitCount: 0,
@@ -1172,7 +1174,8 @@ describe("Social shell", () => {
     render(<SocialClient token="token" />);
     fireEvent.click(await screen.findByRole("button", { name: "Fees" }));
     expect(screen.getByLabelText("Note")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Start making" }));
+    expect(screen.getByRole("button", { name: "Schedule" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Start making now" }));
 
     expect(moveMock).toHaveBeenCalledWith("token", "1", "making");
     expect(updateMock).not.toHaveBeenCalled();
@@ -1181,10 +1184,44 @@ describe("Social shell", () => {
     const track = screen.getByRole("navigation", { name: "Column" });
     expect(within(track).getByRole("button", { name: "Making" })).toHaveAttribute("aria-current", "step");
     expect(within(track).getByRole("button", { name: "Chosen" }).querySelector("svg")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Schedule" })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Making" })).toHaveTextContent("Fees");
     expect(screen.getByRole("region", { name: "Chosen" })).not.toHaveTextContent("Fees");
     fireEvent.click(screen.getByRole("button", { name: "Back to Chosen" }));
     expect(moveMock).toHaveBeenCalledWith("token", "1", "chosen");
+  });
+
+  it("saves a start-making time on Chosen and shows it on the week", async () => {
+    const when = "2026-11-12T03:30:00.000Z";
+    listMock.mockResolvedValue([card({ id: "1", title: "Fees", stage: "chosen" })]);
+    updateMock.mockImplementation(async (_token, _id, patch) =>
+      card({ id: "1", title: "Fees", stage: "chosen", makeAt: patch.makeAt ?? null })
+    );
+
+    render(<SocialClient token="token" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Fees" }));
+    fireEvent.click(screen.getByRole("button", { name: "Schedule" }));
+    const panel = screen.getByRole("dialog", { name: "When to start making" });
+    expect(within(panel).getByText("Date")).toBeInTheDocument();
+    expect(within(panel).getByText("Time")).toBeInTheDocument();
+    fireEvent.click(within(panel).getByRole("button", { name: "Today" }));
+    fireEvent.click(within(panel).getByRole("button", { name: "Hour" }));
+    fireEvent.click(screen.getByRole("option", { name: "09" }));
+    fireEvent.click(within(panel).getByRole("button", { name: "Minute" }));
+    fireEvent.click(screen.getByRole("option", { name: "00" }));
+    const now = new Date();
+    const expected = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 9, 0).toISOString();
+    fireEvent.click(within(panel).getByRole("button", { name: "Schedule" }));
+
+    await waitFor(() => {
+      expect(updateMock).toHaveBeenCalledWith("token", "1", { makeAt: expected });
+    });
+
+    listMock.mockResolvedValue([card({ id: "1", title: "Fees", stage: "chosen", makeAt: when })]);
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Schedule" }));
+    fireEvent.click(await screen.findByRole("button", { name: "List" }));
+    expect(await screen.findByRole("button", { name: /Start making/ })).toHaveTextContent("Fees");
   });
 
   it("shortlists a thought and does not post", async () => {
@@ -1203,7 +1240,7 @@ describe("Social shell", () => {
     expect(within(track).getByRole("button", { name: "Chosen" })).toHaveAttribute("aria-current", "step");
     expect(within(track).getByRole("button", { name: "Ideas" }).querySelector("svg")).toBeTruthy();
     expect(screen.queryByText("Chosen. Start making when you are ready.")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Start making" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Start making now" })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Chosen" })).toHaveTextContent("Fees");
     expect(screen.getByRole("region", { name: "Ideas" })).not.toHaveTextContent("Fees");
   });
@@ -1429,7 +1466,7 @@ describe("Social shell", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Shortlist" }));
     expect(screen.getByLabelText("Note")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Start making" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Start making now" })).toBeInTheDocument();
     expect(screen.queryByText("The format waits until Making.")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Format")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
@@ -1474,6 +1511,31 @@ describe("Social shell", () => {
     expect(await screen.findByText("Nothing is timed.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("tab", { name: "Analytics" }));
     expect(await screen.findByText("Nothing has been posted.")).toBeInTheDocument();
+  });
+
+  it("puts a late Chosen card above one with no time", async () => {
+    listMock.mockResolvedValue([
+      card({
+        id: "1",
+        title: "Waiting",
+        stage: "chosen",
+        makeAt: null,
+        updatedAt: "2026-10-30T00:00:00.000Z",
+      }),
+      card({
+        id: "2",
+        title: "Overdue",
+        stage: "chosen",
+        makeAt: "2020-01-02T08:00:00.000Z",
+        updatedAt: "2026-10-01T00:00:00.000Z",
+      }),
+    ]);
+
+    render(<SocialClient token="token" />);
+    const chosen = await screen.findByRole("region", { name: "Chosen" });
+    const text = chosen.textContent ?? "";
+    expect(text.indexOf("Overdue")).toBeLessThan(text.indexOf("Waiting"));
+    expect(chosen).toHaveTextContent(/Late · /);
   });
 
   it("lists an unscheduled Ready card before a timed one", async () => {

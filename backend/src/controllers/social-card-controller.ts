@@ -47,7 +47,7 @@ const formatSchema = z.enum(['post', 'reel', 'story']);
 
 const wordsSchema = z
   .object({
-    note: z.string().trim().min(1).max(4000).optional(),
+    note: z.string().trim().min(1).max(20000).optional(),
     caption: z.string().trim().min(1).max(2200).optional(),
     altText: z.string().trim().min(1).max(500).optional(),
     firstComment: z.string().trim().min(1).max(500).optional(),
@@ -103,6 +103,7 @@ export const updateSocialCardSchema = z
       .array(z.object({ id: z.string().trim().min(1).max(500), url: z.string().trim().max(500) }))
       .optional(),
     scheduledAt: z.string().datetime({ offset: true }).nullable().optional(),
+    makeAt: z.string().datetime({ offset: true }).nullable().optional(),
     postNow: z.literal(true).optional(),
     instagramUrl: z
       .string()

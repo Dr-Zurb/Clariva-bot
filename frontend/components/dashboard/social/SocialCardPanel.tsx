@@ -19,6 +19,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { createPortal } from "react-dom";
 import { ArrowLeft, Bookmark, Check, ChevronDown, ChevronLeft, ChevronRight, Copy, EllipsisVertical, ExternalLink, Heart, ImagePlus, Info, Loader2, MessageCircle, Play, Plus, Repeat2, Send, Volume2, VolumeX, X } from "lucide-react";
 import { getInstagramStatus } from "@/lib/api";
+import { makeLine, makeTone } from "./make-plan";
 import {
   FILE_ACCEPT,
   IdeaNote,
@@ -126,32 +127,31 @@ const STAGE_GLIDE = "520ms cubic-bezier(0.22, 1, 0.36, 1)";
 const MARGIN = 16;
 const SHELF = 64;
 const SHELF_ROOM = 192;
-const MIN_LEFT = MARGIN + SHELF_ROOM;
+const RESOURCES_OPEN = SHELF + SHELF_ROOM;
 const PREVIEW_WANT = 352;
-const PREVIEW_FLOOR = 240;
-const NOTE_CAP = 800;
-const NOTE_FLOOR = 480;
 
-function sheetMeasures(width: number): { note: number; preview: number } {
-  if (width <= 0) return { note: 640, preview: PREVIEW_WANT };
-  const room = width - MIN_LEFT - MARGIN - SHELF;
-  if (room >= NOTE_FLOOR + PREVIEW_WANT) {
-    return { note: Math.min(NOTE_CAP, room - PREVIEW_WANT), preview: PREVIEW_WANT };
-  }
-  if (room >= NOTE_FLOOR + PREVIEW_FLOOR) {
-    return { note: NOTE_FLOOR, preview: room - NOTE_FLOOR };
-  }
-  const tight = Math.max(0, width - MARGIN * 2 - SHELF);
-  const preview = Math.min(PREVIEW_WANT, Math.max(PREVIEW_FLOOR, Math.round(tight * 0.34)));
-  return { note: Math.max(0, tight - preview), preview };
+function lockedNote(viewport: number): number {
+  if (viewport <= 0) return 640;
+  return Math.max(0, viewport - MARGIN * 2 - RESOURCES_OPEN - PREVIEW_WANT);
 }
 
-function placeCard(width: number, cardWidth: number): number {
-  if (width <= 0) return MARGIN;
-  const centered = Math.round((width - cardWidth) / 2);
-  if (centered >= MIN_LEFT) return centered;
-  if (MIN_LEFT + cardWidth <= width - MARGIN) return MIN_LEFT;
-  return Math.max(MARGIN, width - MARGIN - cardWidth);
+function placeCard(width: number, cardWidth: number, hang = 0): number {
+  if (width <= 0) return MARGIN + hang;
+  const span = hang + cardWidth;
+  const visualLeft = Math.max(MARGIN, Math.round((width - span) / 2));
+  return visualLeft + hang;
+}
+
+/** The note is sized for both sheets open, so Ideas through Ready share one writing width. */
+function placeOpen(
+  viewport: number,
+  shelf: number,
+  preview: number,
+  hang: number,
+): { left: number; note: number; card: number } {
+  const note = lockedNote(viewport);
+  const card = shelf + note + preview;
+  return { left: placeCard(viewport, card, hang), note, card };
 }
 
 function viewWidth(): number {
@@ -440,6 +440,10 @@ export function SocialCardPanel({
   const [scrapUrls, setScrapUrls] = useState<Record<string, string>>({});
   const [preview, setPreview] = useState<string | null>(null);
   const [postAt, setPostAt] = useState(toLocalInput(card.scheduledAt));
+  const [makeAt, setMakeAt] = useState(toLocalInput(card.makeAt));
+  useEffect(() => {
+    setMakeAt(toLocalInput(card.makeAt));
+  }, [card.id, card.makeAt]);
   const [busy, setBusy] = useState(false);
   const [sending, setSending] = useState(false);
   const [starting, setStarting] = useState(false);
@@ -1167,6 +1171,39 @@ export function SocialCardPanel({
     if (sending || starting || sent) void onSaved();
   }
 
+  async function saveMake(): Promise<void> {
+    const current = toLocalInput(card.makeAt);
+    if (makeAt === current || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await updateSocialCard(token, card.id, {
+        makeAt: makeAt ? fromLocalInput(makeAt) : null,
+      });
+      await onSaved();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Could not save the time");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function clearMake(): Promise<void> {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    setMakeAt("");
+    try {
+      await updateSocialCard(token, card.id, { makeAt: null });
+      await onSaved();
+    } catch (err: unknown) {
+      setMakeAt(toLocalInput(card.makeAt));
+      setError(err instanceof Error ? err.message : "Could not clear the time");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function clearTime(): Promise<void> {
     if (busy) return;
     setBusy(true);
@@ -1404,6 +1441,10 @@ export function SocialCardPanel({
         onRelocate={relocateThought}
         readyDrop={readyDrop}
         postAt={postAt}
+        makeAt={makeAt}
+        onMakeAt={setMakeAt}
+        onSaveMake={() => void saveMake()}
+        onClearMake={() => void clearMake()}
         onTitle={setTitle}
         onTopic={setTopic}
         onNote={changeNote}
@@ -2684,51 +2725,15 @@ function TimeMenu({
   );
 }
 
-function ReleasePlan({
-  title,
-  scheduledAt,
-  postAt,
-  busy,
-  error,
-  onPostAt,
-  onSaveTime,
-  onPostNow,
-  onClearTime,
-  publishError,
-  sending,
-  sent,
-  onDone,
-  byHand,
-  handLocked,
-  onByHand,
-  onMarkPosted,
-  onHandNote,
-  format,
-  words,
+function DateTimeFields({
+  value,
+  onChange,
 }: {
-  title: string;
-  scheduledAt: string | null;
-  postAt: string;
-  busy: boolean;
-  error: string | null;
-  publishError: string | null;
-  sending: boolean;
-  sent: { url: string | null } | null;
-  onDone: () => void;
-  byHand: boolean;
-  handLocked: boolean;
-  onPostAt: (value: string) => void;
-  onSaveTime: () => void;
-  onPostNow: () => void;
-  onClearTime: () => void;
-  onByHand: (byHand: boolean) => void;
-  onMarkPosted: () => void;
-  onHandNote: (value: string) => void;
-  format: SocialCardFormat | "";
-  words: SocialCardWords;
+  value: string;
+  onChange: (value: string) => void;
 }): JSX.Element {
-  const initial = readLocal(postAt);
-  const opening = initial && postAt.includes("T") ? clockFrom(initial) : "";
+  const initial = readLocal(value);
+  const opening = initial && value.includes("T") ? clockFrom(initial) : "";
   const openedClock = splitClock(opening);
   const [picked, setPicked] = useState<Date | null>(() => (initial ? startOfDay(initial) : null));
   const [time, setTime] = useState(opening);
@@ -2742,17 +2747,15 @@ function ReleasePlan({
   const today = startOfDay(new Date());
   const cells = monthCells(month);
   const monthLabel = month.toLocaleDateString(undefined, { month: "long", year: "numeric" });
-  const confirmed = matchesSchedule(scheduledAt, picked, time);
-  const whenLine = time && picked ? planSentence(picked, time) : "";
 
   useEffect(() => {
-    if (postAt) return;
+    if (value) return;
     setTime("");
     setPicked(null);
     setHour("");
     setMinute("");
     setPeriod("AM");
-  }, [postAt]);
+  }, [value]);
 
   function applyClock(nextHour: string, nextMinute: string, nextPeriod: "AM" | "PM"): void {
     setHour(nextHour);
@@ -2766,7 +2769,7 @@ function ReleasePlan({
   function pickDay(next: Date): void {
     const chosen = startOfDay(next);
     setPicked(chosen);
-    if (time) onPostAt(localStamp(chosen, time));
+    if (time) onChange(localStamp(chosen, time));
   }
 
   function goToday(): void {
@@ -2780,58 +2783,10 @@ function ReleasePlan({
     const base = picked ?? today;
     if (!picked) setPicked(base);
     setTime(value);
-    onPostAt(value ? localStamp(base, value) : "");
-  }
-
-  if (sent) {
-    return (
-      <div className="mx-auto flex min-h-full w-full max-w-3xl flex-col items-center">
-        <h2 className="w-full max-w-2xl shrink-0 text-2xl font-semibold leading-7 text-foreground">{title}</h2>
-        <div
-          role="status"
-          className="mt-6 flex w-full max-w-md flex-col items-center rounded-xl border border-border px-6 py-8 text-center"
-        >
-          <span className="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-primary">
-            <Check className="h-6 w-6" aria-hidden="true" />
-          </span>
-          <p className="mt-3 text-base font-semibold text-foreground">On Instagram</p>
-          <p className="mt-1 text-sm text-muted-foreground">
-            It is live. The card leaves the board and shows on the Schedule.
-          </p>
-          <div className="mt-5 flex items-center gap-2">
-            {sent.url ? (
-              <a
-                href={sent.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex h-9 items-center gap-1.5 rounded-md border border-border bg-background px-4 text-sm text-foreground hover:bg-muted"
-              >
-                Open on Instagram
-                <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
-              </a>
-            ) : null}
-            <button
-              type="button"
-              onClick={onDone}
-              className="h-9 rounded-md bg-primary px-4 text-sm text-primary-foreground"
-            >
-              Done
-            </button>
-          </div>
-        </div>
-      </div>
-    );
+    onChange(value ? localStamp(base, value) : "");
   }
 
   return (
-    <div className="mx-auto flex min-h-full w-full max-w-3xl flex-col">
-      <div className="flex w-full flex-1 flex-col items-center">
-      <h2 className="w-full max-w-2xl shrink-0 text-2xl font-semibold leading-7 text-foreground">{title}</h2>
-      <div className="mt-1 flex w-full max-w-2xl flex-col">
-        <h3 className="shrink-0 text-lg font-semibold leading-6 text-foreground">{byHand ? "Reminder" : "Schedule"}</h3>
-        <div className="mx-auto mt-1.5 w-full max-w-sm shrink-0">
-          <PostingChoice byHand={byHand} locked={handLocked} busy={busy || sending} onChange={onByHand} />
-        </div>
         <div className="mx-auto mt-1.5 w-max max-w-full rounded-xl border border-border px-5 py-3">
         <div className="grid grid-cols-2 items-start gap-x-8">
         <div className="flex w-full justify-center">
@@ -3076,6 +3031,109 @@ function ReleasePlan({
         </div>
         </div>
         </div>
+  );
+}
+
+function ReleasePlan({
+  title,
+  scheduledAt,
+  postAt,
+  busy,
+  error,
+  onPostAt,
+  onSaveTime,
+  onPostNow,
+  onClearTime,
+  publishError,
+  sending,
+  sent,
+  onDone,
+  byHand,
+  handLocked,
+  onByHand,
+  onMarkPosted,
+  onHandNote,
+  format,
+  words,
+}: {
+  title: string;
+  scheduledAt: string | null;
+  postAt: string;
+  busy: boolean;
+  error: string | null;
+  publishError: string | null;
+  sending: boolean;
+  sent: { url: string | null } | null;
+  onDone: () => void;
+  byHand: boolean;
+  handLocked: boolean;
+  onPostAt: (value: string) => void;
+  onSaveTime: () => void;
+  onPostNow: () => void;
+  onClearTime: () => void;
+  onByHand: (byHand: boolean) => void;
+  onMarkPosted: () => void;
+  onHandNote: (value: string) => void;
+  format: SocialCardFormat | "";
+  words: SocialCardWords;
+}): JSX.Element {
+  const parsed = readLocal(postAt);
+  const picked = parsed ? startOfDay(parsed) : null;
+  const time = parsed && postAt.includes("T") ? clockFrom(parsed) : "";
+  const confirmed = matchesSchedule(scheduledAt, picked, time);
+  const whenLine = time && picked ? planSentence(picked, time) : "";
+
+
+  if (sent) {
+    return (
+      <div className="mx-auto flex min-h-full w-full max-w-3xl flex-col items-center">
+        <h2 className="w-full max-w-2xl shrink-0 text-2xl font-semibold leading-7 text-foreground">{title}</h2>
+        <div
+          role="status"
+          className="mt-6 flex w-full max-w-md flex-col items-center rounded-xl border border-border px-6 py-8 text-center"
+        >
+          <span className="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-primary">
+            <Check className="h-6 w-6" aria-hidden="true" />
+          </span>
+          <p className="mt-3 text-base font-semibold text-foreground">On Instagram</p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            It is live. The card leaves the board and shows on the Schedule.
+          </p>
+          <div className="mt-5 flex items-center gap-2">
+            {sent.url ? (
+              <a
+                href={sent.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex h-9 items-center gap-1.5 rounded-md border border-border bg-background px-4 text-sm text-foreground hover:bg-muted"
+              >
+                Open on Instagram
+                <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+              </a>
+            ) : null}
+            <button
+              type="button"
+              onClick={onDone}
+              className="h-9 rounded-md bg-primary px-4 text-sm text-primary-foreground"
+            >
+              Done
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mx-auto flex min-h-full w-full max-w-3xl flex-col">
+      <div className="flex w-full flex-1 flex-col items-center">
+      <h2 className="w-full max-w-2xl shrink-0 text-2xl font-semibold leading-7 text-foreground">{title}</h2>
+      <div className="mt-1 flex w-full max-w-2xl flex-col">
+        <h3 className="shrink-0 text-lg font-semibold leading-6 text-foreground">{byHand ? "Reminder" : "Schedule"}</h3>
+        <div className="mx-auto mt-1.5 w-full max-w-sm shrink-0">
+          <PostingChoice byHand={byHand} locked={handLocked} busy={busy || sending} onChange={onByHand} />
+        </div>
+        <DateTimeFields value={postAt} onChange={onPostAt} />
         <div className="mt-1.5 grid w-full shrink-0 grid-cols-2 items-start gap-x-8">
         <div>
           <p className="mb-1 min-h-10 text-xs leading-5 text-muted-foreground">
@@ -4067,6 +4125,144 @@ function AccountMark({
   );
 }
 
+function StartScheduleButton({
+  value,
+  savedValue,
+  busy,
+  onChange,
+  onSave,
+  onClear,
+  className,
+}: {
+  value: string;
+  savedValue: string;
+  busy: boolean;
+  onChange: (value: string) => void;
+  onSave: () => void;
+  onClear: () => void;
+  className: string;
+}): JSX.Element {
+  const [open, setOpen] = useState(false);
+  const [grown, setGrown] = useState(false);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const [box, setBox] = useState({ left: 0, width: 640, bottom: 0, originX: 0 });
+  const parsed = readLocal(value);
+  const time = parsed && value.includes("T") ? clockFrom(parsed) : "";
+  const confirmed = savedValue.length > 0 && savedValue === value && time.length > 0;
+
+  function place(): void {
+    const rect = buttonRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const card = buttonRef.current?.closest("form")?.getBoundingClientRect();
+    const limitLeft = (card?.left ?? 0) + 12;
+    const width = Math.min(640, Math.max(320, rect.right - limitLeft));
+    const left = Math.max(limitLeft, rect.right - width);
+    setBox({
+      left,
+      width,
+      bottom: window.innerHeight - rect.top + 8,
+      originX: rect.left + rect.width / 2 - left,
+    });
+  }
+
+  function closeUnsaved(): void {
+    onChange(savedValue);
+    setOpen(false);
+  }
+
+  useEffect(() => {
+    if (!open) {
+      setGrown(false);
+      return;
+    }
+    place();
+    const frame = requestAnimationFrame(() => setGrown(true));
+    function onPointer(event: MouseEvent): void {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (buttonRef.current?.contains(target) || panelRef.current?.contains(target)) return;
+      if (target instanceof Element && target.closest("[role='listbox']")) return;
+      closeUnsaved();
+    }
+    function onKey(event: KeyboardEvent): void {
+      if (event.key === "Escape") closeUnsaved();
+    }
+    window.addEventListener("mousedown", onPointer);
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("resize", place);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.removeEventListener("mousedown", onPointer);
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("resize", place);
+    };
+  }, [open, savedValue, onChange]);
+
+  return (
+    <>
+      <button
+        ref={buttonRef}
+        type="button"
+        aria-expanded={open}
+        aria-haspopup="dialog"
+        disabled={busy}
+        onClick={() => {
+          if (open) onChange(savedValue);
+          setOpen((current) => !current);
+        }}
+        className={className}
+      >
+        Schedule
+      </button>
+      {open
+        ? createPortal(
+            <div
+              ref={panelRef}
+              role="dialog"
+              aria-label="When to start making"
+              className={`fixed z-[80] max-h-[calc(100vh-1rem)] overflow-y-auto rounded-xl border border-border bg-card p-3 shadow-xl motion-safe:transition-[transform,opacity] motion-safe:duration-200 motion-safe:ease-out ${grown ? "scale-100 opacity-100" : "scale-[0.86] opacity-0"}`}
+              style={{ left: box.left, width: box.width, bottom: box.bottom, transformOrigin: `${box.originX}px 100%` }}
+            >
+              <DateTimeFields value={value} onChange={onChange} />
+              <div className="mt-2 flex items-center justify-end gap-3">
+                {confirmed ? (
+                  <button
+                    type="button"
+                    className="text-sm text-muted-foreground hover:text-foreground"
+                    onClick={() => {
+                      onClear();
+                      setOpen(false);
+                    }}
+                  >
+                    Clear time
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  disabled={busy || time.length === 0 || confirmed}
+                  onClick={() => {
+                    onSave();
+                    setOpen(false);
+                  }}
+                  className={`inline-flex h-9 items-center justify-center gap-2 rounded-md px-4 text-sm ${
+                    confirmed
+                      ? "border border-border bg-background text-foreground"
+                      : "bg-primary text-primary-foreground disabled:opacity-50"
+                  }`}
+                >
+                  {confirmed ? <Check className="h-4 w-4" aria-hidden="true" /> : null}
+                  {confirmed ? "Scheduled" : "Schedule"}
+                </button>
+              </div>
+            </div>,
+            document.body
+          )
+        : null}
+    </>
+  );
+}
+
 function Composer({
   card,
   title,
@@ -4094,6 +4290,10 @@ function Composer({
   onRelocate,
   readyDrop,
   postAt,
+  makeAt,
+  onMakeAt,
+  onSaveMake,
+  onClearMake,
   onTitle,
   onTopic,
   onNote,
@@ -4161,6 +4361,10 @@ function Composer({
   onRelocate: (columnId: string) => void;
   readyDrop: ReadyDrop;
   postAt: string;
+  makeAt: string;
+  onMakeAt: (value: string) => void;
+  onSaveMake: () => void;
+  onClearMake: () => void;
   onTitle: (value: string) => void;
   onTopic: (value: string) => void;
   onNote: (value: string) => void;
@@ -4209,6 +4413,7 @@ function Composer({
   const [line, setLine] = useState(0);
   const [noteFocus, setNoteFocus] = useState(0);
   const [offer, setOffer] = useState<{ text: string; top: number; left: number } | null>(null);
+  const offerRef = useRef<HTMLDivElement>(null);
   const targets = liftTargets(format);
   const { over, dropProps } = useSheetFileDrop((next) => onAddFiles(next, null));
   const release = card.stage === "ready";
@@ -4218,6 +4423,7 @@ function Composer({
   const [fade, setFade] = useState(release);
   const [present, setPresent] = useState(studio);
   const [revealed, setRevealed] = useState(studio);
+  const [shelfOpen, setShelfOpen] = useState(() => files.length > 0 || links.length > 0);
   const glideOn = useRef(false);
   const reduce = reducedMotion();
   const makingId = columns.find((column) => column.kind === "making")?.id ?? null;
@@ -4312,21 +4518,26 @@ function Composer({
 
   function onSelect(): void {
     const box = noteRef.current;
-    if (!box) return;
+    if (!box || !studio || targets.length === 0) {
+      setOffer(null);
+      return;
+    }
     const active = document.activeElement;
     if (active instanceof HTMLTextAreaElement && box.contains(active)) {
       const typed = active.value.slice(active.selectionStart ?? 0, active.selectionEnd ?? 0).trim();
-      if (typed) {
-        const rect = active.getBoundingClientRect();
-        const placed = placeOnScreen(
-          { top: rect.top, left: rect.left, right: rect.right, bottom: rect.bottom, width: rect.width, height: rect.height },
-          { width: 220, height: 36 },
-          { width: window.innerWidth, height: window.innerHeight },
-          "below"
-        );
-        setOffer({ text: typed, top: placed.top, left: placed.left });
+      if (!typed) {
+        setOffer(null);
         return;
       }
+      const rect = active.getBoundingClientRect();
+      const placed = placeOnScreen(
+        { top: rect.top, left: rect.left, right: rect.right, bottom: rect.bottom, width: rect.width, height: rect.height },
+        { width: 220, height: 36 },
+        { width: window.innerWidth, height: window.innerHeight },
+        "below"
+      );
+      setOffer({ text: typed, top: placed.top, left: placed.left });
+      return;
     }
     const selection = window.getSelection();
     const text = selection?.toString().trim() ?? "";
@@ -4337,9 +4548,14 @@ function Composer({
       !selection.anchorNode ||
       !box.contains(selection.anchorNode)
     ) {
+      setOffer(null);
       return;
     }
     const rect = selection.getRangeAt(0).getBoundingClientRect();
+    if (rect.width < 1 && rect.height < 1) {
+      setOffer(null);
+      return;
+    }
     const placed = placeOnScreen(
       { top: rect.top, left: rect.left, right: rect.right, bottom: rect.bottom, width: rect.width, height: rect.height },
       { width: 220, height: 36 },
@@ -4349,6 +4565,24 @@ function Composer({
     setOffer({ text, top: placed.top, left: placed.left });
   }
 
+  useEffect(() => {
+    if (!offer) return;
+    function dismiss(event: MouseEvent): void {
+      const target = event.target;
+      if (target instanceof Node && offerRef.current?.contains(target)) return;
+      setOffer(null);
+    }
+    function onKey(event: KeyboardEvent): void {
+      if (event.key === "Escape") setOffer(null);
+    }
+    window.addEventListener("mousedown", dismiss);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("mousedown", dismiss);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [offer]);
+
   function takeReference(event: DragEvent<HTMLElement>): void {
     if (!Array.from(event.dataTransfer.types).includes(RESOURCE_DRAG)) return;
     event.preventDefault();
@@ -4356,12 +4590,14 @@ function Composer({
     if (resource?.kind === "file") onUseReference(resource.id);
   }
 
-  const measures = sheetMeasures(viewport);
   const slim = made && !release;
-  const previewOpen = slim || release || revealed ? measures.preview : 0;
-  const noteWidth = slim ? 0 : fade ? SHELF + measures.note : measures.note;
-  const cardWidth = slim ? previewOpen : (fade ? 0 : SHELF) + noteWidth + previewOpen;
-  const left = placeCard(viewport, cardWidth);
+  const shelfWidth = slim || fade ? 0 : SHELF;
+  const hang = shelfWidth > 0 && shelfOpen ? SHELF_ROOM : 0;
+  const previewOpen = slim || release || revealed ? PREVIEW_WANT : 0;
+  const laid = placeOpen(viewport, shelfWidth, slim ? 0 : previewOpen, hang);
+  const noteWidth = slim ? 0 : laid.note;
+  const cardWidth = slim ? previewOpen : laid.card;
+  const left = slim ? placeCard(viewport, cardWidth) : laid.left;
   const ease = glideOn.current && !reduce ? STAGE_GLIDE : "none";
   const glide = ease === "none" ? "none" : `width ${ease}`;
   const curve = "cubic-bezier(0.22, 1, 0.36, 1)";
@@ -4430,6 +4666,7 @@ function Composer({
           >
             <ScrapShelf
               folded={fade}
+              onExpanded={setShelfOpen}
               items={files}
               links={links}
               dropping={over}
@@ -4517,7 +4754,7 @@ function Composer({
                   if (node) node.inert = fade;
                 }}
               >
-              <div className="mx-auto flex w-full max-w-[43.75rem] flex-1 flex-col">
+              <div className="flex w-full flex-1 flex-col">
               <input
                 ref={titleRef}
                 aria-label="Title"
@@ -4550,9 +4787,10 @@ function Composer({
                   focusRequest={noteFocus}
                 />
               </div>
-              {offer && targets.length > 0
+              {offer && studio && targets.length > 0
                 ? createPortal(
                     <div
+                      ref={offerRef}
                       className="fixed z-[70] flex gap-1 rounded-md border border-border bg-card p-1 shadow-lg"
                       style={{ top: offer.top, left: offer.left }}
                     >
@@ -4597,7 +4835,7 @@ function Composer({
                   if (node) node.inert = !fade;
                 }}
               >
-                <div className="mx-auto min-h-full w-full max-w-[43.75rem]">
+                <div className="min-h-full w-full">
                   <ReleasePlan
                     title={title}
                     scheduledAt={card.scheduledAt}
@@ -4675,6 +4913,17 @@ function Composer({
                 </div>
               ) : studio ? null : (
                 <div className="ml-auto flex shrink-0 items-center gap-2">
+                  {card.stage === "chosen" ? (
+                    <StartScheduleButton
+                      value={makeAt}
+                      savedValue={toLocalInput(card.makeAt)}
+                      busy={busy}
+                      onChange={onMakeAt}
+                      onSave={onSaveMake}
+                      onClear={onClearMake}
+                      className="h-9 rounded-md border border-border px-3 text-sm text-foreground hover:bg-muted disabled:opacity-50"
+                    />
+                  ) : null}
                   {card.stage === "chosen" && makingId ? (
                     <button
                       type="button"
@@ -4682,7 +4931,7 @@ function Composer({
                       onClick={() => onRelocate(makingId)}
                       className="h-9 rounded-md bg-primary px-3 text-sm text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
                     >
-                      Start making
+                      Start making now
                     </button>
                   ) : chosenId ? (
                     <button
@@ -4710,7 +4959,7 @@ function Composer({
         >
           <div
             className={`flex h-full flex-col bg-muted/20 ${slim ? "overflow-hidden rounded-xl border border-border bg-card" : "border-l border-border"}`}
-            style={{ width: measures.preview }}
+            style={{ width: PREVIEW_WANT }}
           >
           {slim ? (
             <div className="px-3 pt-3">
@@ -4879,7 +5128,21 @@ function Composer({
               ) : null}
           </div>
           {card.stage === "making" ? (
-            <div className="px-3 py-3">
+            <div className="space-y-3 px-3 py-3">
+              <StartScheduleButton
+                value={makeAt}
+                savedValue={toLocalInput(card.makeAt)}
+                busy={busy}
+                onChange={onMakeAt}
+                onSave={onSaveMake}
+                onClear={onClearMake}
+                className="h-10 w-full rounded-md border border-border text-sm text-foreground hover:bg-muted disabled:opacity-50"
+              />
+              {card.stage === "making" && makeLine(card.makeAt, "making") ? (
+                <p className={`text-xs ${makeTone(card.makeAt, "making") === "late" ? "text-destructive" : "text-muted-foreground"}`}>
+                  {makeLine(card.makeAt, "making")}
+                </p>
+              ) : null}
               <button
                 type="button"
                 disabled={busy || uploading || !format || readyDrop !== "move"}

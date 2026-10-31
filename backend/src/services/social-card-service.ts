@@ -173,6 +173,8 @@ export type SocialCard = {
   links: { id: string; url: string }[];
   sourceUrl: string | null;
   scheduledAt: string | null;
+  /** When to start making. Chosen or Making only. Not the publish time. */
+  makeAt: string | null;
   publishError: string | null;
   instagramUrl: string | null;
   visitCount: number;
@@ -204,6 +206,7 @@ export type UpdateSocialCardInput = {
   sourceUrl?: string | null;
   links?: { id: string; url: string }[];
   scheduledAt?: string | null;
+  makeAt?: string | null;
   postNow?: true;
   instagramUrl?: string;
   manualPosted?: true;
@@ -222,6 +225,7 @@ type SocialCardRow = {
   source_url: string | null;
   resource_links?: unknown;
   scheduled_at: string | null;
+  make_at?: string | null;
   publish_error?: string | null;
   publish_attempt_at?: string | null;
   instagram_url: string | null;
@@ -374,6 +378,7 @@ function toCard(row: SocialCardRow): SocialCard {
     links: readLinks(row),
     sourceUrl: row.source_url ?? readLinks(row)[0]?.url ?? null,
     scheduledAt: row.scheduled_at ?? null,
+    makeAt: row.make_at ?? null,
     publishError: row.publish_error ?? null,
     instagramUrl: row.instagram_url ?? null,
     visitCount: row.visit_count ?? 0,
@@ -762,7 +767,7 @@ export async function deleteSocialColumn(
   }
   const { error: moveError } = await adminClient()
     .from('social_cards')
-    .update({ stage: 'thoughts', column_id: null, scheduled_at: null })
+    .update({ stage: 'thoughts', column_id: null, scheduled_at: null, make_at: null })
     .eq('doctor_id', doctorId)
     .eq('column_id', id)
     .eq('stage', 'custom');
@@ -1152,6 +1157,22 @@ export async function updateSocialCard(
   }
   if (stageChange && stageChange !== 'ready') {
     patch.scheduled_at = null;
+  }
+  const nextStage = stageChange ?? current.stage;
+  const makingPlan = nextStage === 'chosen' || nextStage === 'making';
+  if (input.makeAt) {
+    if (!makingPlan) {
+      throw new ValidationError('A start time is for a Chosen or Making card');
+    }
+    patch.make_at = input.makeAt;
+  } else if (input.makeAt === null) {
+    patch.make_at = null;
+  }
+  if (stageChange === 'making' && current.stage === 'chosen') {
+    patch.make_at = null;
+  }
+  if (stageChange && !makingPlan) {
+    patch.make_at = null;
   }
 
   const data = await updateOwnedCard(id, doctorId, patch, correlationId);
