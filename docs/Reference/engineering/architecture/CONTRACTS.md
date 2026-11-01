@@ -763,6 +763,8 @@ The path is not logged and is not in the response.
   "sourceUrl": null,
   "scheduledAt": null,
   "makeAt": null,
+  "editorName": null,
+  "handoff": null,
   "publishError": null,
   "instagramUrl": null,
   "visitCount": 0,
@@ -802,6 +804,10 @@ The path is not logged and is not in the response.
 
 `makeAt` is an ISO time, or null. It is when to start making the card. PATCH may set it only while the card is Chosen or Making. Null clears it. Moving the card off Chosen and Making clears it. Starting a Chosen card, by moving it to Making, also clears it. A time set again on Making is when to work on that card. It is not the publish time, and storing it does not publish. The card stays in its column when the time arrives. On the day the tag reads start today. After the time passes it reads late, and a late or today card sorts to the top of Chosen. The Schedule shows the card on that day. If that day arrives and the card is still Chosen or Making, it stays there.
 
+`editorName` is a display name, or null. It is not a login. PATCH `{ editorName }` on a Making card sets `handoff` to `with_editor`. Null clears both. Any other column is refused. Moving the card off Making clears the name, the handoff, and that card’s review messages. The note is not copied. The name is not logged. `handoff` is `with_editor` or null.
+
+`GET /api/v1/social/cards/:id/turns` returns `{ turns }` for that doctor. `POST` body `{ text, atMs, endMs, scrapId }` adds one message and returns `{ turn }`. `text` is 1–500 characters. `atMs` is a moment on the file under review, in milliseconds, or omitted. `endMs` is the end of a stretch and must be later than `atMs`. `scrapId` points at one Resource already on that card. The message does not change the file that posts. The text is not logged. A card that has not been handed over is refused.
+
 `scheduledAt` is an ISO time, or null. PATCH may set it only when the card is Ready and has a file. Null clears it and leaves the card Ready. Storing the time does not publish. `postNow: true` sets the time to now, clears `publishError`, and starts sending that one card in the background. The response returns before Instagram answers; the client reads the card list until the card is Posted or has a `publishError`. `postNow` may come with `words`, which are saved first. A card the doctor will post, or one with music or a product tag, is refused. A card already being sent (claimed in the last 10 minutes with no error) is refused with 409. Setting a time gives the card one durable code if it does not have one. Clearing the time does not retire that code. A posted card keeps its time and stays on that day in Schedule, marked Posted. Deleting the card does.
 
 `pagePath` is `/d/:slug`, or `/d/:slug?c=` plus that card’s code once the code exists. It is null when the doctor has no public slug. It is not copied into the first comment. The code is not a separate response field and is not logged. Chat codes in `visit_page_links` still expire after one hour.
@@ -817,6 +823,32 @@ The path is not logged and is not in the response.
 `GET /api/v1/social/analytics?from&to` reads one doctor’s clinic numbers for an inclusive period of at most 90 days. `from` and `to` are `YYYY-MM-DD`. The response is counts, the doctor’s titles, the caption’s first line, and a short-lived picture address when a send kept one. Enquiries are new Instagram chats. Bookings are appointments from those chats, plus bookings from a card’s page link, each appointment once. A cancelled appointment is left out. Conversion is omitted when the period has no enquiries. A post’s own bookings are the link bookings for that card, plus a chat booking whose comment lead names that post, still one appointment once. Days follow the doctor’s timezone. The response has no patient, no phone, no appointment id, no comment, and no Instagram media id. When this account has granted insights, the same response adds `instagram.tiles` for views, reach, interactions, and followers gained, a `views` number on each day, and views, likes, comments, and saves on each post in the period. A missing measurement is null. An account that has not granted insights omits `instagram`. Those numbers are read from stored rows. Opening the tab does not call Instagram. `sentence` is one line computed from those same counts. `sentence.title` is set only when the line names a format or a topic. The line does not call a model, and it is not logged.
 
 List and create wrap the card as `{ cards }` and `{ card }`. Update returns `{ card }`.
+
+---
+
+## Dashboard counts
+
+`GET /api/v1/dashboard/counts`
+
+Auth: the signed-in doctor. The doctor id is that session. There is no query string and no body.
+
+Response `data`:
+
+```json
+{
+  "bookingReviewsUnconfirmed": 0,
+  "opdLive": 0,
+  "dashboardEventsUnread": 0
+}
+```
+
+`bookingReviewsUnconfirmed` is how many service-staff review requests for that doctor are still `pending`.
+
+`opdLive` is how many of today's queue rows are `waiting`, `called`, or `in_consultation`. Today is the clinic day in the doctor's timezone. A doctor with no saved timezone uses `Asia/Kolkata`.
+
+`dashboardEventsUnread` is how many dashboard events have no acknowledgement. The number is not capped at a page size.
+
+The header bell and the sidebar badges read this response. They poll every 30 seconds while the tab is visible.
 
 ---
 

@@ -1,11 +1,14 @@
 /**
- * In-process 5s poll for the two video-escalation durable jobs:
+ * Safety sweep for the two video-escalation durable jobs:
  * consent-window timeout and grant expiry (rec-22 / rec-27).
  *
- * The jobs themselves are DB-polling; this interval only *wakes* them.
- * A pod restart does not leave video recording — the next tick still
- * sees `grant_expires_at`. Concurrent HTTP `/cron/*` ticks are safe
- * (atomic stamps). Off in `NODE_ENV=test`.
+ * An in-process timer fires at the exact deadline. This sweep is the
+ * restart path: the first tick is 2s after boot, then every 60s, and it
+ * still sees `grant_expires_at` if the timer was lost. Concurrent HTTP
+ * `/cron/*` ticks are safe (atomic stamps).
+ *
+ * Unset `VIDEO_ESCALATION_WORKER_ENABLED` is on in production only, so a
+ * local dev server does not scan Supabase. POST /cron/video-* still runs.
  */
 
 import { env } from '../config/env';
@@ -13,7 +16,7 @@ import { logger } from '../config/logger';
 import { runVideoEscalationTimeoutJob } from './video-escalation-timeout-worker';
 import { runVideoGrantExpiryJob } from './video-grant-expiry-worker';
 
-const INTERVAL_MS = 5_000;
+const INTERVAL_MS = 60_000;
 
 export interface VideoEscalationPollHandle {
   stop: () => void;
@@ -21,11 +24,14 @@ export interface VideoEscalationPollHandle {
 }
 
 function isWorkerEnabled(): boolean {
-  return env.NODE_ENV !== 'test';
+  if (env.VIDEO_ESCALATION_WORKER_ENABLED === true) return true;
+  if (env.VIDEO_ESCALATION_WORKER_ENABLED === false) return false;
+  return env.NODE_ENV === 'production';
 }
 
 export function startVideoEscalationPollWorker(): VideoEscalationPollHandle {
   if (!isWorkerEnabled()) {
+    logger.info('video-escalation-poll: disabled by env');
     return {
       stop: () => undefined,
       runOnce: async () => undefined,

@@ -135,6 +135,7 @@ import {
 } from './recording-track-service';
 import { getCurrentRecordingMode } from './twilio-recording-rules';
 import { insertDashboardEvent } from './dashboard-events-service';
+import { scheduleVideoEscalationWake } from '../workers/video-escalation-wake';
 
 // ============================================================================
 // Public types
@@ -801,6 +802,8 @@ export async function requestVideoEscalation(
     'recording-escalation-service: escalation requested',
   );
 
+  scheduleVideoEscalationWake(`consent:${requestId}`, expiresAt);
+
   return { requestId, expiresAt, correlationId, attemptsUsed };
 }
 
@@ -1018,6 +1021,8 @@ async function startVideoGrantAfterAllow(args: {
           { ...rowCtx, error: stampErr.message, severity: 'critical' },
           'recording-escalation-service: grant expiry stamp failed after Twilio flip',
         );
+      } else {
+        scheduleVideoEscalationWake(`grant:${requestId}`, grantExpiresAt);
       }
       await emitVideoRecordingStarted(sessionId, correlationId);
       logger.info(
@@ -1397,8 +1402,11 @@ export async function extendVideoGrant(
     'recording-escalation-service: grant extended once',
   );
 
+  const grantExpiresAt = (updated.grant_expires_at as string) ?? nextExpiry;
+  scheduleVideoEscalationWake(`grant:${active.id}`, grantExpiresAt);
+
   return {
-    grantExpiresAt:  (updated.grant_expires_at as string) ?? nextExpiry,
+    grantExpiresAt,
     grantExtendedAt: (updated.grant_extended_at as string) ?? nowIso,
   };
 }

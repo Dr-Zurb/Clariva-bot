@@ -1,7 +1,8 @@
 /**
  * Wakes the scheduled Instagram send every minute.
  * The job itself reads due Ready cards. A restart still sees scheduled_at.
- * Off in NODE_ENV=test. Safe next to POST /cron/social-card-publish.
+ * Unset `SOCIAL_CARD_PUBLISH_WORKER_ENABLED` is on in production only.
+ * POST /cron/social-card-publish still runs the job.
  */
 
 import { env } from '../config/env';
@@ -15,11 +16,14 @@ export interface SocialCardPublishWorkerHandle {
 }
 
 function isWorkerEnabled(): boolean {
-  return env.NODE_ENV !== 'test';
+  if (env.SOCIAL_CARD_PUBLISH_WORKER_ENABLED === true) return true;
+  if (env.SOCIAL_CARD_PUBLISH_WORKER_ENABLED === false) return false;
+  return env.NODE_ENV === 'production';
 }
 
 export function startSocialCardPublishWorker(): SocialCardPublishWorkerHandle {
   if (!isWorkerEnabled()) {
+    logger.info('social card publish: disabled by env');
     return { stop: () => undefined };
   }
 
@@ -61,3 +65,5 @@ export function startSocialCardPublishWorker(): SocialCardPublishWorkerHandle {
     },
   };
 }
+
+export const __testInternals = { isWorkerEnabled };

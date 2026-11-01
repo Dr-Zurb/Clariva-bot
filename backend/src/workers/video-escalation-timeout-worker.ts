@@ -1,11 +1,11 @@
 /**
  * Video-escalation timeout worker (Plan 08 · Task 41).
  *
- * Polling worker (every 5s via Render Cron / equivalent) that closes
- * `video_escalation_audit` rows whose 60s patient-consent window has
- * elapsed without a response. Mirrors the `voice-transcription-worker`
- * shape — a single `runVideoEscalationTimeoutJob(correlationId)` export
- * hooked into `routes/cron.ts`.
+ * Closes `video_escalation_audit` rows whose 60s patient-consent window
+ * has elapsed without a response. An in-process timer calls this at the
+ * deadline. A 60s sweep (first tick 2s after boot) is the restart path.
+ * `runVideoEscalationTimeoutJob(correlationId)` is also hooked into
+ * `routes/cron.ts`.
  *
  * **Why DB-polling and not setTimeout:**
  *   · Pod crash / restart would lose an in-process timer; the audit row
@@ -15,8 +15,9 @@
  *     UPDATE uses `patient_response IS NULL` as a predicate so only one
  *     UPDATE actually lands. The other pod's `UPDATE` returns 0 rows
  *     and the tick is a no-op.
- *   · 5s polling fuzz (worst case 60–65s wall time) is acceptable for a
- *     60s policy. task-41 Notes #1 documents the trade-off.
+ *   · The in-process timer fires at the deadline. If that timer was lost,
+ *     the 60s sweep can land up to a minute late. task-41 Notes #1
+ *     documents the durability trade-off.
  *
  * **Race with a fast patient:**
  *   Patient clicks Allow at 59.5s; worker tick lands at 60.0s. The

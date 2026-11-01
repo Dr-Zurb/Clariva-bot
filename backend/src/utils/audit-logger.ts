@@ -18,6 +18,7 @@
  */
 
 import { getSupabaseAdminClient } from '../config/database';
+import { env } from '../config/env';
 import { logger } from '../config/logger';
 import { AuditLogStatus, InsertAuditLog } from '../types';
 import { InternalError } from './errors';
@@ -30,10 +31,16 @@ import { InternalError } from './errors';
 const MAX_QUEUE_SIZE = 10_000;
 /** Rows per PostgREST insert during a flush tick. */
 const BATCH_SIZE = 50;
+/**
+ * Production coalesces a burst into one insert. Tests and shutdown flush
+ * on the next turn so existing assertions and drainAuditLogQueue stay exact.
+ */
+const FLUSH_DELAY_MS = 2_000;
 
 const pendingQueue: InsertAuditLog[] = [];
 const backpressureWaiters: Array<() => void> = [];
 let flushScheduled = false;
+let flushTimer: ReturnType<typeof setTimeout> | null = null;
 let isProcessing = false;
 /** Set during graceful shutdown — disables backpressure cap and drains all pending rows. */
 let isDraining = false;
@@ -52,13 +59,32 @@ async function waitForQueueSpace(): Promise<void> {
   }
 }
 
-function scheduleFlush(): void {
+function flushNow(): void {
+  if (flushTimer) {
+    clearTimeout(flushTimer);
+    flushTimer = null;
+  }
   if (flushScheduled) return;
   flushScheduled = true;
   setImmediate(() => {
     flushScheduled = false;
     void processQueue();
   });
+}
+
+function scheduleFlush(): void {
+  if (isDraining || env.NODE_ENV === 'test') {
+    flushNow();
+    return;
+  }
+  if (flushTimer || flushScheduled) return;
+  flushTimer = setTimeout(() => {
+    flushTimer = null;
+    flushNow();
+  }, FLUSH_DELAY_MS);
+  if (typeof flushTimer.unref === 'function') {
+    flushTimer.unref();
+  }
 }
 
 async function insertBatch(batch: InsertAuditLog[]): Promise<void> {
@@ -132,6 +158,10 @@ export function getPendingAuditLogCountForTests(): number {
 
 /** @internal Reset queue state between tests. */
 export function resetAuditLogQueueForTests(): void {
+  if (flushTimer) {
+    clearTimeout(flushTimer);
+    flushTimer = null;
+  }
   pendingQueue.length = 0;
   backpressureWaiters.length = 0;
   flushScheduled = false;

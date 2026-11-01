@@ -851,6 +851,42 @@ const envSchema = z.object({
     }),
 
   /**
+   * Video consent-timeout and grant-expiry wake. Unset → on in production
+   * only. Local `npm run dev` does not scan Supabase every few seconds
+   * unless this is `true`. POST /cron/video-* still runs the jobs.
+   */
+  VIDEO_ESCALATION_WORKER_ENABLED: z
+    .string()
+    .optional()
+    .transform((v) => {
+      if (v === undefined || v === '') return undefined;
+      return v === 'true' || v === '1';
+    }),
+
+  /**
+   * Scheduled Instagram card send. Unset → on in production only.
+   * POST /cron/social-card-publish still runs the job.
+   */
+  SOCIAL_CARD_PUBLISH_WORKER_ENABLED: z
+    .string()
+    .optional()
+    .transform((v) => {
+      if (v === undefined || v === '') return undefined;
+      return v === 'true' || v === '1';
+    }),
+
+  /**
+   * Hourly Instagram insights pull. Unset → on in production only.
+   */
+  SOCIAL_INSIGHTS_WORKER_ENABLED: z
+    .string()
+    .optional()
+    .transform((v) => {
+      if (v === undefined || v === '') return undefined;
+      return v === 'true' || v === '1';
+    }),
+
+  /**
    * Patient seeing flow · pf-17 § Wrap-up sweep (P-Q2). When `true`, the
    * same worker tick that scans for auto-no-show candidates also sweeps
    * appointments stuck in the "consult ended but doctor never opened the

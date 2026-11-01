@@ -5,7 +5,8 @@
  * inside it: the consent-window job only stamps a pending row; this
  * job flips Twilio back to audio-only. Mixing those failure modes in
  * one loop would hide a critical revert failure inside a timeout
- * counter. Same 5s cron shape, same atomic-UPDATE race doctrine.
+ * counter. Same deadline timer and 60s sweep, same atomic-UPDATE race
+ * doctrine.
  *
  * **Why DB-polling and not setTimeout:** a lost in-memory timer keeps
  * recording video. The service header already rejected that idea for

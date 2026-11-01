@@ -498,7 +498,7 @@ let opdModeNotificationsWorker: OpdModeNotificationsWorkerHandle | null = null;
 let opdOverrunWorker: OpdOverrunWorkerHandle | null = null;
 // Previsit ladder (T−24h / T−30 / T−15 / T−5) — on in prod; opt-in locally
 let previsitNotifyWorker: PrevisitNotifyWorkerHandle | null = null;
-// rec-22 / rec-27 — 5s wake for consent timeout + grant expiry
+// rec-22 / rec-27 — deadline timers plus a 60s sweep. Off outside production.
 let videoEscalationPollWorker: VideoEscalationPollHandle | null = null;
 // Sends a Ready card when its time has arrived. Off in test.
 let socialCardPublishWorker: SocialCardPublishWorkerHandle | null = null;

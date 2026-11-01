@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, jest } from '@jest/globals';
 
-const mockEnv: { NODE_ENV: 'development' | 'production' | 'test' } = {
+const mockEnv: {
+  NODE_ENV: 'development' | 'production' | 'test';
+  VIDEO_ESCALATION_WORKER_ENABLED?: boolean;
+} = {
   NODE_ENV: 'test',
 };
 
@@ -29,12 +32,13 @@ import {
 
 afterEach(() => {
   mockEnv.NODE_ENV = 'test';
+  delete mockEnv.VIDEO_ESCALATION_WORKER_ENABLED;
   mockTimeout.mockReset();
   mockGrant.mockReset();
 });
 
 describe('video-escalation-poll-cron', () => {
-  it('stays off in test so Jest does not open a 5s interval', async () => {
+  it('stays off in test so Jest does not open an interval', async () => {
     expect(__testInternals.isWorkerEnabled()).toBe(false);
     const handle = startVideoEscalationPollWorker();
     await handle.runOnce('test');
@@ -43,8 +47,17 @@ describe('video-escalation-poll-cron', () => {
     handle.stop();
   });
 
-  it('ticks both jobs on runOnce when enabled', async () => {
+  it('stays off in development unless the flag is set', async () => {
     mockEnv.NODE_ENV = 'development';
+    expect(__testInternals.isWorkerEnabled()).toBe(false);
+    const handle = startVideoEscalationPollWorker();
+    await handle.runOnce('local');
+    expect(mockTimeout).not.toHaveBeenCalled();
+    handle.stop();
+  });
+
+  it('ticks both jobs on runOnce in production', async () => {
+    mockEnv.NODE_ENV = 'production';
     mockTimeout.mockResolvedValue({ scanned: 0 });
     mockGrant.mockResolvedValue({ scanned: 0 });
     const handle = startVideoEscalationPollWorker();
@@ -54,7 +67,7 @@ describe('video-escalation-poll-cron', () => {
     expect(mockGrant).toHaveBeenCalledWith('once-grant');
   });
 
-  it('ticks every 5 seconds', () => {
-    expect(__testInternals.INTERVAL_MS).toBe(5_000);
+  it('sweeps every 60 seconds', () => {
+    expect(__testInternals.INTERVAL_MS).toBe(60_000);
   });
 });

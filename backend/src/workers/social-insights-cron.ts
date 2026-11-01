@@ -1,6 +1,7 @@
 /**
  * Refreshes stored Instagram numbers once an hour.
- * Off in NODE_ENV=test. The Analytics tab does not call Instagram itself.
+ * Unset `SOCIAL_INSIGHTS_WORKER_ENABLED` is on in production only.
+ * The Analytics tab does not call Instagram itself.
  */
 
 import { env } from '../config/env';
@@ -15,11 +16,14 @@ export interface SocialInsightsWorkerHandle {
 }
 
 function isWorkerEnabled(): boolean {
-  return env.NODE_ENV !== 'test';
+  if (env.SOCIAL_INSIGHTS_WORKER_ENABLED === true) return true;
+  if (env.SOCIAL_INSIGHTS_WORKER_ENABLED === false) return false;
+  return env.NODE_ENV === 'production';
 }
 
 export function startSocialInsightsWorker(): SocialInsightsWorkerHandle {
   if (!isWorkerEnabled()) {
+    logger.info('social insights: disabled by env');
     return { stop: () => undefined };
   }
 
@@ -58,3 +62,5 @@ export function startSocialInsightsWorker(): SocialInsightsWorkerHandle {
     },
   };
 }
+
+export const __testInternals = { isWorkerEnabled };
