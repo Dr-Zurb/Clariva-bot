@@ -15,6 +15,9 @@ jest.mock('../../../src/utils/audit-logger', () => ({
   logDataAccess: jest.fn().mockResolvedValue(undefined as never),
   logDataModification: jest.fn().mockResolvedValue(undefined as never),
 }));
+jest.mock('../../../src/services/doctor-settings-service', () => ({
+  getDoctorTimezone: jest.fn().mockResolvedValue('Asia/Kolkata' as never),
+}));
 
 import * as database from '../../../src/config/database';
 import { logDataModification } from '../../../src/utils/audit-logger';
@@ -31,6 +34,7 @@ import {
   removeSocialCardFile,
   reuseSocialCard,
   updateSocialCard,
+  addSocialCardTurn,
   createSocialColumn,
   renameSocialColumn,
   deleteSocialColumn,
@@ -125,6 +129,8 @@ describe('social cards', () => {
         sourceUrl: null,
         scheduledAt: null,
         makeAt: null,
+        editorName: null,
+        handoff: null,
         publishError: null,
         instagramUrl: null,
         visitCount: 0,
@@ -454,6 +460,130 @@ describe('social cards', () => {
     expect(started.stage).toBe('making');
     expect(started.makeAt).toBeNull();
     expect(chain.update).toHaveBeenCalledWith({ stage: 'making', scheduled_at: null, make_at: null });
+  });
+
+  it('hands a Making card to a name and keeps the note off the handoff', async () => {
+    const note = 'Priya, the patient in room two';
+    const making = { ...row, stage: 'making' as const, words: { note } };
+    const handed = { ...making, editor_name: 'Priya', handoff: 'with_editor' };
+    const chain = writeChain({ data: null, error: null });
+    chain.maybeSingle
+      .mockResolvedValueOnce({ data: making, error: null } as never)
+      .mockResolvedValueOnce({ data: handed, error: null } as never)
+      .mockResolvedValueOnce({ data: null, error: null } as never);
+    mockedDb.getSupabaseAdminClient.mockReturnValue({
+      from: jest.fn(() => chain),
+    } as never);
+
+    const saved = await updateSocialCard(row.id, { editorName: 'Priya' }, correlationId, doctorId);
+    expect(saved.editorName).toBe('Priya');
+    expect(saved.handoff).toBe('with_editor');
+    expect(saved.words).toEqual({ note });
+    expect(chain.update).toHaveBeenLastCalledWith({ editor_name: 'Priya', handoff: 'with_editor' });
+    expect(JSON.stringify(chain.update.mock.calls)).not.toContain('note');
+    expect(JSON.stringify(mockedAudit.mock.calls)).not.toContain('Priya');
+
+    await expect(
+      updateSocialCard(row.id, { editorName: 'Priya' }, correlationId, otherDoctorId)
+    ).rejects.toBeInstanceOf(NotFoundError);
+    expect(chain.eq).toHaveBeenCalledWith('doctor_id', otherDoctorId);
+  });
+
+  it('clears the handoff when the card leaves Making', async () => {
+    const making = {
+      ...row,
+      stage: 'making' as const,
+      file_path: `${doctorId}/file.jpg`,
+      editor_name: 'Priya',
+      handoff: 'with_editor',
+      words: { note: 'kept' },
+    };
+    const ready = { ...making, stage: 'ready' as const, editor_name: null, handoff: null };
+    const cards = writeChain({ data: null, error: null });
+    cards.maybeSingle
+      .mockResolvedValueOnce({ data: making, error: null } as never)
+      .mockResolvedValueOnce({ data: ready, error: null } as never);
+    const turns = {
+      delete: jest.fn(),
+      eq: jest.fn(),
+      then(onFulfilled: (value: { error: null }) => unknown) {
+        return Promise.resolve(onFulfilled({ error: null }));
+      },
+    };
+    turns.delete.mockReturnValue(turns);
+    turns.eq.mockReturnValue(turns);
+    mockedDb.getSupabaseAdminClient.mockReturnValue({
+      from: jest.fn((table: string) => (table === 'social_card_turns' ? turns : cards)),
+    } as never);
+
+    const moved = await updateSocialCard(row.id, { stage: 'ready' }, correlationId, doctorId);
+    expect(moved.editorName).toBeNull();
+    expect(moved.handoff).toBeNull();
+    expect(moved.words).toEqual({ note: 'kept' });
+    expect(cards.update).toHaveBeenLastCalledWith({
+      stage: 'ready',
+      make_at: null,
+      editor_name: null,
+      handoff: null,
+    });
+    expect(turns.delete).toHaveBeenCalled();
+    expect(JSON.stringify(mockedAudit.mock.calls)).not.toContain('Priya');
+  });
+
+  it('saves a stretch on the handed card and refuses another card file', async () => {
+    const making = { ...row, stage: 'making' as const, handoff: 'with_editor', editor_name: 'Priya' };
+    const scrapId = '22222222-2222-4222-8222-222222222222';
+    const cards = writeChain({ data: null, error: null });
+    const scraps = writeChain({ data: null, error: null });
+    const turns = writeChain({ data: null, error: null });
+    cards.maybeSingle.mockResolvedValue({ data: making, error: null } as never);
+    scraps.maybeSingle
+      .mockResolvedValueOnce({ data: { id: scrapId }, error: null } as never)
+      .mockResolvedValueOnce({ data: null, error: null } as never);
+    const saved = {
+      id: '33333333-3333-4333-8333-333333333333',
+      body: 'Shorten this',
+      at_ms: 3000,
+      end_ms: 8000,
+      scrap_id: scrapId,
+      created_at: '2026-10-31T00:00:00.000Z',
+    };
+    turns.single.mockResolvedValue({ data: saved, error: null } as never);
+    mockedDb.getSupabaseAdminClient.mockReturnValue({
+      from: jest.fn((table: string) => {
+        if (table === 'social_card_turns') return turns;
+        if (table === 'social_card_scraps') return scraps;
+        return cards;
+      }),
+    } as never);
+
+    const turn = await addSocialCardTurn(
+      row.id,
+      { text: 'Shorten this', atMs: 3000, endMs: 8000, scrapId },
+      correlationId,
+      doctorId
+    );
+    expect(turn).toEqual({
+      id: saved.id,
+      text: 'Shorten this',
+      atMs: 3000,
+      endMs: 8000,
+      scrapId,
+      createdAt: saved.created_at,
+    });
+    expect(turns.insert).toHaveBeenCalledWith({
+      doctor_id: doctorId,
+      card_id: row.id,
+      body: 'Shorten this',
+      at_ms: 3000,
+      end_ms: 8000,
+      scrap_id: scrapId,
+    });
+    expect(JSON.stringify(mockedAudit.mock.calls)).not.toContain('Shorten this');
+
+    await expect(
+      addSocialCardTurn(row.id, { text: 'Add this', scrapId }, correlationId, doctorId)
+    ).rejects.toBeInstanceOf(ValidationError);
   });
 
   it('keeps a card code the next day and still expires a chat code', async () => {

@@ -27,6 +27,8 @@ import {
   purgeSocialCard,
   restoreSocialCard,
   updateSocialCard,
+  listSocialCardTurns,
+  addSocialCardTurn,
   listSocialColumns,
   deleteSocialColumn,
   type SocialAnalyticsPost,
@@ -65,6 +67,8 @@ vi.mock("../social-cards", async () => {
   moveSocialCard: vi.fn(),
   moveSocialCardToColumn: vi.fn(),
   updateSocialCard: vi.fn(),
+  listSocialCardTurns: vi.fn(),
+  addSocialCardTurn: vi.fn(),
   addSocialCardScrap: vi.fn(),
   attachSocialCardFile: vi.fn(),
   removeSocialCardFile: vi.fn(),
@@ -114,6 +118,8 @@ const attachMock = vi.mocked(attachSocialCardFile);
 const scrapUrlMock = vi.mocked(getSocialCardScrapUrl);
 const moveMock = vi.mocked(moveSocialCard);
 const updateMock = vi.mocked(updateSocialCard);
+const turnsMock = vi.mocked(listSocialCardTurns);
+const addTurnMock = vi.mocked(addSocialCardTurn);
 const reuseMock = vi.mocked(reuseSocialCard);
 const deleteCardMock = vi.mocked(deleteSocialCard);
 const listBinMock = vi.mocked(listSocialBin);
@@ -179,6 +185,8 @@ function card(
     sourceUrl: null,
     scheduledAt: null,
     makeAt: null,
+    editorName: null,
+    handoff: null,
     publishError: null,
     instagramUrl: null,
     visitCount: 0,
@@ -222,6 +230,9 @@ describe("Social shell", () => {
     attachMock.mockReset();
     moveMock.mockReset();
     updateMock.mockReset();
+    turnsMock.mockReset();
+    addTurnMock.mockReset();
+    turnsMock.mockResolvedValue([]);
     reuseMock.mockReset();
     deleteCardMock.mockReset();
     listColumnsMock.mockReset();
@@ -1321,6 +1332,112 @@ describe("Social shell", () => {
     expect(thoughts).not.toHaveTextContent("Beta");
     expect(thoughts).toHaveTextContent("1");
     expect(making).toHaveTextContent("Gamma");
+  });
+
+  it("hands a Making card to a name without closing the sheet", async () => {
+    listMock.mockResolvedValue([
+      card({
+        id: "9",
+        title: "Fever reel",
+        stage: "making",
+        format: "reel",
+        hasFile: true,
+        fileKind: "video",
+        postable: true,
+      }),
+    ]);
+    updateMock.mockImplementation(async (_token, _id, patch) =>
+      card({
+        id: "9",
+        title: "Fever reel",
+        stage: "making",
+        format: "reel",
+        hasFile: true,
+        fileKind: "video",
+        postable: true,
+        editorName: typeof patch.editorName === "string" ? patch.editorName : null,
+        handoff: patch.editorName ? "with_editor" : null,
+      })
+    );
+
+    render(<SocialClient token="token" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Fever reel" }));
+    fireEvent.click(screen.getByRole("button", { name: "Hand to editor" }));
+    fireEvent.change(screen.getByLabelText("Editor name"), { target: { value: "Priya" } });
+    fireEvent.click(screen.getByRole("button", { name: "Hand to editor" }));
+
+    await waitFor(() => {
+      expect(updateMock).toHaveBeenCalledWith("token", "9", { editorName: "Priya" });
+    });
+    expect(await screen.findByRole("button", { name: "Review" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByLabelText("Instruction")).toBeInTheDocument();
+  });
+
+  it("shows who has a Making card and can hide the others", async () => {
+    listMock.mockResolvedValue([
+      card({ id: "1", title: "Mine", stage: "making" }),
+      card({ id: "2", title: "Fever reel", stage: "making", editorName: "Priya", handoff: "with_editor" }),
+      card({ id: "3", title: "Thought", stage: "thoughts", editorName: "Priya", handoff: "with_editor" }),
+    ]);
+
+    render(<SocialClient token="token" />);
+    const making = await screen.findByRole("region", { name: "Making" });
+    const ideas = screen.getByRole("region", { name: "Ideas" });
+    expect(making).toHaveTextContent("With Priya");
+    expect(ideas).not.toHaveTextContent("With Priya");
+
+    fireEvent.click(screen.getByRole("button", { name: "Column menu for Making" }));
+    fireEvent.change(screen.getByLabelText("Tags for Making"), { target: { value: "handoff" } });
+    expect(making).toHaveTextContent("Fever reel");
+    expect(making).not.toHaveTextContent("Mine");
+  });
+
+  it("opens Review after a handoff and sends an instruction about a Resource", async () => {
+    listMock.mockResolvedValue([
+      card({
+        id: "9",
+        title: "Fever reel",
+        stage: "making",
+        format: "reel",
+        hasFile: true,
+        fileKind: "video",
+        postable: true,
+        editorName: "Priya",
+        handoff: "with_editor",
+        scraps: [{ id: "scrap-1", fileKind: "video", postable: true }],
+      }),
+    ]);
+    addTurnMock.mockResolvedValue({
+      id: "turn-1",
+      text: "Shorten this",
+      atMs: 3000,
+      endMs: 8000,
+      scrapId: "scrap-1",
+      createdAt: "2026-10-31T00:00:00.000Z",
+    });
+
+    render(<SocialClient token="token" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Fever reel" }));
+    expect(await screen.findByRole("button", { name: "Review" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByRole("button", { name: "Take 1" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Draft" }));
+    expect(screen.queryByRole("button", { name: "Hand to editor" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Review" }));
+    fireEvent.change(screen.getByLabelText("Instruction"), { target: { value: "Shorten this" } });
+    fireEvent.change(screen.getByLabelText("From Resources"), { target: { value: "scrap-1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => {
+      expect(addTurnMock).toHaveBeenCalledWith("token", "9", {
+        text: "Shorten this",
+        atMs: null,
+        endMs: null,
+        scrapId: "scrap-1",
+      });
+    });
+    expect(screen.getByText("Shorten this")).toBeInTheDocument();
+    expect(screen.getAllByText("From Resources").length).toBeGreaterThan(0);
   });
 
   it("sorts a column by latest and by title, and starts again on Latest", async () => {

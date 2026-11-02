@@ -8,7 +8,7 @@ A Making card can be handed to a person the doctor names. That is a state on the
 **Batch:** [`plan-p12-social-assist-review-batch.md`](../plan-p12-social-assist-review-batch.md)
 **Execution order:** [`EXECUTION-ORDER-p12-social-assist-review.md`](./EXECUTION-ORDER-p12-social-assist-review.md)
 **Estimated Time:** 4 hours
-**Status:** ⏳ **PENDING**
+**Status:** ✅ **COMPLETED** — **Completed: 2026-10-31**
 
 **Change Type:**
 - [x] **New feature** — the card has no handoff today
@@ -32,31 +32,31 @@ A Making card can be handed to a person the doctor names. That is a state on the
 
 ## 🌍 Global Safety Gate
 
-- [ ] **Data touched?** Y — a name and a state on the doctor’s card. Not a patient row.
-- [ ] **RLS verified?** Y — required. Same owner rule as `social_cards`. Another doctor cannot read the row.
-- [ ] **Any PHI in logs?** No — do not log the name
-- [ ] **External API or AI call?** N
-- [ ] **Retention / deletion impact?** Y — leaving Making clears the handoff. Deleting the card deletes it. Follow the neighbouring `doctor_id` delete.
+- [x] ✅ **Data touched?** Y — a name and a state on the doctor’s card. Not a patient row.
+- [x] ✅ **RLS verified?** Y — required. Same owner rule as `social_cards`. Another doctor cannot read the row.
+- [x] ✅ **Any PHI in logs?** No — do not log the name
+- [x] ✅ **External API or AI call?** N
+- [x] ✅ **Retention / deletion impact?** Y — leaving Making clears the handoff. Deleting the card deletes it. Follow the neighbouring `doctor_id` delete.
 
 ---
 
 ## ✅ Task Breakdown
 
 ### 1. Record
-- [ ] 1.1 Read social-card migrations in numeric order before adding the next one
-- [ ] 1.2 A Making card can store a display name and the state “with the editor”. No patient columns. No login id.
-- [ ] 1.3 The note is not written onto the handoff
-- [ ] 1.4 Doctor-only access. Another doctor cannot select it
+- [x] ✅ 1.1 Read social-card migrations in numeric order before adding the next one
+- [x] ✅ 1.2 A Making card can store a display name and the state “with the editor”. No patient columns. No login id.
+- [x] ✅ 1.3 The note is not written onto the handoff
+- [x] ✅ 1.4 Doctor-only access. Another doctor cannot select it
 
 ### 2. Rules
-- [ ] 2.1 Handing over is refused unless the card is in Making
-- [ ] 2.2 Moving the card off Making clears the name and the state
-- [ ] 2.3 The name and the state are not logged
+- [x] ✅ 2.1 Handing over is refused unless the card is in Making
+- [x] ✅ 2.2 Moving the card off Making clears the name and the state
+- [x] ✅ 2.3 The name and the state are not logged
 
 ### 3. Verification
-- [ ] 3.1 A test hands a Making card over and reads the name back for that doctor only
-- [ ] 3.2 A test shows the note is unchanged and is not a field of the handoff
-- [ ] 3.3 A test moves the card to Ready and shows the handoff is gone
+- [x] ✅ 3.1 A test hands a Making card over and reads the name back for that doctor only
+- [x] ✅ 3.2 A test shows the note is unchanged and is not a field of the handoff
+- [x] ✅ 3.3 A test moves the card to Ready and shows the handoff is gone
 
 ---
 
@@ -80,4 +80,4 @@ A Making card can be handed to a person the doctor names. That is a state on the
 ---
 
 **Last Updated:** 2026-10-31
-**Status:** ⏳ PENDING
+**Status:** ✅ COMPLETED — 2026-10-31

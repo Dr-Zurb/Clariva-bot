@@ -8,7 +8,7 @@ A Making card that has been handed over shows who has it. That column can show o
 **Batch:** [`plan-p12-social-assist-review-batch.md`](../plan-p12-social-assist-review-batch.md)
 **Execution order:** [`EXECUTION-ORDER-p12-social-assist-review.md`](./EXECUTION-ORDER-p12-social-assist-review.md)
 **Estimated Time:** 2 hours
-**Status:** ⏳ **PENDING**
+**Status:** ✅ **COMPLETED** — **Completed: 2026-10-31**
 
 **Change Type:**
 - [x] **Update existing** — Making cards already show a topic, a file, and a link
@@ -30,29 +30,29 @@ A Making card that has been handed over shows who has it. That column can show o
 
 ## 🌍 Global Safety Gate
 
-- [ ] **Data touched?** N — reads the handoff `soc-31` already returns
-- [ ] **RLS verified?** Y — no new policy
-- [ ] **Any PHI in logs?** No
-- [ ] **External API or AI call?** N
-- [ ] **Retention / deletion impact?** N
+- [x] ✅ **Data touched?** N — reads the handoff `soc-31` already returns
+- [x] ✅ **RLS verified?** Y — no new policy
+- [x] ✅ **Any PHI in logs?** No
+- [x] ✅ **External API or AI call?** N
+- [x] ✅ **Retention / deletion impact?** N
 
 ---
 
 ## ✅ Task Breakdown
 
 ### 1. Mark
-- [ ] 1.1 A handed Making card shows “With” and the name
-- [ ] 1.2 A Making card that has not been handed over shows no such mark
-- [ ] 1.3 Ideas, Chosen, and Ready do not show it
+- [x] ✅ 1.1 A handed Making card shows “With” and the name
+- [x] ✅ 1.2 A Making card that has not been handed over shows no such mark
+- [x] ✅ 1.3 Ideas, Chosen, and Ready do not show it
 
 ### 2. Filter
-- [ ] 2.1 Making can be limited to cards that have been handed over
-- [ ] 2.2 Clearing that limit shows the column as it did before
-- [ ] 2.3 The filter lasts for the sitting, the same way the topic filter does
+- [x] ✅ 2.1 Making can be limited to cards that have been handed over
+- [x] ✅ 2.2 Clearing that limit shows the column as it did before
+- [x] ✅ 2.3 The filter lasts for the sitting, the same way the topic filter does
 
 ### 3. Verification
-- [ ] 3.1 A test renders the name on a handed Making card and not on a thought
-- [ ] 3.2 A test shows the filter hides a Making card that was not handed over
+- [x] ✅ 3.1 A test renders the name on a handed Making card and not on a thought
+- [x] ✅ 3.2 A test shows the filter hides a Making card that was not handed over
 
 ---
 
@@ -71,4 +71,4 @@ A Making card that has been handed over shows who has it. That column can show o
 ---
 
 **Last Updated:** 2026-10-31
-**Status:** ⏳ PENDING
+**Status:** ✅ COMPLETED — 2026-10-31

@@ -1,6 +1,6 @@
 import {
   getAppointments,
-  getDashboardEvents,
+  getDashboardCounts,
   getDoctorOpdQueueSession,
   getDoctorSettings,
   getBookingFunnelOverview,
@@ -8,7 +8,6 @@ import {
   getPracticeHealthOverview,
   getTelehealthQualityOverview,
   getPrescriptionsForPatient,
-  getServiceStaffReviews,
   getPatientMedicalBackground,
   listPatientAllergies,
   listPatientConditions,
@@ -20,41 +19,11 @@ import type {
 } from "@/types/patient-chart";
 import { getPatientOverview } from "@/lib/api/patients";
 import { listVitalsHistory } from "@/lib/api/patient-chart";
-import { requireApiBaseUrl } from "@/lib/api-base";
 import { queryKeys } from "@/lib/query/keys";
 import { POLL_INTERVAL, pollingOptions } from "@/lib/query/polling";
 import { STALE } from "@/lib/query/stale";
 
 const VITALS_FETCH_LIMIT = 500;
-
-export const DASHBOARD_EVENTS_FILTERS = {
-  unreadOnly: true,
-  limit: 100,
-} as const;
-
-async function fetchRxSentTodayCount(token: string): Promise<number> {
-  const todayStart = new Date();
-  todayStart.setHours(0, 0, 0, 0);
-
-  const params = new URLSearchParams({ date_from: todayStart.toISOString() });
-  const res = await fetch(
-    `${requireApiBaseUrl()}/api/v1/prescriptions?${params.toString()}`,
-    {
-      headers: { Authorization: `Bearer ${token}` },
-      cache: "no-store",
-    },
-  );
-  if (!res.ok) throw new Error(`Prescriptions fetch failed: ${res.status}`);
-  const json = (await res.json()) as {
-    prescriptions?: Array<{ created_at: string; status?: string }>;
-  };
-  const prescriptions = json.prescriptions ?? [];
-
-  return prescriptions.filter((rx) => {
-    const created = new Date(rx.created_at);
-    return created >= todayStart && rx.status === "sent";
-  }).length;
-}
 
 export function patientOverviewQueryOptions(token: string, patientId: string) {
   return {
@@ -158,43 +127,22 @@ export function patientPrescriptionsQueryOptions(token: string, patientId: strin
   } as const;
 }
 
-export function appointmentsQueryOptions(token: string) {
+/** One clinic day. Callers that only render today must not pull the full history. */
+export function appointmentsQueryOptions(token: string, date: string) {
   return {
-    queryKey: queryKeys.dashboard.appointments(),
-    queryFn: () => getAppointments(token),
+    queryKey: queryKeys.dashboard.appointments(date),
+    queryFn: () => getAppointments(token, date),
     staleTime: STALE.COUNTS,
     ...pollingOptions(POLL_INTERVAL.COCKPIT),
   } as const;
 }
 
-export function rxSentTodayQueryOptions(token: string) {
+export function dashboardCountsQueryOptions(token: string) {
   return {
-    queryKey: queryKeys.dashboard.rxSentToday(),
-    queryFn: () => fetchRxSentTodayCount(token),
-    staleTime: STALE.COUNTS,
-    ...pollingOptions(POLL_INTERVAL.COCKPIT),
-  } as const;
-}
-
-export function pendingReviewsCountQueryOptions(token: string) {
-  return {
-    queryKey: queryKeys.dashboard.pendingReviews(),
+    queryKey: queryKeys.dashboard.counts(),
     queryFn: async () => {
-      const res = await getServiceStaffReviews(token, "pending");
-      return res.data.reviews.length;
-    },
-    staleTime: STALE.COUNTS,
-    ...pollingOptions(POLL_INTERVAL.COUNTS),
-  } as const;
-}
-
-export function dashboardEventsUnreadCountQueryOptions(token: string) {
-  return {
-    queryKey: queryKeys.dashboard.events(DASHBOARD_EVENTS_FILTERS),
-    queryFn: async () => {
-      const res = await getDashboardEvents(token, DASHBOARD_EVENTS_FILTERS);
-      return res.data.events.filter((event) => event.acknowledgedAt === null)
-        .length;
+      const res = await getDashboardCounts(token);
+      return res.data;
     },
     staleTime: STALE.COUNTS,
     ...pollingOptions(POLL_INTERVAL.COUNTS),

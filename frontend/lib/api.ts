@@ -191,12 +191,18 @@ async function request<T>(
 }
 
 /**
- * Fetch list of appointments for the current doctor. Requires auth token.
+ * Fetch appointments for the current doctor. Requires auth token.
+ * Pass `date` (YYYY-MM-DD) so the server returns that clinic day only.
  */
 export async function getAppointments(
-  token: string
+  token: string,
+  date?: string
 ): Promise<ApiSuccess<AppointmentsListData>> {
-  return request<AppointmentsListData>("/api/v1/appointments", { token });
+  const path =
+    date && date.length > 0
+      ? `/api/v1/appointments?date=${encodeURIComponent(date)}`
+      : "/api/v1/appointments";
+  return request<AppointmentsListData>(path, { token });
 }
 
 /** Per-patient appointment list (pr-11). Uses `?patient_id=` on the list endpoint. */
@@ -6325,6 +6331,18 @@ export interface GetDashboardEventsOptions {
   unreadOnly?: boolean;
   limit?: number;
   cursor?: string;
+}
+
+export interface DashboardCountsData {
+  bookingReviewsUnconfirmed: number;
+  opdLive: number;
+  dashboardEventsUnread: number;
+}
+
+export async function getDashboardCounts(
+  token: string,
+): Promise<ApiSuccess<DashboardCountsData>> {
+  return request<DashboardCountsData>("/api/v1/dashboard/counts", { token });
 }
 
 export async function getDashboardEvents(

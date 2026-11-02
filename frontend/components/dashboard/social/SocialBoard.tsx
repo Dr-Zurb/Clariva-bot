@@ -158,7 +158,7 @@ const FORMAT_TAGS: readonly { id: SocialCardFormat; label: string }[] = [
   { id: "story", label: "Story" },
 ];
 
-function columnTagOptions(cards: readonly SocialCard[]): { value: string; label: string }[] {
+function columnTagOptions(cards: readonly SocialCard[], making = false): { value: string; label: string }[] {
   const topics = Array.from(
     new Set(
       cards
@@ -169,12 +169,14 @@ function columnTagOptions(cards: readonly SocialCard[]): { value: string; label:
   const formats = FORMAT_TAGS.filter((format) => cards.some((card) => card.format === format.id));
   return [
     { value: "all", label: "All" },
+    ...(making ? [{ value: "handoff", label: "With editor" }] : []),
     ...topics.map((topic) => ({ value: `topic:${topic}`, label: topic })),
     ...formats.map((format) => ({ value: `format:${format.id}`, label: format.label })),
   ];
 }
 
 function matchesTag(card: SocialCard, tag: string): boolean {
+  if (tag === "handoff") return card.handoff === "with_editor";
   if (tag.startsWith("topic:")) return card.topic?.trim() === tag.slice("topic:".length);
   if (tag.startsWith("format:")) return card.format === tag.slice("format:".length);
   return true;
@@ -659,6 +661,8 @@ function placedCard(card: SocialCard, kind: BoardColumn["kind"]): SocialCard {
     hasFile: card.hasFile,
     scheduledAt: kind === "ready" ? card.scheduledAt : null,
     makeAt: card.stage === "chosen" && kind === "making" ? null : kind === "chosen" || kind === "making" ? card.makeAt : null,
+    editorName: kind === "making" ? card.editorName : null,
+    handoff: kind === "making" ? card.handoff : null,
   };
 }
 
@@ -698,6 +702,8 @@ function pendingMadeCard(id: string): SocialCard {
     sourceUrl: null,
     scheduledAt: null,
     makeAt: null,
+    editorName: null,
+    handoff: null,
     publishError: null,
     instagramUrl: null,
     visitCount: 0,
@@ -937,7 +943,7 @@ function CardFace({
 }
 
 function CardMarks({ card }: { card: SocialCard }): JSX.Element | null {
-  if (!card.topic && !card.hasFile && !card.sourceUrl) return null;
+  if (!card.topic && !card.hasFile && !card.sourceUrl && !(card.stage === "making" && card.editorName)) return null;
   return (
     <div className="mt-2 flex items-center gap-1.5">
       {card.topic ? (
@@ -953,6 +959,11 @@ function CardMarks({ card }: { card: SocialCard }): JSX.Element | null {
       {card.sourceUrl ? (
         <span role="img" aria-label="Inspiration saved" className="inline-flex text-muted-foreground">
           <Link2 className="h-3.5 w-3.5" aria-hidden="true" />
+        </span>
+      ) : null}
+      {card.stage === "making" && card.editorName ? (
+        <span className="inline-flex rounded-full bg-muted px-2 py-0.5 text-xs text-foreground">
+          {`With ${card.editorName}`}
         </span>
       ) : null}
     </div>
@@ -1502,7 +1513,7 @@ export function SocialBoard({
   function restingShown(column: BoardColumn): SocialCard[] {
     const inColumn = cardsInColumn(column, cards);
     const selectedTag = tags[column.id] ?? "all";
-    const tagOptions = columnTagOptions(inColumn);
+    const tagOptions = columnTagOptions(inColumn, column.kind === "making");
     const activeTag = tagOptions.some((option) => option.value === selectedTag) ? selectedTag : "all";
     const status = column.kind === "ready" ? (statuses[column.id] ?? "all") : "all";
     const sort = sorts[column.id] ?? "latest";
@@ -1623,7 +1634,7 @@ export function SocialBoard({
     shown: SocialCard[];
   } {
     const inColumn = cardsInColumn(column, cards);
-    const tagOptions = columnTagOptions(inColumn);
+    const tagOptions = columnTagOptions(inColumn, column.kind === "making");
     const selectedTag = tags[column.id] ?? "all";
     const activeTag = tagOptions.some((option) => option.value === selectedTag)
       ? selectedTag

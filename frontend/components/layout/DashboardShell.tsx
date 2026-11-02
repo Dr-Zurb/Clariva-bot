@@ -36,11 +36,9 @@ function isEditableTarget(target: EventTarget | null): boolean {
 interface DashboardShellProps {
   userEmail?: string | null;
   /**
-   * Plan 07 · Task 30: optional Supabase access token. Forwarded to the
-   * header so the unread-notifications bell can poll
-   * `/api/v1/dashboard/events?unread=true`. Empty string suppresses the
-   * bell entirely (the layout passes `""` when no session is present).
-   * Also used by useDashboardCounts to poll badge counts.
+   * Access token for the shared dashboard counts poll and the header bell.
+   * Empty string suppresses the bell (the layout passes `""` when no
+   * session is present).
    */
   token?: string;
   /** admin-console-v2: show Admin console link in the profile menu. */

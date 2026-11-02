@@ -1,31 +1,16 @@
 "use client";
 
 /**
- * `<DashboardEventsBell>` — a tiny header bell that shows the number of
- * unread `doctor_dashboard_events` for the signed-in doctor (Plan 07 ·
- * Task 30 · Decision 4 + 10 LOCKED).
+ * Header bell. The unread number comes from the shared dashboard counts
+ * query (GET /api/v1/dashboard/counts), the same 30s poll as the sidebar
+ * badges. The bell links to /dashboard/alerts.
  *
- * Behavior:
- *   - Fetches `/api/v1/dashboard/events?unread=true&limit=10` on mount
- *     and renders a count badge on top of a bell glyph.
- *   - Polls every 60s when the tab is visible (dashboard is a workday
- *     surface — short polling is fine; we don't burn battery in the
- *     background).
- *   - The bell is a `<Link>` to `/dashboard/alerts` (placeholder until
- *     inbox UX ships; matches the sidebar Alerts entry).
- *
- * Failure mode: if the fetch throws, the bell renders with no badge
- * (the API failure is a logger.error on the server; we don't push a UI
- * error from the header — the dashboard page will surface it more
- * prominently when the doctor lands).
+ * A failed fetch leaves the badge off. The dashboard page surfaces errors.
  */
 
-import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Bell } from "lucide-react";
-import { getDashboardEvents } from "@/lib/api";
-
-const POLL_INTERVAL_MS = 60_000;
+import { useDashboardCounts } from "@/hooks/useDashboardCounts";
 
 export interface DashboardEventsBellProps {
   /** Supabase access token. Bell is a no-op if empty. */
@@ -35,39 +20,8 @@ export interface DashboardEventsBellProps {
 export function DashboardEventsBell({
   token,
 }: DashboardEventsBellProps): JSX.Element | null {
-  const [unreadCount, setUnreadCount] = useState<number | null>(null);
-
-  useEffect(() => {
-    if (!token) return;
-    let cancelled = false;
-
-    const fetchCount = async (): Promise<void> => {
-      try {
-        const res = await getDashboardEvents(token, {
-          unreadOnly: true,
-          // We only care about the count cap for the badge; "10+" is
-          // sufficient signal for the doctor that there's a lot to read.
-          limit: 11,
-        });
-        if (cancelled) return;
-        setUnreadCount(res.data.events.length);
-      } catch {
-        // Quiet — see file header. The dashboard page surfaces errors.
-      }
-    };
-
-    void fetchCount();
-    const interval = window.setInterval(() => {
-      if (document.visibilityState === "visible") {
-        void fetchCount();
-      }
-    }, POLL_INTERVAL_MS);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(interval);
-    };
-  }, [token]);
+  const { counts } = useDashboardCounts(token);
+  const unreadCount = counts?.dashboardEventsUnread ?? null;
 
   if (!token) return null;
 

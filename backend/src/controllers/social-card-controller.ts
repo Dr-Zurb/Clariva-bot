@@ -26,6 +26,8 @@ import {
   emptySocialBin,
   listBinnedSocialCards,
   listSocialCards,
+  listSocialCardTurns,
+  addSocialCardTurn,
   listSocialColumns,
   orderSocialCardFrames,
   createSocialColumn,
@@ -104,6 +106,7 @@ export const updateSocialCardSchema = z
       .optional(),
     scheduledAt: z.string().datetime({ offset: true }).nullable().optional(),
     makeAt: z.string().datetime({ offset: true }).nullable().optional(),
+    editorName: z.string().trim().min(1).max(80).nullable().optional(),
     postNow: z.literal(true).optional(),
     instagramUrl: z
       .string()
@@ -123,6 +126,20 @@ export const updateSocialCardSchema = z
   })
   .refine((body) => body.manualPosted === undefined || Object.keys(body).length === 1, {
     message: 'Mark it posted on its own',
+  });
+
+const turnMs = z.number().int().nonnegative();
+
+export const socialCardTurnSchema = z
+  .object({
+    text: z.string().trim().min(1).max(500),
+    atMs: turnMs.nullable().optional(),
+    endMs: turnMs.nullable().optional(),
+    scrapId: z.string().uuid().nullable().optional(),
+  })
+  .strict()
+  .refine((body) => body.endMs == null || (body.atMs != null && body.endMs > body.atMs), {
+    message: 'The end is after the start',
   });
 
 export const socialCardUploadSchema = z
@@ -193,6 +210,23 @@ export const createSocialCardHandler = asyncHandler(async (req: Request, res: Re
     correlationId
   );
   res.status(201).json(successResponse({ card }, req));
+});
+
+export const listSocialCardTurnsHandler = asyncHandler(async (req: Request, res: Response) => {
+  const doctorId = getUserId(req);
+  const correlationId = req.correlationId || 'unknown';
+  const { id } = idSchema.parse(req.params);
+  const turns = await listSocialCardTurns(id, correlationId, doctorId);
+  res.status(200).json(successResponse({ turns }, req));
+});
+
+export const addSocialCardTurnHandler = asyncHandler(async (req: Request, res: Response) => {
+  const doctorId = getUserId(req);
+  const correlationId = req.correlationId || 'unknown';
+  const { id } = idSchema.parse(req.params);
+  const body = socialCardTurnSchema.parse(req.body);
+  const turn = await addSocialCardTurn(id, body, correlationId, doctorId);
+  res.status(201).json(successResponse({ turn }, req));
 });
 
 export const updateSocialCardHandler = asyncHandler(async (req: Request, res: Response) => {

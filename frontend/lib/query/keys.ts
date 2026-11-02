@@ -27,10 +27,16 @@ export const queryKeys = {
       cursor?: string;
     }) => [...queryKeys.dashboard.all, "events", filters] as const,
     counts: () => [...queryKeys.dashboard.all, "counts"] as const,
-    appointments: () => [...queryKeys.dashboard.all, "appointments"] as const,
+    /**
+     * Undated key is the invalidation prefix. A date scopes the cached day
+     * so a poll does not share a bucket with another clinic day.
+     */
+    appointments: (date?: string) =>
+      date
+        ? ([...queryKeys.dashboard.all, "appointments", date] as const)
+        : ([...queryKeys.dashboard.all, "appointments"] as const),
     pendingReviews: () =>
       [...queryKeys.dashboard.all, "pending-reviews"] as const,
-    rxSentToday: () => [...queryKeys.dashboard.all, "rx-sent-today"] as const,
     /** insights-v1 · practice-health overview keyed by ISO date range. */
     practiceHealth: (range: { from: string; to: string }) =>
       [...queryKeys.dashboard.all, "practice-health", range] as const,

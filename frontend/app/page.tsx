@@ -7,13 +7,11 @@ import { Hero } from "@/components/marketing/Hero";
 import { HowItWorks } from "@/components/marketing/HowItWorks";
 import { MarketingFooter } from "@/components/marketing/MarketingFooter";
 import { MarketingNav } from "@/components/marketing/MarketingNav";
-import { PricingTeaser } from "@/components/marketing/PricingTeaser";
-import { ThesisBand } from "@/components/marketing/ThesisBand";
-import { TrustBand } from "@/components/marketing/TrustBand";
+import { TrustAndPrice } from "@/components/marketing/TrustAndPrice";
 
-const TITLE = "Halo Aid — Social media assistance for doctors";
+const TITLE = "Halo Aid — Doc, we're with you on your social media journey";
 const DESCRIPTION =
-  "Plan your posts, book the visit, and keep the record — in one place. See which post filled the chair.";
+  "Helping you with the content, the booking, the consult, the record, and the analysis. The complete flow in one place.";
 
 // `title.absolute` keeps the landing title clean (no "· Halo Aid" template
 // suffix) since the headline already leads with the brand name.
@@ -40,14 +38,17 @@ export default function HomePage() {
     <div className="halo flex min-h-screen flex-col bg-white text-[hsl(var(--halo-ink))]">
       <MarketingNav />
       <main className="flex-1">
-        <Hero />
-        <ThesisBand />
+        <div className="flex min-h-[calc(100svh-4rem)] flex-col">
+          <Hero />
+        </div>
         <HowItWorks />
-        <FeatureGrid />
         <EdgeBand />
-        <TrustBand />
-        <PricingTeaser />
-        <FinalCtaBand />
+        <FeatureGrid />
+        <TrustAndPrice />
+        <FinalCtaBand
+          title="Your next post can bring the next visit."
+          body={null}
+        />
       </main>
       <MarketingFooter />
     </div>

@@ -20,6 +20,7 @@ import { createPortal } from "react-dom";
 import { ArrowLeft, Bookmark, Check, ChevronDown, ChevronLeft, ChevronRight, Copy, EllipsisVertical, ExternalLink, Heart, ImagePlus, Info, Loader2, MessageCircle, Play, Plus, Repeat2, Send, Volume2, VolumeX, X } from "lucide-react";
 import { getInstagramStatus } from "@/lib/api";
 import { makeLine, makeTone } from "./make-plan";
+import { SocialCardReview } from "./SocialCardReview";
 import {
   FILE_ACCEPT,
   IdeaNote,
@@ -1485,6 +1486,9 @@ export function SocialCardPanel({
         onDelete={onDelete}
         onClose={isThought ? dismissThought : closeStudio}
         onSubmit={() => void (isThought ? saveThought() : persist())}
+        token={token}
+        onSaved={onSaved}
+        scraps={extra}
       />
     );
   }
@@ -4334,6 +4338,9 @@ function Composer({
   onDelete,
   onClose,
   onSubmit,
+  token,
+  onSaved,
+  scraps,
 }: {
   card: SocialCard;
   title: string;
@@ -4405,7 +4412,35 @@ function Composer({
   onDelete: () => void;
   onClose: () => void;
   onSubmit: () => void;
+  token: string;
+  onSaved: () => Promise<void>;
+  scraps: readonly SocialScrap[];
 }): JSX.Element {
+  const [screen, setScreen] = useState<"draft" | "review">(card.editorName ? "review" : "draft");
+  const [asking, setAsking] = useState(false);
+  const [handName, setHandName] = useState("");
+  const [handedName, setHandedName] = useState<string | null>(card.editorName);
+  const [handError, setHandError] = useState<string | null>(null);
+  useEffect(() => {
+    setHandedName(card.editorName);
+    setScreen(card.editorName ? "review" : "draft");
+    setAsking(false);
+  }, [card.id, card.editorName]);
+  async function handToEditor(): Promise<void> {
+    const name = handName.trim();
+    if (!name) return;
+    setHandError(null);
+    try {
+      const saved = await updateSocialCard(token, card.id, { editorName: name });
+      setHandedName(saved.editorName ?? name);
+      setScreen("review");
+      setAsking(false);
+      setHandName("");
+      await onSaved();
+    } catch (err: unknown) {
+      setHandError(err instanceof Error ? err.message : "Could not hand the card over");
+    }
+  }
   const noteRef = useRef<HTMLDivElement>(null);
   const titleRef = useRef<HTMLInputElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -4685,6 +4720,18 @@ function Composer({
           className={`relative z-10 flex h-full min-w-0 flex-1 overflow-hidden bg-card rounded-r-xl ${fade ? "rounded-l-xl" : ""} ${over ? "ring-2 ring-primary" : ""}`}
           style={{ transition: ease === "none" ? "none" : `border-radius 520ms ${curve} 200ms` }}
         >
+          {card.stage === "making" && handedName && screen === "review" ? (
+            <SocialCardReview
+              token={token}
+              card={{ ...card, editorName: handedName, handoff: "with_editor" }}
+              fileUrl={preview}
+              scraps={scraps}
+              busy={busy}
+              onShowDraft={() => setScreen("draft")}
+              onMarkReady={onMarkReady}
+            />
+          ) : (
+          <>
           <div
             className="flex h-full shrink-0 flex-col overflow-hidden"
             style={{ width: noteWidth, transition: cover }}
@@ -4695,6 +4742,26 @@ function Composer({
           >
             <div className="flex items-center gap-2 px-5 py-3">
               <StageTrack columns={columns} currentId={currentColumnId} onPick={pickColumn} />
+              {card.stage === "making" && handedName ? (
+                <div className="ml-2 flex gap-1" role="group" aria-label="Card screen">
+                  <button
+                    type="button"
+                    aria-pressed={screen === "draft"}
+                    onClick={() => setScreen("draft")}
+                    className={`h-8 rounded-md px-2 text-sm ${screen === "draft" ? "bg-primary text-primary-foreground" : "text-muted-foreground"}`}
+                  >
+                    Draft
+                  </button>
+                  <button
+                    type="button"
+                    aria-pressed={screen === "review"}
+                    onClick={() => setScreen("review")}
+                    className={`h-8 rounded-md px-2 text-sm ${screen === "review" ? "bg-primary text-primary-foreground" : "text-muted-foreground"}`}
+                  >
+                    Review
+                  </button>
+                </div>
+              ) : null}
               <div className="ml-auto flex items-center gap-1">
                 {heldNote && !slim ? (
                   <div
@@ -5143,6 +5210,47 @@ function Composer({
                   {makeLine(card.makeAt, "making")}
                 </p>
               ) : null}
+              {!handedName ? (
+                asking ? (
+                  <div className="space-y-2">
+                    <label className="block text-xs text-muted-foreground">
+                      Name
+                      <input
+                        aria-label="Editor name"
+                        value={handName}
+                        maxLength={80}
+                        onChange={(event) => setHandName(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key !== "Enter") return;
+                          event.preventDefault();
+                          event.stopPropagation();
+                          void handToEditor();
+                        }}
+                        className="mt-1 h-9 w-full rounded-md border border-border px-2 text-sm text-foreground"
+                      />
+                    </label>
+                    <p className="text-xs text-muted-foreground">The note stays on this card.</p>
+                    {handError ? <p className="text-sm text-destructive">{handError}</p> : null}
+                    <button
+                      type="button"
+                      disabled={busy || handName.trim().length === 0}
+                      onClick={() => void handToEditor()}
+                      className="h-10 w-full rounded-md border border-border text-sm disabled:opacity-50"
+                    >
+                      Hand to editor
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => setAsking(true)}
+                    className="h-10 w-full rounded-md border border-border text-sm disabled:opacity-50"
+                  >
+                    Hand to editor
+                  </button>
+                )
+              ) : null}
               <button
                 type="button"
                 disabled={busy || uploading || !format || readyDrop !== "move"}
@@ -5157,6 +5265,8 @@ function Composer({
           </div>
         </aside>
         ) : null}
+          </>
+          )}
         </div>
         </>
       </form>

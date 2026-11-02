@@ -1,0 +1,28 @@
+---
+description: Write every user-facing reply so it can be scanned
+alwaysApply: true
+---
+
+# Reader-friendly replies
+
+Every reply to the user is easy to scan. Lead with the answer, then the detail.
+
+- Use short headings for: the answer, what to do, problems, and numbers.
+- Prefer short bullets over a wall of paragraphs.
+- One idea per bullet. Put the number and what it means on the same line.
+- Say what happens if they do nothing, then what changes if they do the one next step.
+- Keep paragraphs to two sentences. If a section needs more, break it into bullets.
+- Use plain words. Define a project term the first time it appears.
+- Bold only the result the user needs to see (a number, a date, or the next action).
+
+```
+# Bad
+The quota is org-level and last cycle exceeded egress so tomorrow the meter resets but Render is still on the old loop...
+
+# Good
+## Answer
+You stay on the free plan if a quiet day stays under 100 MB.
+
+## What to do
+- Deploy the backend. Render is still on the old 5-second scan.
+```

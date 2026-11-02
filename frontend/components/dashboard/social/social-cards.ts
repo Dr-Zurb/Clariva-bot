@@ -81,6 +81,9 @@ export type SocialCard = {
   scheduledAt: string | null;
   /** When to start making this card. Chosen and Making only. */
   makeAt: string | null;
+  /** Display name while this Making card is handed over. */
+  editorName: string | null;
+  handoff: "with_editor" | null;
   publishError: string | null;
   instagramUrl: string | null;
   visitCount: number;
@@ -101,6 +104,7 @@ export type SocialCardPatch = {
   links?: { id: string; url: string }[];
   scheduledAt?: string | null;
   makeAt?: string | null;
+  editorName?: string | null;
   postNow?: true;
   instagramUrl?: string;
   manualPosted?: true;
@@ -501,6 +505,32 @@ export function updateSocialCard(
     method: "PATCH",
     body: patch,
   }).then((data) => data.card);
+}
+
+export type SocialCardTurn = {
+  id: string;
+  text: string;
+  atMs: number | null;
+  endMs: number | null;
+  scrapId: string | null;
+  createdAt: string;
+};
+
+export function listSocialCardTurns(token: string, id: string): Promise<SocialCardTurn[]> {
+  return socialRequest<{ turns: SocialCardTurn[] }>(token, `/api/v1/social/cards/${id}/turns`).then(
+    (data) => data.turns
+  );
+}
+
+export function addSocialCardTurn(
+  token: string,
+  id: string,
+  body: { text: string; atMs?: number | null; endMs?: number | null; scrapId?: string | null }
+): Promise<SocialCardTurn> {
+  return socialRequest<{ turn: SocialCardTurn }>(token, `/api/v1/social/cards/${id}/turns`, {
+    method: "POST",
+    body,
+  }).then((data) => data.turn);
 }
 
 export function moveSocialCard(

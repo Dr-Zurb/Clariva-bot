@@ -8,7 +8,7 @@ A handed Making card has two screens. Draft is the composer that already exists.
 **Batch:** [`plan-p12-social-assist-review-batch.md`](../plan-p12-social-assist-review-batch.md)
 **Execution order:** [`EXECUTION-ORDER-p12-social-assist-review.md`](./EXECUTION-ORDER-p12-social-assist-review.md)
 **Estimated Time:** 6 hours
-**Status:** ⏳ **PENDING**
+**Status:** ✅ **COMPLETED** — **Completed: 2026-10-31**
 
 **Change Type:**
 - [x] **Update existing** — Making already opens the composer
@@ -32,33 +32,33 @@ A handed Making card has two screens. Draft is the composer that already exists.
 
 ## 🌍 Global Safety Gate
 
-- [ ] **Data touched?** Y — reads and writes the handoff and the messages already specified
-- [ ] **RLS verified?** Y — through the doctor API from `soc-31` and `soc-32`. No new policy in this task.
-- [ ] **Any PHI in logs?** No
-- [ ] **External API or AI call?** N
-- [ ] **Retention / deletion impact?** N — owned by `soc-31` and `soc-32`
+- [x] ✅ **Data touched?** Y — reads and writes the handoff and the messages already specified
+- [x] ✅ **RLS verified?** Y — through the doctor API from `soc-31` and `soc-32`. No new policy in this task.
+- [x] ✅ **Any PHI in logs?** No
+- [x] ✅ **External API or AI call?** N
+- [x] ✅ **Retention / deletion impact?** N — owned by `soc-31` and `soc-32`
 
 ---
 
 ## ✅ Task Breakdown
 
 ### 1. Hand over
-- [ ] 1.1 Making shows **Hand to editor** beside **Mark ready** when the card has not been handed over
-- [ ] 1.2 The doctor types a name and confirms. The note is not shown as something that will be sent
-- [ ] 1.3 After that, the header offers **Draft** and **Review**. Opening the card lands on Review
+- [x] ✅ 1.1 Making shows **Hand to editor** beside **Mark ready** when the card has not been handed over
+- [x] ✅ 1.2 The doctor types a name and confirms. The note is not shown as something that will be sent
+- [x] ✅ 1.3 After that, the header offers **Draft** and **Review**. Opening the card lands on Review
 
 ### 2. Review
-- [ ] 2.1 The left side plays the file under review. A photo fills that same place
-- [ ] 2.2 The right side is the thread, full height
-- [ ] 2.3 The doctor can set one moment, or a start and an end, into the unsent message. That action does not send
-- [ ] 2.4 The doctor can point the unsent message at one file on Resources
-- [ ] 2.5 **Send** saves the message. **Mark ready** is the same action as on Draft
-- [ ] 2.6 Draft is the existing composer, unchanged apart from the switch
+- [x] ✅ 2.1 The left side plays the file under review. A photo fills that same place
+- [x] ✅ 2.2 The right side is the thread, full height
+- [x] ✅ 2.3 The doctor can set one moment, or a start and an end, into the unsent message. That action does not send
+- [x] ✅ 2.4 The doctor can point the unsent message at one file on Resources
+- [x] ✅ 2.5 **Send** saves the message. **Mark ready** is the same action as on Draft
+- [x] ✅ 2.6 Draft is the existing composer, unchanged apart from the switch
 
 ### 3. Verification
-- [ ] 3.1 A test shows Review only after the card is handed over
-- [ ] 3.2 A test sends a stretch and a Resource pointer without changing the file that posts
-- [ ] 3.3 The player does not offer a list of takes
+- [x] ✅ 3.1 A test shows Review only after the card is handed over
+- [x] ✅ 3.2 A test sends a stretch and a Resource pointer without changing the file that posts
+- [x] ✅ 3.3 The player does not offer a list of takes
 
 ---
 
@@ -80,4 +80,4 @@ A handed Making card has two screens. Draft is the composer that already exists.
 ---
 
 **Last Updated:** 2026-10-31
-**Status:** ⏳ PENDING
+**Status:** ✅ COMPLETED — 2026-10-31

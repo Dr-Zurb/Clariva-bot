@@ -5,7 +5,7 @@ import { practiceHealthQueryOptions } from "@/lib/query/options";
 
 /**
  * insights-v1 · Tier-1 practice-health overview for a selected date range.
- * Mirror of `useRxSentTodayQuery` — thin wrapper over query options.
+ * Thin wrapper over query options.
  */
 export function usePracticeHealthQuery(
   token: string,

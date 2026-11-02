@@ -23,9 +23,8 @@ export default async function DashboardLayout({
   // "Admin console" link. Real access still gated by requireAdminAuth.
   const isAdmin = user.app_metadata?.role === "admin";
 
-  // Plan 07 · Task 30: pass the access token through so the header bell
-  // (`<DashboardEventsBell>`) can poll `/dashboard/events` for unread
-  // counts. Session is read once per request via the memoized util (np-06).
+  // The header bell and sidebar badges share GET /dashboard/counts.
+  // Session is read once per request via the memoized util (np-06).
   const {
     data: { session },
   } = await getServerSession();

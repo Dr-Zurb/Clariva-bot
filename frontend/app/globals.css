@@ -165,6 +165,7 @@
   --halo-navy: 220 76% 24%; /* #0F2E6E navy — headings / wordmark */
   --halo-ink: 222 47% 11%; /* body text (matches --foreground) */
   --halo-mist: 214 100% 97%; /* very light blue section wash */
+  --halo-wash: 214 100% 94%; /* solid pale block behind product windows */
 }
 
 .halo-gradient {
@@ -173,6 +174,147 @@
     hsl(var(--halo-blue)),
     hsl(var(--halo-sky))
   );
+}
+
+/* One even sky wash behind the whole row. The bright band covers every card. */
+.halo-arch-glow {
+  position: absolute;
+  z-index: -10;
+  top: -16rem;
+  right: -20rem;
+  bottom: -16rem;
+  left: -20rem;
+  pointer-events: none;
+  background-image: radial-gradient(
+    50rem 20rem at 50% 62%,
+    hsl(var(--halo-sky) / 0.2) 0%,
+    hsl(var(--halo-sky) / 0.17) 58%,
+    hsl(var(--halo-sky) / 0.07) 74%,
+    transparent 88%
+  );
+  filter: blur(16px);
+}
+
+/* Wide hero: the arc sits under the copy. md:mt-14 would otherwise keep a 56px gap.
+   The step name hangs above its icon, so the arc starts a little lower. */
+@media (min-width: 1280px) {
+  section .halo-hero-stage {
+    margin-top: 0.5rem;
+  }
+
+  section .halo-arch {
+    margin-top: 2.25rem;
+  }
+}
+
+.halo-arch-card {
+  box-shadow:
+    0 1px 1px hsl(var(--halo-navy) / 0.06),
+    0 16px 28px -10px hsl(var(--halo-blue) / 0.34),
+    0 32px 48px -18px hsl(var(--halo-navy) / 0.4);
+  transition:
+    transform 180ms cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 180ms ease,
+    border-color 180ms ease;
+}
+
+.group:hover .halo-arch-card,
+.group:focus-within .halo-arch-card {
+  box-shadow:
+    0 1px 1px hsl(var(--halo-navy) / 0.08),
+    0 24px 36px -8px hsl(var(--halo-blue) / 0.45),
+    0 42px 56px -14px hsl(var(--halo-navy) / 0.48);
+}
+
+.halo-step-pop {
+  transition: transform 180ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .group:hover .halo-step-pop,
+  .group:focus-within .halo-step-pop {
+    transform: translateY(-8px) scale(1.035);
+  }
+}
+
+/* Content card gives the picture 18px so the stage buttons fit on two rows. */
+.halo-arch-tile-stages {
+  height: 114px;
+}
+
+/* Taller cards only when the first screen still has room under the buttons. */
+@media (min-width: 1280px) and (min-height: 1040px) {
+  section .halo-arch-card {
+    height: 244px;
+  }
+
+  section .halo-arch-tile {
+    height: 172px;
+  }
+
+  section .halo-arch-tile-stages {
+    height: 154px;
+  }
+}
+
+/* Home hero entrance. Omitted when the user prefers reduced motion. */
+@media (prefers-reduced-motion: no-preference) {
+  @keyframes halo-hero-rise {
+    from {
+      opacity: 0;
+      transform: translateY(12px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes halo-hero-dot {
+    0%,
+    100% {
+      opacity: 1;
+      transform: scale(1);
+    }
+    50% {
+      opacity: 0.4;
+      transform: scale(0.8);
+    }
+  }
+
+  .halo-hero-rise {
+    animation: halo-hero-rise 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  .halo-hero-dot {
+    animation: halo-hero-dot 2.8s ease-in-out infinite;
+  }
+
+  @keyframes halo-flow-fill {
+    from {
+      transform: scaleY(0);
+    }
+    to {
+      transform: scaleY(1);
+    }
+  }
+
+  .halo-flow-fill {
+    animation: halo-flow-fill 1.2s cubic-bezier(0.22, 1, 0.36, 1) 300ms both;
+  }
+
+  @keyframes halo-arch-reveal {
+    from {
+      clip-path: inset(0 100% 0 0);
+    }
+    to {
+      clip-path: inset(0 0 0 0);
+    }
+  }
+
+  .halo-arch-reveal {
+    animation: halo-arch-reveal 1s cubic-bezier(0.22, 1, 0.36, 1) 250ms both;
+  }
 }
 
 /* In-call / pre-call front↔back camera flip — 3D card turn, not a hard cut. */

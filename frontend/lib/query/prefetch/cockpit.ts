@@ -2,11 +2,9 @@ import type { QueryClient } from "@tanstack/react-query";
 import { todayLocalIso } from "@/lib/dates";
 import {
   appointmentsQueryOptions,
-  dashboardEventsUnreadCountQueryOptions,
+  dashboardCountsQueryOptions,
   doctorSettingsQueryOptions,
   opdQueueSessionQueryOptions,
-  pendingReviewsCountQueryOptions,
-  rxSentTodayQueryOptions,
 } from "@/lib/query/options";
 
 async function safePrefetch(
@@ -26,11 +24,8 @@ export async function prefetchCockpitKpiQueries(
 ): Promise<void> {
   const today = todayLocalIso();
   await Promise.allSettled([
-    safePrefetch(queryClient, appointmentsQueryOptions(token)),
-    safePrefetch(queryClient, rxSentTodayQueryOptions(token)),
-    safePrefetch(queryClient, pendingReviewsCountQueryOptions(token)),
-    safePrefetch(queryClient, opdQueueSessionQueryOptions(token, today)),
-    safePrefetch(queryClient, dashboardEventsUnreadCountQueryOptions(token)),
+    safePrefetch(queryClient, appointmentsQueryOptions(token, today)),
+    safePrefetch(queryClient, dashboardCountsQueryOptions(token)),
   ]);
 }
 
@@ -38,7 +33,10 @@ export async function prefetchCockpitAppointmentsQuery(
   queryClient: QueryClient,
   token: string,
 ): Promise<void> {
-  await safePrefetch(queryClient, appointmentsQueryOptions(token));
+  await safePrefetch(
+    queryClient,
+    appointmentsQueryOptions(token, todayLocalIso()),
+  );
 }
 
 export async function prefetchCockpitOpdStripQueries(

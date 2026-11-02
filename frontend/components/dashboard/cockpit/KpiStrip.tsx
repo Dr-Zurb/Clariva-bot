@@ -4,7 +4,6 @@ import { useEffect, useMemo, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { todayLocalIso } from "@/lib/dates";
 import { useAppointmentsQuery } from "@/hooks/queries/useAppointmentsQuery";
-import { useRxSentTodayQuery } from "@/hooks/queries/useRxSentTodayQuery";
 
 interface KpiCardProps {
   label: string;
@@ -46,43 +45,37 @@ interface KpiStripProps {
  *   2. Rx sent today
  */
 export function KpiStrip({ token }: KpiStripProps) {
-  // Query cache can differ SSR vs first client paint (partial dehydrate /
-  // failed rx prefetch). Keep the loading shell until mount so text never
-  // mismatches (" " vs "0").
+  // Keep the loading shell until mount so the server render and the first
+  // client paint don't disagree on the number.
   const [mounted, setMounted] = useState(false);
   useEffect(() => {
     setMounted(true);
   }, []);
 
-  const appointmentsQuery = useAppointmentsQuery(token);
-  const rxQuery = useRxSentTodayQuery(token);
+  const today = todayLocalIso();
+  const appointmentsQuery = useAppointmentsQuery(token, today);
 
   const kpi = useMemo(() => {
     const appointments = appointmentsQuery.data?.data?.appointments;
     if (!Array.isArray(appointments)) return null;
-    const today = todayLocalIso();
-    const todayAppts = appointments.filter((appt) =>
-      (appt.appointment_date ?? "").startsWith(today),
-    );
     return {
-      consultsTotal: todayAppts.length,
-      consultsDone: todayAppts.filter(
+      consultsTotal: appointments.length,
+      consultsDone: appointments.filter(
         (appt) => appt.consultation_session?.status === "ended",
       ).length,
     };
   }, [appointmentsQuery.data]);
 
   const consultsReady = mounted && kpi !== null && !appointmentsQuery.isLoading;
-  const rxReady =
-    mounted &&
-    !rxQuery.isLoading &&
-    (rxQuery.isSuccess || rxQuery.isError);
+  // No doctor-wide "sent today" endpoint. The old poll called
+  // GET /prescriptions?date_from=…, which the API rejects (it requires a
+  // patient or appointment id) and still retried every minute.
+  const rxReady = mounted;
 
   const consultsValue =
     kpi !== null ? `${kpi.consultsDone}/${kpi.consultsTotal}` : null;
 
-  // Broken list endpoint (needs patientId) → show em dash, not a fake 0.
-  const rxValue = rxQuery.isSuccess ? (rxQuery.data ?? 0) : null;
+  const rxValue = null;
 
   return (
     <div

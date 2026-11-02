@@ -175,6 +175,10 @@ export type SocialCard = {
   scheduledAt: string | null;
   /** When to start making. Chosen or Making only. Not the publish time. */
   makeAt: string | null;
+  /** Label for the person cutting a Making card. Not a login. */
+  editorName: string | null;
+  /** with_editor while the card is handed over. */
+  handoff: 'with_editor' | null;
   publishError: string | null;
   instagramUrl: string | null;
   visitCount: number;
@@ -207,6 +211,7 @@ export type UpdateSocialCardInput = {
   links?: { id: string; url: string }[];
   scheduledAt?: string | null;
   makeAt?: string | null;
+  editorName?: string | null;
   postNow?: true;
   instagramUrl?: string;
   manualPosted?: true;
@@ -226,6 +231,8 @@ type SocialCardRow = {
   resource_links?: unknown;
   scheduled_at: string | null;
   make_at?: string | null;
+  editor_name?: string | null;
+  handoff?: string | null;
   publish_error?: string | null;
   publish_attempt_at?: string | null;
   instagram_url: string | null;
@@ -379,6 +386,8 @@ function toCard(row: SocialCardRow): SocialCard {
     sourceUrl: row.source_url ?? readLinks(row)[0]?.url ?? null,
     scheduledAt: row.scheduled_at ?? null,
     makeAt: row.make_at ?? null,
+    editorName: row.editor_name?.trim() ? row.editor_name.trim() : null,
+    handoff: row.handoff === 'with_editor' ? 'with_editor' : null,
     publishError: row.publish_error ?? null,
     instagramUrl: row.instagram_url ?? null,
     visitCount: row.visit_count ?? 0,
@@ -1174,6 +1183,17 @@ export async function updateSocialCard(
   if (stageChange && !makingPlan) {
     patch.make_at = null;
   }
+  if (typeof input.editorName === 'string') {
+    if (nextStage !== 'making') {
+      throw new ValidationError('Hand the card over from Making');
+    }
+    patch.editor_name = input.editorName.trim();
+    patch.handoff = 'with_editor';
+  } else if (input.editorName === null || (stageChange && nextStage !== 'making' && (current.editor_name || current.handoff))) {
+    patch.editor_name = null;
+    patch.handoff = null;
+    await clearSocialCardTurns(id, doctorId);
+  }
 
   const data = await updateOwnedCard(id, doctorId, patch, correlationId);
   if (!data) throw new NotFoundError('Social card not found');
@@ -1185,9 +1205,111 @@ export async function updateSocialCard(
     'update',
     RESOURCE,
     card.id,
-    Object.keys(patch)
+    loggedCardFields(patch)
   );
   return card;
+}
+
+function loggedCardFields(patch: Record<string, unknown>): string[] {
+  const fields = Object.keys(patch).map((key) =>
+    key === 'editor_name' || key === 'handoff' ? 'handoff' : key
+  );
+  return Array.from(new Set(fields));
+}
+
+async function clearSocialCardTurns(cardId: string, doctorId: string): Promise<void> {
+  const { error } = await adminClient()
+    .from('social_card_turns')
+    .delete()
+    .eq('card_id', cardId)
+    .eq('doctor_id', doctorId);
+  if (error) throw new InternalError('Could not clear the review');
+}
+
+export type SocialCardTurn = {
+  id: string;
+  text: string;
+  atMs: number | null;
+  endMs: number | null;
+  scrapId: string | null;
+  createdAt: string;
+};
+
+type TurnRow = {
+  id: string;
+  body: string;
+  at_ms: number | null;
+  end_ms: number | null;
+  scrap_id: string | null;
+  created_at: string;
+};
+
+function toTurn(row: TurnRow): SocialCardTurn {
+  return {
+    id: row.id,
+    text: row.body,
+    atMs: row.at_ms,
+    endMs: row.end_ms,
+    scrapId: row.scrap_id,
+    createdAt: row.created_at,
+  };
+}
+
+export async function listSocialCardTurns(
+  id: string,
+  correlationId: string,
+  doctorId: string
+): Promise<SocialCardTurn[]> {
+  await loadOwned(id, doctorId, correlationId);
+  const { data, error } = await adminClient()
+    .from('social_card_turns')
+    .select('id, body, at_ms, end_ms, scrap_id, created_at')
+    .eq('card_id', id)
+    .eq('doctor_id', doctorId)
+    .order('created_at', { ascending: true });
+  if (error) handleSupabaseError(error, correlationId);
+  return ((data ?? []) as TurnRow[]).map(toTurn);
+}
+
+export async function addSocialCardTurn(
+  id: string,
+  input: { text: string; atMs?: number | null; endMs?: number | null; scrapId?: string | null },
+  correlationId: string,
+  doctorId: string
+): Promise<SocialCardTurn> {
+  const current = await loadOwned(id, doctorId, correlationId);
+  if (current.stage !== 'making' || current.handoff !== 'with_editor') {
+    throw new ValidationError('Hand the card over before writing');
+  }
+  if (input.scrapId) {
+    const scrap = await adminClient()
+      .from('social_card_scraps')
+      .select('id')
+      .eq('id', input.scrapId)
+      .eq('card_id', id)
+      .eq('doctor_id', doctorId)
+      .maybeSingle();
+    if (scrap.error) handleSupabaseError(scrap.error, correlationId);
+    if (!scrap.data) throw new ValidationError('That file is not on this card');
+  }
+  const { data, error } = await adminClient()
+    .from('social_card_turns')
+    .insert({
+      doctor_id: doctorId,
+      card_id: id,
+      body: input.text.trim(),
+      at_ms: input.atMs ?? null,
+      end_ms: input.endMs ?? null,
+      scrap_id: input.scrapId ?? null,
+    })
+    .select('id, body, at_ms, end_ms, scrap_id, created_at')
+    .single();
+  if (error || !data) {
+    if (error) handleSupabaseError(error, correlationId);
+    throw new InternalError('Could not save the message');
+  }
+  await logDataModification(correlationId, doctorId, 'create', 'social_card_turn', id, ['turn']);
+  return toTurn(data as TurnRow);
 }
 
 export async function deleteSocialCard(

@@ -4,17 +4,29 @@ import { ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { DEMO_HREF, SIGNUP_HREF } from "./constants";
 
-/** Closing call-to-action on the brand gradient. */
-export function FinalCtaBand() {
+const DEFAULT_TITLE = "From the post to the follow-up.";
+const DEFAULT_BODY = "The post, the visit, and the record — in one place.";
+
+type FinalCtaBandProps = {
+  title?: string;
+  /** Pass null to hide the line under the title. */
+  body?: string | null;
+};
+
+/** Closing call-to-action on the brand gradient. Defaults keep /pricing unchanged. */
+export function FinalCtaBand({
+  title = DEFAULT_TITLE,
+  body = DEFAULT_BODY,
+}: FinalCtaBandProps) {
   return (
     <section className="px-4 py-16 sm:px-6 sm:py-20">
       <div className="halo-gradient mx-auto max-w-6xl overflow-hidden rounded-3xl px-6 py-14 text-center shadow-xl sm:py-16">
         <h2 className="text-3xl font-bold tracking-tight text-white sm:text-4xl">
-          From the post to the follow-up.
+          {title}
         </h2>
-        <p className="mx-auto mt-4 max-w-xl text-white/90">
-          The post, the visit, and the record — in one place.
-        </p>
+        {body ? (
+          <p className="mx-auto mt-4 max-w-xl text-white/90">{body}</p>
+        ) : null}
         <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
           <Button
             asChild

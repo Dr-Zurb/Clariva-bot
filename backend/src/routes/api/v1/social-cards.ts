@@ -28,6 +28,8 @@ import {
   restoreSocialCardHandler,
   reuseSocialCardHandler,
   updateSocialCardHandler,
+  listSocialCardTurnsHandler,
+  addSocialCardTurnHandler,
 } from '../../../controllers/social-card-controller';
 
 const router = Router();
@@ -52,6 +54,8 @@ router.delete('/:id/file', authenticateToken, removeSocialCardFileHandler);
 router.post('/:id/reuse', authenticateToken, reuseSocialCardHandler);
 router.post('/:id/restore', authenticateToken, restoreSocialCardHandler);
 router.post('/:id/duplicate', authenticateToken, duplicateSocialCardHandler);
+router.get('/:id/turns', authenticateToken, listSocialCardTurnsHandler);
+router.post('/:id/turns', authenticateToken, addSocialCardTurnHandler);
 router.patch('/:id', authenticateToken, updateSocialCardHandler);
 router.delete('/:id', authenticateToken, deleteSocialCardHandler);
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useMemo } from "react";
-import { formatDateISO } from "@/lib/format-date";
+import { todayLocalIso } from "@/lib/dates";
 import type { Appointment } from "@/types/appointment";
 import { useAppointmentsQuery } from "@/hooks/queries/useAppointmentsQuery";
 
@@ -15,26 +15,25 @@ export interface UseTodaysAppointmentsResult {
 }
 
 /**
- * Fetches the doctor's appointments for one local calendar day.
+ * Fetches the doctor's appointments for one clinic day.
  *
  * Shared by C2 (NowNextCard) and C5 (TodaysSchedule) via one query key.
  * `dateOverride` is YYYY-MM-DD; omit it to keep the dashboard on today.
+ * The server applies the doctor's timezone to that date, so the hook does
+ * not download other days and filter them in the browser.
  */
 export function useTodaysAppointments(
   token: string,
   dateOverride?: string,
 ): UseTodaysAppointmentsResult {
-  const query = useAppointmentsQuery(token);
+  const day = dateOverride && dateOverride.length > 0 ? dateOverride : todayLocalIso();
+  const query = useAppointmentsQuery(token, day);
 
   const appointments = useMemo((): Appointment[] | null => {
-    const appointments = query.data?.data?.appointments;
-    if (!Array.isArray(appointments)) return null;
-    const dayStr = dateOverride ?? formatDateISO(new Date());
-    return appointments.filter((appt) => {
-      const apptStr = formatDateISO(appt.appointment_date);
-      return apptStr === dayStr;
-    });
-  }, [query.data, dateOverride]);
+    const list = query.data?.data?.appointments;
+    if (!Array.isArray(list)) return null;
+    return list;
+  }, [query.data]);
 
   const refetch = useCallback(() => {
     void query.refetch();

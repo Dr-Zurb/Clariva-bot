@@ -16,7 +16,7 @@
 | 9 — analytics, clinic numbers | Not tasked | Specified 19 Oct 2026. Not displaced by phase 12 | [`analytics.md`](../../../../Product%20plans/social-assist/analytics.md) | — |
 | 10 — analytics, Instagram numbers | Not tasked | After phase 9. Test account | [`analytics.md`](../../../../Product%20plans/social-assist/analytics.md) | — |
 | 11 — analytics, the sentence | Not tasked | After phase 10 has real numbers | [`analytics.md`](../../../../Product%20plans/social-assist/analytics.md) | — |
-| 12 — doctor reviews a cut | [`p12-review/`](./p12-review/) | Planned 31 Oct 2026. Doctor side only. Not started | [`plan-p12-social-assist-review-batch.md`](./p12-review/plan-p12-social-assist-review-batch.md) | [`Tasks/EXECUTION-ORDER-p12-social-assist-review.md`](./p12-review/Tasks/EXECUTION-ORDER-p12-social-assist-review.md) |
+| 12 — doctor reviews a cut | [`p12-review/`](./p12-review/) | `soc-31`…`34` coded 31 Oct 2026. Gate `soc-35` not walked. Apply migration `268` | [`plan-p12-social-assist-review-batch.md`](./p12-review/plan-p12-social-assist-review-batch.md) | [`Tasks/EXECUTION-ORDER-p12-social-assist-review.md`](./p12-review/Tasks/EXECUTION-ORDER-p12-social-assist-review.md) |
 
 **Prefix:** `soc`. Numbering does not restart (`soc-01`…`soc-35`). Phases 9–11 continue after `soc-30` when they are tasked. Phase 12 is `soc-31`…`soc-35` and does not take those numbers.
 
