@@ -60,12 +60,19 @@ jest.mock('../../../src/services/opd/opd-queue-service', () => ({
 const findSessionByProviderSessionId = jest.fn();
 const markParticipantJoined = jest.fn().mockResolvedValue(undefined);
 const updateSessionStatus = jest.fn().mockResolvedValue(undefined);
+const endSession = jest.fn().mockResolvedValue(undefined);
+const isTwilioRoomEmpty = jest.fn<() => Promise<boolean>>().mockResolvedValue(false);
 
 jest.mock('../../../src/services/consultation-session-service', () => ({
   findSessionByProviderSessionId: (...args: unknown[]) =>
     findSessionByProviderSessionId(...args),
   markParticipantJoined: (...args: unknown[]) => markParticipantJoined(...args),
   updateSessionStatus: (...args: unknown[]) => updateSessionStatus(...args),
+  endSession: (...args: unknown[]) => endSession(...args),
+}));
+
+jest.mock('../../../src/services/video-session-twilio', () => ({
+  isTwilioRoomEmpty: () => isTwilioRoomEmpty(),
 }));
 
 const sendPatientJoinedCallPushToDoctor = jest.fn().mockResolvedValue(undefined);
@@ -205,6 +212,8 @@ describe('Consultation Verification Service', () => {
     jest.clearAllMocks();
     sendPatientJoinedCallPushToDoctor.mockClear();
     recordBillableConsult.mockClear();
+    isTwilioRoomEmpty.mockResolvedValue(false);
+    endSession.mockResolvedValue(undefined);
     findSessionByProviderSessionId.mockResolvedValue({
       id: 'sess-1',
       appointmentId: 'apt-1',
@@ -472,6 +481,32 @@ describe('Consultation Verification Service', () => {
       );
 
       expect(chain.update).not.toHaveBeenCalled();
+    });
+
+    it('ends the session when the disconnect leaves the room empty', async () => {
+      isTwilioRoomEmpty.mockResolvedValue(true);
+      const apt = {
+        id: 'apt-1',
+        doctor_id: 'doc-1',
+        doctor_left_at: null,
+        patient_left_at: null,
+      };
+      const chain = appointmentsLookupChain(apt);
+      mockFrom.mockImplementation((table: string) =>
+        table === 'appointments' ? chain : appointmentsLookupChain(null)
+      );
+
+      await handleParticipantDisconnected(
+        {
+          RoomSid: 'RM123',
+          ParticipantIdentity: 'patient-apt-1',
+          Timestamp: '2026-03-21T12:36:00.000Z',
+          StatusCallbackEvent: 'participant-disconnected',
+        },
+        correlationId
+      );
+
+      expect(endSession).toHaveBeenCalledWith('sess-1', correlationId);
     });
   });
 

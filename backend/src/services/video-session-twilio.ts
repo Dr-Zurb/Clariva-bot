@@ -260,6 +260,31 @@ export function generateVideoAccessToken(
  * Tear down a Twilio Video room. Idempotent: a 404 from Twilio (room
  * already completed) is treated as success.
  */
+/**
+ * True when the room has nobody connected. A list failure returns false
+ * so a webhook blip cannot end a consult that is still going.
+ */
+export async function isTwilioRoomEmpty(roomSid: string): Promise<boolean> {
+  const trimmed = roomSid?.trim();
+  if (!trimmed) return false;
+  const client = getTwilioClient();
+  if (!client) return false;
+  try {
+    const connected = await client.video.v1.rooms(trimmed).participants.list({
+      status: 'connected',
+      limit: 1,
+    });
+    return connected.length === 0;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    logger.warn(
+      { roomSid: trimmed, error: message },
+      'Twilio room participant list failed — leaving the room open',
+    );
+    return false;
+  }
+}
+
 export async function completeTwilioRoom(
   roomSid: string,
   correlationId: string
@@ -329,6 +354,20 @@ export const videoSessionTwilioAdapter: ConsultationSessionAdapter = {
 
   async endSession(providerSessionId: string, correlationId: string): Promise<void> {
     await completeTwilioRoom(providerSessionId, correlationId);
+
+    // Video used to stop here. The voice adapter was the only caller of
+    // enqueue, so a video consult never got a transcript row. Dynamic
+    // import avoids a load cycle (this module ← session facade ← enqueue).
+    try {
+      const { enqueueVoiceTranscription } = await import('./voice-transcription-service');
+      await enqueueVoiceTranscription({ providerSessionId });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      logger.error(
+        { correlationId, providerSessionId, error: message },
+        'video-session-twilio: enqueueVoiceTranscription failed (non-fatal; consult is already ended)',
+      );
+    }
   },
 
   async getJoinToken(

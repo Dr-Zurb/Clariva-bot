@@ -1,9 +1,10 @@
 # Stop composition hook (cost-cut step 7)
 
-> **Rollout sitting 2 done 12 Sep.** Local `.env` has both
-> `VOICE_TRANSCRIPTION_USE_RAW_TRACKS=true` and
-> `RECORDING_COMPOSE_ON_DEMAND=true`. Repo defaults stay off. The hook is
-> still on. Do not disable it until a real consult transcribes cleanly.
+> **Local proof 3 Nov.** A two-party video consult transcribed off raw
+> tracks (`useRawTracks: true`). Both flags are on in local `.env`. Repo
+> defaults stay off. The hook is still on. Do not disable it until the
+> same two flags are on the live server and one live consult transcribes.
+> A video visit now queues its own transcript when the room empties.
 
 Compositions are **not created in this repo**. There is no `compositions.create`.
 Twilio bills `$0.01` / composed minute because of an **account-level Composition Hook**.

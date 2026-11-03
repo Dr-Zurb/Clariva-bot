@@ -664,3 +664,66 @@ export const __testInternals = {
   BACKOFF_MS_BY_RETRY_COUNT,
   isBackoffReady,
 };
+
+// ============================================================================
+// In-process poll
+// ============================================================================
+
+export interface VoiceTranscriptionWorkerHandle {
+  stop: () => void;
+}
+
+/**
+ * Wake the worker on `VOICE_TRANSCRIPTION_POLL_INTERVAL_SEC`. The HTTP
+ * cron route stays; the status flip is claim-first so both can run.
+ * No-op when transcription is disabled, and in test, so Jest does not
+ * keep a timer open.
+ */
+export function startVoiceTranscriptionWorker(): VoiceTranscriptionWorkerHandle {
+  if (!env.VOICE_TRANSCRIPTION_ENABLED || env.NODE_ENV === 'test') {
+    logger.info(
+      { enabled: env.VOICE_TRANSCRIPTION_ENABLED, nodeEnv: env.NODE_ENV },
+      'voice-transcription-worker: poll disabled',
+    );
+    return { stop: () => undefined };
+  }
+
+  const intervalMs = env.VOICE_TRANSCRIPTION_POLL_INTERVAL_SEC * 1000;
+  let stopped = false;
+  let tickInFlight = false;
+
+  const scheduledTick = (): void => {
+    if (stopped || tickInFlight) return;
+    tickInFlight = true;
+    const correlationId = `voice-transcription-tick-${Date.now()}`;
+    void runVoiceTranscriptionJob(correlationId)
+      .catch((err: unknown) => {
+        logger.error(
+          {
+            correlationId,
+            error: err instanceof Error ? err.message : String(err),
+          },
+          'voice-transcription-worker: tick threw unexpectedly',
+        );
+      })
+      .finally(() => {
+        tickInFlight = false;
+      });
+  };
+
+  logger.info({ intervalMs }, 'voice-transcription-worker: poll started');
+  const bootTimer = setTimeout(scheduledTick, Math.min(2_000, intervalMs));
+  if (typeof bootTimer.unref === 'function') bootTimer.unref();
+  const timer = setInterval(scheduledTick, intervalMs);
+  if (typeof timer.unref === 'function') timer.unref();
+
+  return {
+    stop: (): void => {
+      if (stopped) return;
+      stopped = true;
+      clearTimeout(bootTimer);
+      clearInterval(timer);
+      logger.info('voice-transcription-worker: poll stopped');
+    },
+  };
+}

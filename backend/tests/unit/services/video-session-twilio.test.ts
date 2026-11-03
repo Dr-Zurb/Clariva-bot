@@ -34,9 +34,15 @@ const mockAddGrant = jest.fn();
 // adapter delegates here). Mock the helper at the module boundary so
 // these tests assert the call without touching the writer chain.
 const mockEmitPartyJoined = jest.fn<(sessionId: string, role: 'doctor' | 'patient') => Promise<void>>();
+const mockEnqueueVoiceTranscription = jest.fn<(input: { providerSessionId: string }) => Promise<void>>();
 
 jest.mock('../../../src/services/consultation-message-service', () => ({
   emitPartyJoined: (...args: [string, 'doctor' | 'patient']) => mockEmitPartyJoined(...args),
+}));
+
+jest.mock('../../../src/services/voice-transcription-service', () => ({
+  enqueueVoiceTranscription: (input: { providerSessionId: string }) =>
+    mockEnqueueVoiceTranscription(input),
 }));
 
 jest.mock('twilio', () => {
@@ -211,9 +217,10 @@ describe('videoSessionTwilioAdapter', () => {
     expect(token.token).toBe('mock-jwt-token');
   });
 
-  it('endSession calls Twilio room.update with status=completed', async () => {
+  it('endSession calls Twilio room.update with status=completed and queues a transcript', async () => {
     await videoSessionTwilioAdapter.endSession('RMabc123', correlationId);
     expect(mockRoomComplete).toHaveBeenCalledWith({ status: 'completed' });
+    expect(mockEnqueueVoiceTranscription).toHaveBeenCalledWith({ providerSessionId: 'RMabc123' });
   });
 
   it('endSession swallows 20404 (already completed)', async () => {

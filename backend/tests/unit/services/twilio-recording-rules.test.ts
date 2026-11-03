@@ -102,48 +102,74 @@ describe('mergeAllParticipantsRule', () => {
     const merged = await mergeAllParticipantsRule(
       twilioClient as unknown as Parameters<typeof mergeAllParticipantsRule>[0],
       'RM1',
-      { type: 'exclude', all: true, kind: 'audio' }
+      { type: 'exclude', kind: 'audio' }
     );
-    expect(merged).toEqual([{ type: 'exclude', all: true, kind: 'audio' }]);
+    expect(merged).toEqual([{ type: 'exclude', kind: 'audio' }]);
   });
 
   it('replaces an existing same-kind all-rule (last-write-wins per kind)', async () => {
-    setCurrentRules([{ type: 'include', all: true, kind: 'audio' }]);
+    setCurrentRules([{ type: 'include', kind: 'audio' }]);
     const merged = await mergeAllParticipantsRule(
       twilioClient as unknown as Parameters<typeof mergeAllParticipantsRule>[0],
       'RM1',
-      { type: 'exclude', all: true, kind: 'audio' }
+      { type: 'exclude', kind: 'audio' }
     );
-    expect(merged).toEqual([{ type: 'exclude', all: true, kind: 'audio' }]);
+    expect(merged).toEqual([{ type: 'exclude', kind: 'audio' }]);
   });
 
   it('preserves the other-kind all-rule when merging (audio pause keeps video include)', async () => {
-    setCurrentRules([{ type: 'include', all: true, kind: 'video' }]);
+    setCurrentRules([{ type: 'include', kind: 'video' }]);
     const merged = await mergeAllParticipantsRule(
       twilioClient as unknown as Parameters<typeof mergeAllParticipantsRule>[0],
       'RM1',
-      { type: 'exclude', all: true, kind: 'audio' }
+      { type: 'exclude', kind: 'audio' }
     );
     expect(merged).toEqual([
-      { type: 'include', all: true, kind: 'video' },
-      { type: 'exclude', all: true, kind: 'audio' },
+      { type: 'include', kind: 'video' },
+      { type: 'exclude', kind: 'audio' },
     ]);
   });
 
   it('passes through non-all rules untouched (per-participant rules)', async () => {
     setCurrentRules([
       { type: 'include', publisher: 'doctor-1', kind: 'audio' },
-      { type: 'exclude', all: true, kind: 'video' },
+      { type: 'exclude', kind: 'video' },
     ]);
     const merged = await mergeAllParticipantsRule(
       twilioClient as unknown as Parameters<typeof mergeAllParticipantsRule>[0],
       'RM1',
-      { type: 'exclude', all: true, kind: 'audio' }
+      { type: 'exclude', kind: 'audio' }
     );
     expect(merged).toEqual([
       { type: 'include', publisher: 'doctor-1', kind: 'audio' },
-      { type: 'exclude', all: true, kind: 'video' },
-      { type: 'exclude', all: true, kind: 'audio' },
+      { type: 'exclude', kind: 'video' },
+      { type: 'exclude', kind: 'audio' },
+    ]);
+  });
+
+  it('keeps Twilio default exclude-all and appends a legal audio include', async () => {
+    setCurrentRules([{ type: 'exclude', all: true }]);
+    const merged = await mergeAllParticipantsRule(
+      twilioClient as unknown as Parameters<typeof mergeAllParticipantsRule>[0],
+      'RM1',
+      { type: 'include', kind: 'audio' }
+    );
+    expect(merged).toEqual([
+      { type: 'exclude', all: true },
+      { type: 'include', kind: 'audio' },
+    ]);
+  });
+
+  it('rewrites a stale all+kind rule so Twilio will accept it', async () => {
+    setCurrentRules([{ type: 'include', all: true, kind: 'video' }]);
+    const merged = await mergeAllParticipantsRule(
+      twilioClient as unknown as Parameters<typeof mergeAllParticipantsRule>[0],
+      'RM1',
+      { type: 'include', kind: 'audio' }
+    );
+    expect(merged).toEqual([
+      { type: 'include', kind: 'video' },
+      { type: 'include', kind: 'audio' },
     ]);
   });
 
@@ -152,9 +178,9 @@ describe('mergeAllParticipantsRule', () => {
     const merged = await mergeAllParticipantsRule(
       twilioClient as unknown as Parameters<typeof mergeAllParticipantsRule>[0],
       'RM1',
-      { type: 'exclude', all: true, kind: 'audio' }
+      { type: 'exclude', kind: 'audio' }
     );
-    expect(merged).toEqual([{ type: 'exclude', all: true, kind: 'audio' }]);
+    expect(merged).toEqual([{ type: 'exclude', kind: 'audio' }]);
   });
 });
 
@@ -164,12 +190,12 @@ describe('mergeAllParticipantsRule', () => {
 
 describe('excludeAllParticipantsFromRecording', () => {
   it('sends the merged rules to Twilio update()', async () => {
-    setCurrentRules([{ type: 'include', all: true, kind: 'video' }]);
+    setCurrentRules([{ type: 'include', kind: 'video' }]);
     await excludeAllParticipantsFromRecording('RM1', 'audio', 'corr-1');
     const sent = capturedUpdateRules();
     expect(sent).toEqual([
-      { type: 'include', all: true, kind: 'video' },
-      { type: 'exclude', all: true, kind: 'audio' },
+      { type: 'include', kind: 'video' },
+      { type: 'exclude', kind: 'audio' },
     ]);
   });
 
@@ -195,10 +221,10 @@ describe('excludeAllParticipantsFromRecording', () => {
 
 describe('includeAllParticipantsInRecording', () => {
   it('toggles back to include on resume', async () => {
-    setCurrentRules([{ type: 'exclude', all: true, kind: 'audio' }]);
+    setCurrentRules([{ type: 'exclude', kind: 'audio' }]);
     await includeAllParticipantsInRecording('RM1', 'audio', 'corr-2');
     const sent = capturedUpdateRules();
-    expect(sent).toEqual([{ type: 'include', all: true, kind: 'audio' }]);
+    expect(sent).toEqual([{ type: 'include', kind: 'audio' }]);
   });
 });
 
@@ -209,8 +235,8 @@ describe('includeAllParticipantsInRecording', () => {
 describe('getCurrentRecordingMode', () => {
   it('interprets audio include + video exclude as audio_only', async () => {
     setCurrentRules([
-      { type: 'include', all: true, kind: 'audio' },
-      { type: 'exclude', all: true, kind: 'video' },
+      { type: 'include', kind: 'audio' },
+      { type: 'exclude', kind: 'video' },
     ]);
     const mode = await getCurrentRecordingMode('RM_t43_1');
     expect(mode).toBe('audio_only');
@@ -219,8 +245,8 @@ describe('getCurrentRecordingMode', () => {
 
   it('interprets audio include + video include as audio_and_video', async () => {
     setCurrentRules([
-      { type: 'include', all: true, kind: 'audio' },
-      { type: 'include', all: true, kind: 'video' },
+      { type: 'include', kind: 'audio' },
+      { type: 'include', kind: 'video' },
     ]);
     const mode = await getCurrentRecordingMode('RM_t43_1');
     expect(mode).toBe('audio_and_video');
@@ -234,8 +260,8 @@ describe('getCurrentRecordingMode', () => {
 
   it('returns other when video is included but audio is excluded (never produced by Plan 08)', async () => {
     setCurrentRules([
-      { type: 'exclude', all: true, kind: 'audio' },
-      { type: 'include', all: true, kind: 'video' },
+      { type: 'exclude', kind: 'audio' },
+      { type: 'include', kind: 'video' },
     ]);
     const mode = await getCurrentRecordingMode('RM_t43_1');
     expect(mode).toBe('other');
@@ -261,8 +287,8 @@ describe('getCurrentRecordingMode', () => {
 describe('setRecordingRulesToAudioOnly', () => {
   it('short-circuits (no PATCH) when the room is already audio_only', async () => {
     setCurrentRules([
-      { type: 'include', all: true, kind: 'audio' },
-      { type: 'exclude', all: true, kind: 'video' },
+      { type: 'include', kind: 'audio' },
+      { type: 'exclude', kind: 'video' },
     ]);
     await setRecordingRulesToAudioOnly('RM_t43_2', 'corr-mode-1');
     expect(updateMock).not.toHaveBeenCalled();
@@ -272,15 +298,15 @@ describe('setRecordingRulesToAudioOnly', () => {
     // 1) getCurrentRecordingMode -> audio_and_video
     fetchMock.mockResolvedValueOnce({
       rules: [
-        { type: 'include', all: true, kind: 'audio' },
-        { type: 'include', all: true, kind: 'video' },
+        { type: 'include', kind: 'audio' },
+        { type: 'include', kind: 'video' },
       ],
     });
     // 2) includeAllParticipantsInRecording(audio) re-fetches
     fetchMock.mockResolvedValueOnce({
       rules: [
-        { type: 'include', all: true, kind: 'audio' },
-        { type: 'include', all: true, kind: 'video' },
+        { type: 'include', kind: 'audio' },
+        { type: 'include', kind: 'video' },
       ],
     });
     // 3) excludeAllParticipantsFromRecording(video) re-fetches (after
@@ -288,8 +314,8 @@ describe('setRecordingRulesToAudioOnly', () => {
     //    mock because updateMock doesn't actually persist)
     fetchMock.mockResolvedValueOnce({
       rules: [
-        { type: 'include', all: true, kind: 'audio' },
-        { type: 'include', all: true, kind: 'video' },
+        { type: 'include', kind: 'audio' },
+        { type: 'include', kind: 'video' },
       ],
     });
 
@@ -300,10 +326,10 @@ describe('setRecordingRulesToAudioOnly', () => {
     const secondCall = updateMock.mock.calls[1]?.[0] as UpdateCall;
     // Order: audio include first, then video exclude.
     expect(firstCall.rules).toEqual(
-      expect.arrayContaining([{ type: 'include', all: true, kind: 'audio' }])
+      expect.arrayContaining([{ type: 'include', kind: 'audio' }])
     );
     expect(secondCall.rules).toEqual(
-      expect.arrayContaining([{ type: 'exclude', all: true, kind: 'video' }])
+      expect.arrayContaining([{ type: 'exclude', kind: 'video' }])
     );
   });
 
@@ -320,8 +346,8 @@ describe('setRecordingRulesToAudioOnly', () => {
 describe('setRecordingRulesToAudioAndVideo', () => {
   it('short-circuits (no PATCH) when already audio_and_video', async () => {
     setCurrentRules([
-      { type: 'include', all: true, kind: 'audio' },
-      { type: 'include', all: true, kind: 'video' },
+      { type: 'include', kind: 'audio' },
+      { type: 'include', kind: 'video' },
     ]);
     await setRecordingRulesToAudioAndVideo('RM_t43_4', 'corr-mode-4');
     expect(updateMock).not.toHaveBeenCalled();
@@ -331,22 +357,22 @@ describe('setRecordingRulesToAudioAndVideo', () => {
     // 1) getCurrentRecordingMode -> audio_only
     fetchMock.mockResolvedValueOnce({
       rules: [
-        { type: 'include', all: true, kind: 'audio' },
-        { type: 'exclude', all: true, kind: 'video' },
+        { type: 'include', kind: 'audio' },
+        { type: 'exclude', kind: 'video' },
       ],
     });
     // 2) include(audio) fetch
     fetchMock.mockResolvedValueOnce({
       rules: [
-        { type: 'include', all: true, kind: 'audio' },
-        { type: 'exclude', all: true, kind: 'video' },
+        { type: 'include', kind: 'audio' },
+        { type: 'exclude', kind: 'video' },
       ],
     });
     // 3) include(video) fetch
     fetchMock.mockResolvedValueOnce({
       rules: [
-        { type: 'include', all: true, kind: 'audio' },
-        { type: 'exclude', all: true, kind: 'video' },
+        { type: 'include', kind: 'audio' },
+        { type: 'exclude', kind: 'video' },
       ],
     });
 
@@ -355,7 +381,7 @@ describe('setRecordingRulesToAudioAndVideo', () => {
     expect(updateMock).toHaveBeenCalledTimes(2);
     const secondCall = updateMock.mock.calls[1]?.[0] as UpdateCall;
     expect(secondCall.rules).toEqual(
-      expect.arrayContaining([{ type: 'include', all: true, kind: 'video' }])
+      expect.arrayContaining([{ type: 'include', kind: 'video' }])
     );
   });
 });
@@ -363,8 +389,8 @@ describe('setRecordingRulesToAudioAndVideo', () => {
 describe('getIncludedRecordingKinds', () => {
   it('returns only included kinds (audio-only room omits video)', async () => {
     setCurrentRules([
-      { type: 'include', all: true, kind: 'audio' },
-      { type: 'exclude', all: true, kind: 'video' },
+      { type: 'include', kind: 'audio' },
+      { type: 'exclude', kind: 'video' },
     ]);
     await expect(getIncludedRecordingKinds('RM_kinds_1')).resolves.toEqual(['audio']);
     expect(updateMock).not.toHaveBeenCalled();
@@ -372,8 +398,8 @@ describe('getIncludedRecordingKinds', () => {
 
   it('returns audio and video when both are included', async () => {
     setCurrentRules([
-      { type: 'include', all: true, kind: 'audio' },
-      { type: 'include', all: true, kind: 'video' },
+      { type: 'include', kind: 'audio' },
+      { type: 'include', kind: 'video' },
     ]);
     await expect(getIncludedRecordingKinds('RM_kinds_2')).resolves.toEqual(['audio', 'video']);
   });
@@ -383,8 +409,8 @@ describe('setRecordingRulesToAudioOnly · paused session (rec-14 §2.3.3)', () =
   it('does not re-include audio when the session is paused', async () => {
     isRoomRecordingPausedMock.mockResolvedValue(true);
     setCurrentRules([
-      { type: 'exclude', all: true, kind: 'audio' },
-      { type: 'exclude', all: true, kind: 'video' },
+      { type: 'exclude', kind: 'audio' },
+      { type: 'exclude', kind: 'video' },
     ]);
 
     await setRecordingRulesToAudioOnly('RM_paused', 'corr-paused-revert');

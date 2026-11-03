@@ -106,10 +106,33 @@ export function resolveEnqueueProvider(languageCode: string): TranscriptProvider
 
 export interface EnqueueVoiceTranscriptionInput {
   /**
-   * Twilio Video room SID for the voice session. We look up the
-   * `consultation_sessions` row by this + `provider = 'twilio_video_audio'`.
+   * Twilio Video room SID. Voice and video sessions are both stored as
+   * `provider = 'twilio_video'`. Legacy `twilio_video_audio` rows are
+   * checked second.
    */
   providerSessionId: string;
+}
+
+async function findTwilioVideoSession(
+  providerSessionId: string,
+): Promise<Awaited<ReturnType<typeof findSessionByProviderSessionId>>> {
+  for (const provider of ['twilio_video', 'twilio_video_audio'] as const) {
+    const session = await findSessionByProviderSessionId(provider, providerSessionId).catch(
+      (err: unknown) => {
+        logger.warn(
+          {
+            providerSessionId,
+            provider,
+            error: err instanceof Error ? err.message : String(err),
+          },
+          'voice-transcription: session lookup failed — skipping enqueue',
+        );
+        return null;
+      },
+    );
+    if (session) return session;
+  }
+  return null;
 }
 
 /**
@@ -165,21 +188,10 @@ export async function enqueueVoiceTranscription(input: {
     return;
   }
 
-  // 1. Resolve the consultation_sessions row. The voice adapter's
-  //    provider is 'twilio_video_audio' (see types/consultation-session.ts).
-  const session = await findSessionByProviderSessionId(
-    'twilio_video_audio',
-    providerSessionId,
-  ).catch((err: unknown) => {
-    logger.warn(
-      {
-        providerSessionId,
-        error: err instanceof Error ? err.message : String(err),
-      },
-      'voice-transcription: session lookup failed — skipping enqueue',
-    );
-    return null;
-  });
+  // 1. Resolve the consultation_sessions row. Voice and video both persist
+  //    provider `twilio_video` (the room is Twilio Video either way).
+  //    `twilio_video_audio` is the legacy label some rows still carry.
+  const session = await findTwilioVideoSession(providerSessionId);
 
   if (!session) {
     logger.warn(

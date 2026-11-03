@@ -1006,6 +1006,32 @@ describe('isSessionRecordingPaused / isRoomRecordingPaused', () => {
     await expect(isSessionRecordingPaused('sess-1')).resolves.toBe(true);
   });
 
+  it('is false when the pause columns are missing and there is no pause row', async () => {
+    let selects = 0;
+    const chain: Record<string, unknown> = {};
+    const self = () => chain;
+    chain.eq = self;
+    chain.in = self;
+    chain.order = self;
+    chain.limit = self;
+    chain.maybeSingle = async () => {
+      selects += 1;
+      if (selects === 1) {
+        return {
+          data: null,
+          error: { code: '42703', message: 'column pause_reason_code does not exist' },
+        };
+      }
+      return { data: null, error: null };
+    };
+    mockedDb.getSupabaseAdminClient.mockReturnValue({
+      from: () => ({ select: () => chain }),
+    } as unknown as ReturnType<typeof database.getSupabaseAdminClient>);
+
+    await expect(isSessionRecordingPaused('sess-1')).resolves.toBe(false);
+    expect(selects).toBe(2);
+  });
+
   it('is false when never paused', async () => {
     const { client } = buildAdminMock({ latestRow: null });
     mockedDb.getSupabaseAdminClient.mockReturnValue(

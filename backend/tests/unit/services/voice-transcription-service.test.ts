@@ -142,6 +142,32 @@ describe('enqueueVoiceTranscription', () => {
     expect(mockedSession.findSessionByProviderSessionId).not.toHaveBeenCalled();
   });
 
+  it('finds a video room stored as twilio_video, then a legacy audio row', async () => {
+    mockedSession.findSessionByProviderSessionId
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({
+        ...FAKE_SESSION,
+        modality: 'video',
+        provider: 'twilio_video',
+      } as never);
+    const chain = buildInsertChain({ data: { id: 't-1' }, error: null });
+    mockedDb.getSupabaseAdminClient.mockReturnValue({ from: chain.from } as never);
+
+    await enqueueVoiceTranscription({ providerSessionId: 'RM123' });
+
+    expect(mockedSession.findSessionByProviderSessionId).toHaveBeenNthCalledWith(
+      1,
+      'twilio_video',
+      'RM123',
+    );
+    expect(mockedSession.findSessionByProviderSessionId).toHaveBeenNthCalledWith(
+      2,
+      'twilio_video_audio',
+      'RM123',
+    );
+    expect(chain.insert).toHaveBeenCalledTimes(1);
+  });
+
   it('logs + returns when the session lookup returns null', async () => {
     mockedSession.findSessionByProviderSessionId.mockResolvedValue(null);
     mockedDb.getSupabaseAdminClient.mockReturnValue({} as never);

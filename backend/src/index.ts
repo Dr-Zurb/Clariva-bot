@@ -53,6 +53,10 @@ import {
   type SocialInsightsWorkerHandle,
 } from './workers/social-insights-cron';
 import { startChatPushListener, stopChatPushListener } from './services/chat-push-listener';
+import {
+  startVoiceTranscriptionWorker,
+  type VoiceTranscriptionWorkerHandle,
+} from './workers/voice-transcription-worker';
 import { correlationId } from './middleware/correlation-id';
 import { requestTiming } from './middleware/request-timing';
 import { requestLogger } from './middleware/request-logger';
@@ -504,6 +508,7 @@ let videoEscalationPollWorker: VideoEscalationPollHandle | null = null;
 let socialCardPublishWorker: SocialCardPublishWorkerHandle | null = null;
 // Reads Instagram numbers into stored rows. Off in test. The tab does not call Instagram.
 let socialInsightsWorker: SocialInsightsWorkerHandle | null = null;
+let voiceTranscriptionWorker: VoiceTranscriptionWorkerHandle | null = null;
 
 // Initialize database and start server
 // Database connection must succeed before server starts accepting requests
@@ -542,6 +547,9 @@ initializeDatabase()
       videoEscalationPollWorker = startVideoEscalationPollWorker();
       socialCardPublishWorker = startSocialCardPublishWorker();
       socialInsightsWorker = startSocialInsightsWorker();
+      // Post-consult transcript. Claim-first, so this is safe next to
+      // POST /cron/voice-transcription. Off when VOICE_TRANSCRIPTION_ENABLED is false.
+      voiceTranscriptionWorker = startVoiceTranscriptionWorker();
       // task-text-D6b: Realtime INSERT → Web Push fan-out (no-op when VAPID unset).
       startChatPushListener();
     });
@@ -609,6 +617,10 @@ const gracefulShutdown = (signal: string) => {
       if (socialInsightsWorker) {
         socialInsightsWorker.stop();
         socialInsightsWorker = null;
+      }
+      if (voiceTranscriptionWorker) {
+        voiceTranscriptionWorker.stop();
+        voiceTranscriptionWorker = null;
       }
       stopChatPushListener();
       await stopWebhookWorker();

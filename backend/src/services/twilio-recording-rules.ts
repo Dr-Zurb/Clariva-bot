@@ -4,8 +4,8 @@
  * Twilio's `RecordingRules.update()` is a **wholesale-replace** primitive:
  * the rules array you send overwrites whatever was previously set for
  * the room. That's a trap for a shared surface — if Plan 07 pauses
- * `audio` inclusion with `[{ type: 'exclude', all: true, kind: 'audio' }]`
- * it would accidentally clobber a Plan 08 video-inclusion rule that was
+ * `audio` with `[{ type: 'exclude', kind: 'audio' }]` it would
+ * accidentally clobber a Plan 08 video-inclusion rule that was
  * previously added for an in-progress escalation. Conversely, resuming
  * audio without knowing the current video state would silently re-enable
  * video if Plan 08 had turned it off.
@@ -15,7 +15,7 @@
  * "include video" without having to know what the other `kind` is
  * currently set to. The merge semantics:
  *
- *   - Each (kind, `all=true`) pair gets AT MOST ONE entry in the rules
+ *   - Each kind gets AT MOST ONE entry in the rules
  *     array — we normalise to that shape on every update.
  *   - `include` and `exclude` for the same kind are mutually exclusive;
  *     the last-write-wins.
@@ -53,25 +53,31 @@ export type RecordingRuleKind = 'audio' | 'video';
 export type RecordingRuleType = 'include' | 'exclude';
 
 /**
- * Subset of Twilio's `RecordingRule` shape that this wrapper knows how
- * to merge. The `all` flag means "applies to all participants";
- * per-participant rules (`publisher`, `participant_identity`) are
- * passed through untouched via the `unknown[]` sidecar.
+ * Kind rule this wrapper merges. Twilio records every track of that
+ * kind. Do not also set `all`: Twilio error 53120 rejects a rule that
+ * combines `all` with any other filter, and the room then stays on the
+ * default "record nothing" rule.
+ *
+ * Per-participant rules (`publisher`, `track`) are passed through
+ * unchanged.
  */
 interface AllParticipantsRule {
   type: RecordingRuleType;
-  all: true;
   kind: RecordingRuleKind;
 }
 
 function isAllParticipantsRule(rule: unknown): rule is AllParticipantsRule {
   if (!rule || typeof rule !== 'object') return false;
   const r = rule as Record<string, unknown>;
-  return (
-    (r.type === 'include' || r.type === 'exclude') &&
-    r.all === true &&
-    (r.kind === 'audio' || r.kind === 'video')
-  );
+  if (r.type !== 'include' && r.type !== 'exclude') return false;
+  if (r.kind !== 'audio' && r.kind !== 'video') return false;
+  if (r.publisher != null || r.track != null) return false;
+  return true;
+}
+
+/** Twilio-legal kind rule. Drops a stale `all` flag if one was fetched. */
+function wireKindRule(rule: AllParticipantsRule): AllParticipantsRule {
+  return { type: rule.type, kind: rule.kind };
 }
 
 // ============================================================================
@@ -97,8 +103,8 @@ function getTwilioClient(): Twilio.Twilio | null {
 
 /**
  * Fetch the current rules array for `roomSid` and merge a new
- * (type, kind, all=true) rule into it. Preserves any non-all rules
- * unchanged. De-duplicates by `kind` so at most one `all=true` rule
+ * (type, kind) rule into it. Preserves any per-participant rules
+ * unchanged. De-duplicates by `kind` so at most one kind rule
  * exists per kind after the merge.
  *
  * Exported for unit-test access; callers in this file go through the
@@ -134,12 +140,12 @@ export async function mergeAllParticipantsRule(
   for (const rule of currentRules) {
     if (isAllParticipantsRule(rule)) {
       if (rule.kind === next.kind) continue;
-      merged.push(rule);
+      merged.push(wireKindRule(rule));
     } else {
       merged.push(rule);
     }
   }
-  merged.push(next);
+  merged.push(wireKindRule(next));
   return merged;
 }
 
@@ -148,7 +154,7 @@ export async function mergeAllParticipantsRule(
 // ============================================================================
 
 /**
- * Set a `{ type: 'exclude', all: true, kind }` rule on the room,
+ * Set a `{ type: 'exclude', kind }` rule on the room,
  * merging with whatever else was there. Used by
  * `recording-pause-service.pauseRecording`.
  *
@@ -159,11 +165,11 @@ export async function excludeAllParticipantsFromRecording(
   kind: RecordingRuleKind,
   correlationId: string
 ): Promise<void> {
-  await applyAllParticipantsRule(roomSid, { type: 'exclude', all: true, kind }, correlationId);
+  await applyAllParticipantsRule(roomSid, { type: 'exclude', kind }, correlationId);
 }
 
 /**
- * Set a `{ type: 'include', all: true, kind }` rule on the room,
+ * Set a `{ type: 'include', kind }` rule on the room,
  * merging with whatever else was there. Used by
  * `recording-pause-service.resumeRecording`.
  *
@@ -174,7 +180,7 @@ export async function includeAllParticipantsInRecording(
   kind: RecordingRuleKind,
   correlationId: string
 ): Promise<void> {
-  await applyAllParticipantsRule(roomSid, { type: 'include', all: true, kind }, correlationId);
+  await applyAllParticipantsRule(roomSid, { type: 'include', kind }, correlationId);
 }
 
 async function applyAllParticipantsRule(
@@ -265,7 +271,7 @@ export class TwilioRoomNotFoundError extends Error {
  *                            video NOT included (explicitly excluded
  *                            OR implicitly absent).
  *   · `'audio_and_video'`  — BOTH audio and video have an
- *                            `{ type: 'include', all: true, kind }`
+ *                            `{ type: 'include', kind }`
  *                            rule in effect.
  *   · `'other'`            — the current rules don't match either
  *                            canonical shape (e.g. video is included
@@ -345,7 +351,7 @@ export async function getCurrentRecordingMode(roomSid: string): Promise<Recordin
 }
 
 /**
- * Kinds Twilio is currently capturing (`include` + `all=true`).
+ * Kinds Twilio is currently capturing (`include` + `kind`).
  * Pause uses this instead of assuming audio. Video that is excluded
  * or absent is omitted — do not invent a video exclusion on an
  * audio-only room (that would flip p4's mode reader from

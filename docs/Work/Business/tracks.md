@@ -32,8 +32,8 @@ The single place I look when planning a week. If a thread isn't here, it doesn't
 | P3 | Bot / messaging | `PARKED` | — |
 | P4 | Billing + usage metering | `PARKED` | — |
 | G1 | First paying clinic | `PARKED` | — |
-| G2 | Pricing | `NEXT` | Decide a number I can say out loud without flinching |
-| G3 | Cost-cut stack (Gate 1) | `ACTIVE` | Watch one consult (raw STT + replay), then disable the Twilio compose hook |
+| G2 | Pricing | `NEXT` | Read the 3 Nov pricing note and pick the sheet. The site is unchanged |
+| G3 | Cost-cut stack (Gate 1) | `ACTIVE` | Put both step-7 flags on the live server, then one live consult, then disable the Twilio compose hook |
 | O1 | `capture/inbox.md` has gone feral | `NEXT` | Triage the 375 lines into `capture/features/` |
 | O2 | Cursor subscription (discount + cancel code) | `WAITING` | 30 Sep 2026: resubscribe at $118 on kivshophelpdesk@gmail.com |
 
@@ -456,7 +456,7 @@ The product is closer to ready than the business is. One real clinic using this 
 **Next action:** — parked. Not naming clinics. Unpark when the account is open, the product is something a front desk can use daily, and L10 is done. Instagram Connect stays off after the 22 Oct healthcare rejection. The clinic bio carries the public page link.
 
 ### G2 · Pricing — `NEXT`
-**Next action:** pick a monthly number per clinic and practice saying it out loud. It can be wrong; it can't be absent.
+**Next action:** read [`NOTE-2026-11-03-launch-repricing.md`](../../Reference/business/NOTE-2026-11-03-launch-repricing.md) and pick the sheet. The lean on 3 Nov was ₹999 with 30 teleconsults, then ₹29. The cap was picked twice (₹5,999, then ₹3,999) and then parked. The site still shows ₹999 / 20 / ₹49 / ₹12,499.
 
 ### G3 · Cost-cut stack (Gate 1) — `ACTIVE`
 Today's real cost is **₹36.46/consult**, not the ₹25.70 this doc used to carry. After the 31 Aug picks it is ₹6.55. Write-up: [`PRICING_MODEL_DECISIONS.md`](../../Reference/business/PRICING_MODEL_DECISIONS.md) § Cost inputs and the [cost-cut stack](/Users/abhisheksahil/.cursor/projects/Users-abhisheksahil-Desktop-Clariva-Bot/canvases/cost-cut-stack.canvas.tsx). `gpt-5.2` shuts down 11 Dec 2026.
@@ -487,7 +487,9 @@ One behaviour change to expect once the hook is off: the first press of play on 
 
 Steps 8 and 9 were wrongly bundled with 7. **9 does not need LiveKit** (transcode locally, push to R2, delete Twilio's copy) but does need a Cloudflare DPA since R2 would hold PHI. **8 is blocked on economics, not engineering**: LiveKit Ship has no BAA and Scale is $500/mo ≈ ₹47,750, which exceeds the entire monthly saving until roughly 1,600 consults/month.
 
-**Next action:** one voice/video consult — confirm raw-track STT, then disable hook `HKbe336c348bce4c81907f6a3c55844a82` (`haloaid-consult-audio`). Do not disable before that consult. OTP parked.
+**Local proof — 2026-11-03.** A two-party video consult mixed two raw audio tracks and transcribed with `useRawTracks: true`. The hook still composed an mp4, so the ₹5.7 is still on. Video rooms now queue that transcript themselves when the last person leaves, and the local server polls the queue. Repo defaults stay off.
+
+**Next action:** on Render `Clariva-bot-1`, set `VOICE_TRANSCRIPTION_USE_RAW_TRACKS=true` and `RECORDING_COMPOSE_ON_DEMAND=true`, then one live video consult. Only after that transcript lands, disable hook `HKbe336c348bce4c81907f6a3c55844a82` (`haloaid-consult-audio`). Leave the hook on until then. OTP parked.
 
 ---
 

@@ -298,19 +298,72 @@ function parsePausedKinds(
   return ['audio'];
 }
 
-async function fetchLatestPauseResumeRowResult(sessionId: string): Promise<LatestFetch> {
-  const admin = getSupabaseAdminClient();
-  if (!admin) return { ok: true, row: null };
-  const { data, error } = await admin
+const PAUSE_AUDIT_COLUMNS =
+  'id, action, reason, pause_reason_code, action_by, action_by_role, metadata, created_at, auto_resume_at, auto_resume_extensions_used, pause_closed_as';
+
+/** Pre-migration-196 shape. Used only when the pause columns are absent. */
+const PAUSE_AUDIT_COLUMNS_LEGACY =
+  'id, action, reason, action_by, action_by_role, metadata, created_at';
+
+function isMissingColumnError(error: { code?: string; message?: string }): boolean {
+  return error.code === '42703' || (error.message ?? '').includes('does not exist');
+}
+
+type PauseAuditQueryRow = {
+  id?: string;
+  action: AuditAction;
+  reason: string | null;
+  pause_reason_code?: RecordingPauseReasonCode | null;
+  action_by: string;
+  action_by_role?: ActionByRole | null;
+  metadata: {
+    status?: LedgerStatus;
+    twilio_sid?: string;
+    kind?: RecordingRuleKind;
+    paused_kinds?: RecordingRuleKind[];
+  } | null;
+  created_at: string;
+  auto_resume_at?: string | null;
+  auto_resume_extensions_used?: number | null;
+  pause_closed_as?: RecordingPauseClosedAs | null;
+};
+
+async function queryLatestPauseAuditRow(
+  admin: NonNullable<ReturnType<typeof getSupabaseAdminClient>>,
+  sessionId: string,
+  columns: string
+): Promise<{ data: PauseAuditQueryRow | null; error: { code?: string; message: string } | null }> {
+  const result = await admin
     .from('consultation_recording_audit')
-    .select(
-      'id, action, reason, pause_reason_code, action_by, action_by_role, metadata, created_at, auto_resume_at, auto_resume_extensions_used, pause_closed_as'
-    )
+    .select(columns)
     .eq('session_id', sessionId)
     .in('action', ['recording_paused', 'recording_resumed'])
     .order('created_at', { ascending: false })
     .limit(1)
     .maybeSingle();
+  return {
+    data: (result.data ?? null) as unknown as PauseAuditQueryRow | null,
+    error: result.error
+      ? { code: (result.error as { code?: string }).code, message: result.error.message }
+      : null,
+  };
+}
+
+async function fetchLatestPauseResumeRowResult(sessionId: string): Promise<LatestFetch> {
+  const admin = getSupabaseAdminClient();
+  if (!admin) return { ok: true, row: null };
+
+  let { data, error } = await queryLatestPauseAuditRow(admin, sessionId, PAUSE_AUDIT_COLUMNS);
+  if (error && isMissingColumnError(error)) {
+    // A missing pause column is not a pause. Treating it as paused made
+    // setRecordingRulesToAudioOnly skip the Twilio update, so the room
+    // stayed on Twilio's default "record nothing" rule.
+    logger.warn(
+      { sessionId },
+      'recording-pause-service: pause columns missing; reading legacy audit columns'
+    );
+    ({ data, error } = await queryLatestPauseAuditRow(admin, sessionId, PAUSE_AUDIT_COLUMNS_LEGACY));
+  }
   if (error) {
     logger.warn(
       { sessionId, error: error.message },
@@ -319,27 +372,9 @@ async function fetchLatestPauseResumeRowResult(sessionId: string): Promise<Lates
     return { ok: false };
   }
   if (!data) return { ok: true, row: null };
-  const row = data as {
-    id?: string;
-    action: AuditAction;
-    reason: string | null;
-    pause_reason_code?: RecordingPauseReasonCode | null;
-    action_by: string;
-    action_by_role?: ActionByRole | null;
-    metadata: {
-      status?: LedgerStatus;
-      twilio_sid?: string;
-      kind?: RecordingRuleKind;
-      paused_kinds?: RecordingRuleKind[];
-    } | null;
-    created_at: string;
-    auto_resume_at?: string | null;
-    auto_resume_extensions_used?: number | null;
-    pause_closed_as?: RecordingPauseClosedAs | null;
-  };
   return {
     ok: true,
-    row: mapLatestRow(row),
+    row: mapLatestRow(data),
   };
 }
 

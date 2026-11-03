@@ -33,6 +33,7 @@ import type { Appointment } from '../types/database';
 import { syncOpdQueueEntryOnAppointmentStatus } from './opd/opd-queue-service';
 import { syncCareEpisodeLifecycleOnAppointmentCompleted } from './care-episode-service';
 import {
+  endSession,
   findSessionByProviderSessionId,
   markParticipantJoined,
   updateSessionStatus,
@@ -328,6 +329,33 @@ export async function handleParticipantDisconnected(
       }
     }
   }
+
+  // Both people hanging up leaves a group room in-progress until Twilio's
+  // idle timeout. End it once nobody is connected so the transcript queues
+  // now, not five minutes later. A still-connected participant keeps the room.
+  await endRoomIfEmpty(payload.RoomSid, resolved.sessionId, correlationId);
+}
+
+async function endRoomIfEmpty(
+  roomSid: string,
+  sessionId: string,
+  correlationId: string,
+): Promise<void> {
+  try {
+    const { isTwilioRoomEmpty } = await import('./video-session-twilio');
+    if (!(await isTwilioRoomEmpty(roomSid))) return;
+    await endSession(sessionId, correlationId);
+  } catch (err) {
+    logger.warn(
+      {
+        correlationId,
+        roomSid,
+        sessionId,
+        error: err instanceof Error ? err.message : String(err),
+      },
+      'participant-disconnected: ending empty room failed (non-fatal)',
+    );
+  }
 }
 
 /**
@@ -382,6 +410,22 @@ export async function handleRoomEnded(
     roomSid:   payload.RoomSid,
     correlationId,
   });
+
+  // Hang-up that never went through wrap-up still needs a transcript row.
+  // A second enqueue from endSession collapses on the unique index.
+  try {
+    const { enqueueVoiceTranscription } = await import('./voice-transcription-service');
+    await enqueueVoiceTranscription({ providerSessionId: payload.RoomSid });
+  } catch (err) {
+    logger.warn(
+      {
+        correlationId,
+        roomSid: payload.RoomSid,
+        error: err instanceof Error ? err.message : String(err),
+      },
+      'room-ended: transcription enqueue failed (non-fatal)',
+    );
+  }
 
   await tryMarkVerified(resolved.appointmentId, correlationId);
 }
